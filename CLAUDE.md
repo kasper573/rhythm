@@ -55,8 +55,12 @@
 
 ## Architecture
 
-`src/core` may not depend on `src/scenes`. `src/scenes` may depend on other
-modules in `src/scenes`, but ideally it's kept to a minimum
+- `src/core` must be self contained and may not depend on anything outside of
+  `src/core` (except 3rd party dependencies)
+- `src/scenes` may depend on other modules in `src/scenes`, but ideally it's
+  kept to a minimum
+
+This is hard absolute rule that you may never break. No exceptions, ever.
 
 Don't work around this constraint by simply putting nothing into `src/core`.
 Core is supposed to house generic mechanisms and systems, and you should design
