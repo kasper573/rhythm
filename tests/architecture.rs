@@ -1,7 +1,5 @@
 use std::path::Path;
 
-/// `src/core` must be self contained: it may not depend on anything outside
-/// of `src/core` except third-party dependencies.
 #[test]
 fn core_is_self_contained() {
     let core = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/core");

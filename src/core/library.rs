@@ -38,8 +38,6 @@ pub fn is_video_file(name: &str) -> bool {
 }
 
 impl StepfileLibrary {
-    /// Files that break the convention and stepfiles that fail to parse are
-    /// skipped with a logged warning.
     pub fn scan() -> StepfileLibrary {
         let root = asset_root().join("stepfiles");
         let mut groups: Vec<StepfileGroup> = Vec::new();
@@ -139,9 +137,6 @@ impl StepfileEntry {
             })
     }
 
-    /// The music file to play: the `#MUSIC` tag if it resolves, otherwise any
-    /// audio file in the folder. `None` means this stepfile has no music on
-    /// disk and plays silent.
     pub fn music_path(&self) -> Option<PathBuf> {
         if let Some(name) = &self.stepfile.music
             && let Some(path) = self.resolve_file(name)

@@ -8,28 +8,20 @@ use std::marker::PhantomData;
 #[derive(Resource)]
 pub struct SceneFade<S: FreelyMutableState> {
     phase: FadePhase<S>,
+    alpha: f32,
 }
 
 impl<S: FreelyMutableState> SceneFade<S> {
     pub fn begin(&mut self, to: S) {
-        if matches!(self.phase, FadePhase::FadingOut { .. }) {
-            return;
+        if !matches!(self.phase, FadePhase::FadingOut(_)) {
+            self.phase = FadePhase::FadingOut(to);
         }
-        let alpha = self.alpha();
-        self.phase = FadePhase::FadingOut { to, alpha };
     }
 
     /// Input is ignored while fading out, to avoid acting on a scene that is
     /// already on its way out.
     pub fn accepts_input(&self) -> bool {
-        !matches!(self.phase, FadePhase::FadingOut { .. })
-    }
-
-    fn alpha(&self) -> f32 {
-        match self.phase {
-            FadePhase::Idle => 0.0,
-            FadePhase::FadingOut { alpha, .. } | FadePhase::FadingIn { alpha } => alpha,
-        }
+        !matches!(self.phase, FadePhase::FadingOut(_))
     }
 }
 
@@ -47,7 +39,8 @@ impl<S: FreelyMutableState + FromWorld> Plugin for SceneFlowPlugin<S> {
             // Boot behind a fully black overlay that fades in like any other
             // scene entrance.
             .insert_resource(SceneFade::<S> {
-                phase: FadePhase::FadingIn { alpha: 1.0 },
+                phase: FadePhase::FadingIn,
+                alpha: 1.0,
             })
             .add_systems(Startup, spawn_fade_overlay)
             .add_systems(Update, run_fade::<S>);
@@ -59,8 +52,8 @@ const FADE_SECONDS: f32 = 0.3;
 #[derive(Clone)]
 enum FadePhase<S> {
     Idle,
-    FadingOut { to: S, alpha: f32 },
-    FadingIn { alpha: f32 },
+    FadingOut(S),
+    FadingIn,
 }
 
 #[derive(Component)]
@@ -86,30 +79,23 @@ fn run_fade<S: FreelyMutableState>(
     mut next_scene: ResMut<NextState<S>>,
     mut overlay: Single<&mut BackgroundColor, With<FadeOverlay>>,
 ) {
-    if matches!(fade.phase, FadePhase::Idle) {
-        return;
-    }
     let step = time.delta_secs() / FADE_SECONDS;
-    fade.phase = match fade.phase.clone() {
-        FadePhase::Idle => FadePhase::Idle,
-        FadePhase::FadingOut { to, alpha } => {
-            let alpha = alpha + step;
-            if alpha >= 1.0 {
+    match fade.phase.clone() {
+        FadePhase::Idle => return,
+        FadePhase::FadingOut(to) => {
+            fade.alpha = (fade.alpha + step).min(1.0);
+            if fade.alpha >= 1.0 {
                 // Swap scenes while the screen is fully black.
                 next_scene.set(to);
-                FadePhase::FadingIn { alpha: 1.0 }
-            } else {
-                FadePhase::FadingOut { to, alpha }
+                fade.phase = FadePhase::FadingIn;
             }
         }
-        FadePhase::FadingIn { alpha } => {
-            let alpha = alpha - step;
-            if alpha <= 0.0 {
-                FadePhase::Idle
-            } else {
-                FadePhase::FadingIn { alpha }
+        FadePhase::FadingIn => {
+            fade.alpha = (fade.alpha - step).max(0.0);
+            if fade.alpha <= 0.0 {
+                fade.phase = FadePhase::Idle;
             }
         }
-    };
-    overlay.0.set_alpha(fade.alpha());
+    }
+    overlay.0.set_alpha(fade.alpha);
 }

@@ -1,11 +1,6 @@
-//! Renders isolated note-field animation scenarios to mp4 files, so sprite
-//! rendering can be reviewed frame by frame without playing the game.
-//!
-//! The field runs headless against a scripted clock: scenarios place notes
-//! and mines on a constant-BPM timeline and flip the same state components
-//! the game's grading systems flip (hold states, receptor presses, graded
-//! fades). Every frame is captured from a render-target image and piped
-//! straight into ffmpeg.
+//! Renders note-field animation scenarios to mp4 files, so sprite rendering
+//! can be reviewed frame by frame without playing the game. Scenarios flip
+//! the same state components the game's grading systems flip.
 //!
 //! ```text
 //! cargo run --bin render_note all --skin ddrextreme_default --bpm 125
@@ -24,10 +19,11 @@ use bevy::time::TimeUpdateStrategy;
 use bevy::window::ExitCondition;
 use bevy::winit::WinitPlugin;
 use clap::Parser;
+use rhythm::core::CLEAR_COLOR;
 use rhythm::core::config::GameConfig;
 use rhythm::core::note_field::{
-    ARROW_SIZE, ArrowFade, HoldPart, HoldVisual, HoldVisualState, MineNote, NoteArrow,
-    NoteFieldClock, NoteFieldPlugin, NoteSpawn, NoteSpeed, Popup, Receptor, SpawnedNote,
+    ARROW_SIZE, FadeOut, GRADED_FADE_SECONDS, HoldPart, HoldVisual, HoldVisualState, MineNote,
+    NoteArrow, NoteFieldClock, NoteFieldPlugin, NoteSpawn, NoteSpeed, Receptor, SpawnedNote,
     spawn_mine, spawn_mine_explosion, spawn_note, spawn_receptors,
 };
 use rhythm::core::note_skin::{ActiveNoteSkin, load_note_skin};
@@ -106,12 +102,7 @@ const HEIGHT: u32 = 720;
 /// bottom edge whatever the scroll speed.
 const LEAD_PIXELS: f32 = 760.0;
 const TAIL_SECONDS: f64 = 1.2;
-/// Mirrors the gameplay fade applied to graded arrows.
-const GRADED_FADE_SECONDS: f32 = 0.05;
 
-/// One renderable situation: notes and mines on the beat grid, plus a script
-/// of the state changes gameplay would have made. Scenarios with their own
-/// `bpms`/`stops` override the flat CLI tempo.
 struct Scenario {
     name: String,
     notes: Vec<ScenarioNote>,
@@ -419,7 +410,7 @@ impl FieldRenderer {
                 .disable::<WinitPlugin>(),
         )
         .add_plugins(NoteFieldPlugin)
-        .insert_resource(ClearColor(Color::srgb(0.04, 0.04, 0.07)))
+        .insert_resource(ClearColor(CLEAR_COLOR))
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(
             1.0 / fps as f64,
         )));
@@ -604,7 +595,7 @@ impl FieldRenderer {
             With<HoldPart>,
             With<MineNote>,
             With<Receptor>,
-            With<Popup>,
+            With<FadeOut>,
             With<Screenshot>,
         )>>();
         let entities: Vec<Entity> = query.iter(world).collect();
@@ -676,7 +667,7 @@ fn apply_action(
         ScriptAction::Fade(index) => {
             world
                 .entity_mut(notes[index].head)
-                .insert(ArrowFade::over(GRADED_FADE_SECONDS));
+                .insert(FadeOut::over(GRADED_FADE_SECONDS));
         }
         ScriptAction::Press(column, held) => {
             let mut receptors = world.query::<&mut Receptor>();

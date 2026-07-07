@@ -29,7 +29,7 @@ pub struct Stepfile {
     pub timing: StepfileTiming,
     pub bg_changes: Vec<BgChange>,
     pub charts: Vec<Chart>,
-    /// Tags this parser has no dedicated field for, keyed by upper-case name.
+    /// Keyed by upper-case tag name.
     pub extra_tags: BTreeMap<String, String>,
 }
 

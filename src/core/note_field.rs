@@ -30,7 +30,7 @@ impl NoteSpeed {
 /// drawn timeline and `timing` converts it to beats. The field's systems run
 /// only while this resource exists. The owner of the field inserts it,
 /// advances `visible`, and flips the state components ([`Receptor::held`],
-/// [`HoldVisual`], [`ArrowFade`]) — gameplay rules stay with the owner.
+/// [`HoldVisual`], [`FadeOut`]) — gameplay rules stay with the owner.
 #[derive(Resource)]
 pub struct NoteFieldClock {
     pub visible: Seconds,
@@ -84,12 +84,10 @@ pub struct NoteArrow {
     pub beat: Beat,
 }
 
-/// What a note arrow looks like: an animated quant-colored tap, or the
-/// skin's hold head for that quant row.
 #[derive(Component)]
 pub enum ArrowVisual {
-    Tap { base: usize },
-    HoldHead { row: usize },
+    Tap { first_frame: usize },
+    HoldHead { skin_row: usize },
 }
 
 /// Render state of a hold, on the same entity as its head arrow.
@@ -142,32 +140,32 @@ pub struct MineNote {
     pub beat: Beat,
 }
 
+pub const GRADED_FADE_SECONDS: f32 = 0.05;
+const MINE_EXPLOSION_SECONDS: f32 = 0.4;
+
+/// Fades the entity out where it stands, then despawns it; fading arrows
+/// stop scrolling because [`scroll_arrows`] skips them.
 #[derive(Component)]
-pub struct ArrowFade {
-    pub remaining: f32,
-    pub total: f32,
+pub struct FadeOut {
+    remaining: f32,
+    total: f32,
+    growth: f32,
 }
 
-impl ArrowFade {
-    pub fn over(seconds: f32) -> ArrowFade {
-        ArrowFade {
+impl FadeOut {
+    pub fn over(seconds: f32) -> FadeOut {
+        FadeOut {
             remaining: seconds,
             total: seconds,
+            growth: 0.0,
         }
     }
-}
 
-#[derive(Component)]
-pub struct Popup {
-    pub remaining: f32,
-    pub total: f32,
-}
-
-impl Popup {
-    pub fn over(seconds: f32) -> Popup {
-        Popup {
-            remaining: seconds,
-            total: seconds,
+    /// Grows slightly while fading, for popup effects.
+    pub fn growing(seconds: f32) -> FadeOut {
+        FadeOut {
+            growth: 0.25,
+            ..FadeOut::over(seconds)
         }
     }
 }
@@ -214,14 +212,14 @@ pub fn spawn_receptors(commands: &mut Commands, skin: &ActiveNoteSkin) -> [Entit
 pub fn spawn_note(commands: &mut Commands, skin: &ActiveNoteSkin, note: &NoteSpawn) -> SpawnedNote {
     let row = skin.quant_row(note.quant);
     let visual = match note.end {
-        Some(_) => ArrowVisual::HoldHead { row },
+        Some(_) => ArrowVisual::HoldHead { skin_row: row },
         None => ArrowVisual::Tap {
-            base: skin.tap_base(row),
+            first_frame: skin.tap_base(row),
         },
     };
     let sprite_index = match visual {
-        ArrowVisual::Tap { base } => base,
-        ArrowVisual::HoldHead { row } => skin.hold_head(row, false),
+        ArrowVisual::Tap { first_frame } => first_frame,
+        ArrowVisual::HoldHead { skin_row } => skin.hold_head(skin_row, false),
     };
     let mut head = commands.spawn((
         NoteArrow {
@@ -301,7 +299,7 @@ pub fn spawn_mine_explosion(
 ) -> Entity {
     commands
         .spawn((
-            Popup::over(0.4),
+            FadeOut::growing(MINE_EXPLOSION_SECONDS),
             skin_sprite(skin, skin.mine_explosion, ARROW_SIZE * 1.7),
             Transform::from_xyz(column_x(column), TARGET_Y, 21.0),
         ))
@@ -352,8 +350,7 @@ impl Plugin for NoteFieldPlugin {
                 animate_receptor_press,
                 animate_hold_parts,
                 animate_mines,
-                fade_graded_arrows,
-                fade_popups,
+                fade_out,
             )
                 .chain()
                 .in_set(NoteFieldSystems)
@@ -371,7 +368,7 @@ const OFFSCREEN_Y: f32 = -10_000.0;
 /// pinned hold sticks at the receptors until the hold resolves.
 fn scroll_arrows(
     clock: Res<NoteFieldClock>,
-    mut arrows: Query<(&NoteArrow, Option<&HoldVisual>, &mut Transform), Without<ArrowFade>>,
+    mut arrows: Query<(&NoteArrow, Option<&HoldVisual>, &mut Transform), Without<FadeOut>>,
 ) {
     let scroll = clock.scroll();
     for (arrow, hold, mut transform) in &mut arrows {
@@ -394,10 +391,10 @@ fn animate_skin_frames(
     let frame = ((cycle * skin.tap_frames as f64) as usize).min(skin.tap_frames - 1);
     for (visual, hold, mut sprite) in &mut arrows {
         let index = match visual {
-            ArrowVisual::Tap { base } => base + frame,
-            ArrowVisual::HoldHead { row } => {
+            ArrowVisual::Tap { first_frame } => first_frame + frame,
+            ArrowVisual::HoldHead { skin_row } => {
                 let active = hold.is_some_and(|hold| hold.state.active());
-                skin.hold_head(*row, active)
+                skin.hold_head(*skin_row, active)
             }
         };
         set_atlas_index(&mut sprite, index);
@@ -455,7 +452,7 @@ fn animate_hold_parts(
             continue;
         };
         if hold.state == HoldVisualState::Ok {
-            set_visibility(&mut visibility, Visibility::Hidden);
+            visibility.set_if_neq(Visibility::Hidden);
             continue;
         }
 
@@ -489,7 +486,7 @@ fn animate_hold_parts(
                 }
                 let length = head_y - body_bottom;
                 if length <= 0.5 {
-                    set_visibility(&mut visibility, Visibility::Hidden);
+                    visibility.set_if_neq(Visibility::Hidden);
                     continue;
                 }
                 // One quad; the repeat sampler wraps the pattern. The rect
@@ -507,7 +504,7 @@ fn animate_hold_parts(
                 );
                 sprite.custom_size = Some(Vec2::new(ARROW_SIZE, height));
                 transform.translation.y = head_y - height / 2.0;
-                set_visibility(&mut visibility, Visibility::Visible);
+                visibility.set_if_neq(Visibility::Visible);
             }
             HoldPiece::Cap => {
                 let index = if active {
@@ -522,7 +519,7 @@ fn animate_hold_parts(
                 let bottom = body_bottom - cap_height;
                 let visible = (top - bottom).min(cap_height);
                 if visible <= 0.5 {
-                    set_visibility(&mut visibility, Visibility::Hidden);
+                    visibility.set_if_neq(Visibility::Hidden);
                     continue;
                 }
                 let rect = (visible < cap_height).then(|| {
@@ -536,7 +533,7 @@ fn animate_hold_parts(
                 set_rect(&mut sprite, rect);
                 sprite.custom_size = Some(Vec2::new(ARROW_SIZE, visible));
                 transform.translation.y = bottom + visible / 2.0;
-                set_visibility(&mut visibility, Visibility::Visible);
+                visibility.set_if_neq(Visibility::Visible);
             }
         }
     }
@@ -559,44 +556,28 @@ fn animate_mines(
     }
 }
 
-/// Faded arrows freeze in place, fade out, and despawn.
-fn fade_graded_arrows(
+#[allow(clippy::type_complexity)]
+fn fade_out(
     time: Res<Time>,
     mut commands: Commands,
-    mut arrows: Query<(Entity, &mut ArrowFade, &mut Sprite)>,
+    mut fading: Query<(
+        Entity,
+        &mut FadeOut,
+        &mut Transform,
+        Option<&mut TextColor>,
+        Option<&mut Sprite>,
+    )>,
 ) {
-    for (entity, mut fade, mut sprite) in &mut arrows {
+    for (entity, mut fade, mut transform, text_color, sprite) in &mut fading {
         fade.remaining -= time.delta_secs();
         if fade.remaining <= 0.0 {
             commands.entity(entity).despawn();
             continue;
         }
         let alpha = fade.remaining / fade.total;
-        sprite.color = sprite.color.with_alpha(alpha);
-    }
-}
-
-/// Popups grow slightly and fade away.
-#[allow(clippy::type_complexity)]
-fn fade_popups(
-    time: Res<Time>,
-    mut commands: Commands,
-    mut popups: Query<(
-        Entity,
-        &mut Popup,
-        &mut Transform,
-        Option<&mut TextColor>,
-        Option<&mut Sprite>,
-    )>,
-) {
-    for (entity, mut popup, mut transform, text_color, sprite) in &mut popups {
-        popup.remaining -= time.delta_secs();
-        if popup.remaining <= 0.0 {
-            commands.entity(entity).despawn();
-            continue;
+        if fade.growth != 0.0 {
+            transform.scale = Vec3::splat(1.0 + fade.growth * (1.0 - alpha));
         }
-        let alpha = popup.remaining / popup.total;
-        transform.scale = Vec3::splat(1.0 + 0.25 * (1.0 - alpha));
         if let Some(mut color) = text_color {
             color.0.set_alpha(alpha);
         }
@@ -607,7 +588,7 @@ fn fade_popups(
 }
 
 // The setters below assign only on change, so unchanged entities don't get
-// flagged for re-extraction every frame.
+// flagged for re-extraction every frame; `set_if_neq` covers `Visibility`.
 
 fn set_atlas_index(sprite: &mut Mut<Sprite>, index: usize) {
     if sprite
@@ -623,11 +604,5 @@ fn set_atlas_index(sprite: &mut Mut<Sprite>, index: usize) {
 fn set_rect(sprite: &mut Mut<Sprite>, rect: Option<Rect>) {
     if sprite.rect != rect {
         sprite.rect = rect;
-    }
-}
-
-fn set_visibility(visibility: &mut Mut<Visibility>, wanted: Visibility) {
-    if **visibility != wanted {
-        **visibility = wanted;
     }
 }

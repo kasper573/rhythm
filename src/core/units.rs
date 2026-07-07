@@ -2,7 +2,6 @@ use derive_more::{Add, AddAssign, Display, Mul, Neg, Sub};
 use serde::{Deserialize, Serialize};
 use std::ops::Div;
 
-/// Seconds, typically a position on the audio clock.
 #[derive(
     Debug,
     Clone,
@@ -53,7 +52,6 @@ impl Div<Seconds> for Seconds {
     }
 }
 
-/// Whole milliseconds, used where settings are expressed in milliseconds.
 #[derive(
     Debug,
     Clone,
@@ -78,7 +76,6 @@ impl Millis {
     }
 }
 
-/// A musical position in beats from beat zero of a stepfile.
 #[derive(
     Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize, Add, Sub, Display,
 )]

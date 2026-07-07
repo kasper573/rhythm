@@ -2,18 +2,20 @@ use super::{HoldOutcome, JudgmentShown, MineOutcome, PlaySession, direction_acti
 use crate::core::config::{GameConfig, StepOutcome};
 use crate::core::font::GameFont;
 use crate::core::input::Actions;
-use crate::core::note_field::{ArrowFade, Popup, TARGET_Y, column_x, spawn_mine_explosion};
+use crate::core::note_field::{
+    FadeOut, GRADED_FADE_SECONDS, TARGET_Y, column_x, spawn_mine_explosion,
+};
 use crate::core::note_skin::ActiveNoteSkin;
 use crate::core::settings::Settings;
 use crate::scenes::GameScene;
 use bevy::prelude::*;
 
-const GRADED_FADE_SECONDS: f32 = 0.05;
 /// Hold let-go grace: life drains from full to dropped over this long once
 /// the panel is released.
 const HOLD_GRACE_SECONDS: f32 = 0.25;
 /// Roll window: rolls drain constantly and each fresh step refills them.
 const ROLL_GRACE_SECONDS: f32 = 0.5;
+const HOLD_POPUP_SECONDS: f32 = 0.6;
 
 /// Grades ¤Left¤/¤Down¤/¤Up¤/¤Right¤ presses against the nearest ungraded
 /// note in that column. Inputs that hit no grading window are harmless no-ops.
@@ -67,14 +69,14 @@ pub(super) fn grade_step_inputs(
             None => {
                 commands
                     .entity(note.entity)
-                    .insert(ArrowFade::over(GRADED_FADE_SECONDS));
+                    .insert(FadeOut::over(GRADED_FADE_SECONDS));
             }
         }
     }
 }
 
-/// Notes expire into the always-existing Miss grade once they scroll further
-/// past the player than the widest grading window. A hold whose head was
+/// Notes expire into Miss once they scroll further past the player than
+/// the widest grading window. A hold whose head was
 /// missed can never be caught, so it drops immediately.
 pub(super) fn expire_missed_notes(
     settings: Res<Settings>,
@@ -108,7 +110,7 @@ pub(super) fn expire_missed_notes(
                 None => {
                     commands
                         .entity(note.entity)
-                        .insert(ArrowFade::over(GRADED_FADE_SECONDS));
+                        .insert(FadeOut::over(GRADED_FADE_SECONDS));
                 }
             }
         }
@@ -159,7 +161,7 @@ pub(super) fn update_holds(
             hold.result = Some(HoldOutcome::Ok);
             commands
                 .entity(entity)
-                .insert(ArrowFade::over(GRADED_FADE_SECONDS));
+                .insert(FadeOut::over(GRADED_FADE_SECONDS));
             spawn_hold_popup(&mut commands, &font, column, HoldOutcome::Ok);
         } else if hold.life <= 0.0 {
             hold.result = Some(HoldOutcome::Ng);
@@ -228,7 +230,7 @@ fn spawn_hold_popup(commands: &mut Commands, font: &GameFont, column: usize, out
     };
     commands.spawn((
         DespawnOnExit(GameScene::FilePlayer),
-        Popup::over(0.6),
+        FadeOut::growing(HOLD_POPUP_SECONDS),
         Text2d::new(label),
         font.sized(30.0),
         TextColor(color),

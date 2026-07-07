@@ -77,8 +77,7 @@ pub struct GradeDef {
     pub timing_feedback: TimingFeedback,
 }
 
-/// How a grade's judgment text reports input timing. In the config this is
-/// `false`, `true`, or `"ms"`.
+/// In the config: `false`, `true`, or `"ms"`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TimingFeedback {
     #[default]
@@ -89,7 +88,6 @@ pub enum TimingFeedback {
     Millis,
 }
 
-/// Index into [`GameConfig::grades`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GradeIndex(pub usize);
 

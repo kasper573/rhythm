@@ -1,8 +1,5 @@
 pub mod assets;
 pub mod config;
-
-/// The fixed logical screen size shared by the window and full-screen visuals.
-pub const SCREEN_SIZE: bevy::math::Vec2 = bevy::math::Vec2::new(1280.0, 720.0);
 pub mod font;
 pub mod input;
 pub mod jsonc;
@@ -17,3 +14,7 @@ pub mod stepfile;
 pub mod tick_track;
 pub mod units;
 pub mod video;
+
+/// The fixed logical screen size shared by the window and full-screen visuals.
+pub const SCREEN_SIZE: bevy::math::Vec2 = bevy::math::Vec2::new(1280.0, 720.0);
+pub const CLEAR_COLOR: bevy::color::Color = bevy::color::Color::srgb(0.04, 0.04, 0.07);

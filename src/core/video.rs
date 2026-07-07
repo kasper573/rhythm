@@ -1,11 +1,11 @@
 use crate::core::units::Seconds;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use std::collections::VecDeque;
 use std::io::Read;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
+use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 
 /// Streams a video file into an [`Image`] asset by decoding frames through an
 /// `ffmpeg` subprocess. Playback position is driven by the caller's clock, so
@@ -21,7 +21,7 @@ pub struct VideoStream {
     /// Clock time at which frame zero is displayed.
     start_time: Seconds,
     frames_shown: i64,
-    frames: Arc<Mutex<VecDeque<Vec<u8>>>>,
+    frames: Mutex<Receiver<Vec<u8>>>,
     process: Child,
 }
 
@@ -46,12 +46,9 @@ impl VideoStream {
             .take()
             .ok_or_else(|| "ffmpeg stdout unavailable".to_string())?;
 
-        let frames: Arc<Mutex<VecDeque<Vec<u8>>>> = Arc::default();
+        let (sender, frames) = sync_channel(QUEUE_LIMIT);
         let frame_size = (width * height * 4) as usize;
-        std::thread::spawn({
-            let frames = Arc::clone(&frames);
-            move || read_frames(stdout, frame_size, &frames)
-        });
+        std::thread::spawn(move || read_frames(stdout, frame_size, &sender));
 
         let image = images.add(Image::new_fill(
             Extent3d {
@@ -72,7 +69,7 @@ impl VideoStream {
             frames_per_second,
             start_time,
             frames_shown: 0,
-            frames,
+            frames: Mutex::new(frames),
             process,
         })
     }
@@ -82,18 +79,13 @@ impl VideoStream {
     pub fn update(&mut self, clock: Seconds, images: &mut Assets<Image>) {
         let target = ((clock - self.start_time).0 * self.frames_per_second).floor() as i64;
         let mut latest = None;
-        {
-            let mut queue = self.frames.lock().expect("video frame queue poisoned");
-            while self.frames_shown <= target {
-                match queue.pop_front() {
-                    Some(frame) => {
-                        self.frames_shown += 1;
-                        latest = Some(frame);
-                    }
-                    None => break,
-                }
-            }
+        let queue = self.frames.lock().expect("video frame queue poisoned");
+        while self.frames_shown <= target {
+            let Ok(frame) = queue.try_recv() else { break };
+            self.frames_shown += 1;
+            latest = Some(frame);
         }
+        drop(queue);
         if let Some(frame) = latest
             && let Some(mut image) = images.get_mut(&self.image)
         {
@@ -109,24 +101,15 @@ impl Drop for VideoStream {
     }
 }
 
-/// Small buffer of decoded frames; the pipe's own buffering back-pressures
+/// Small buffer of decoded frames; the bounded channel back-pressures
 /// ffmpeg, so the whole video never sits in memory.
 const QUEUE_LIMIT: usize = 8;
 
-fn read_frames(mut stdout: impl Read, frame_size: usize, frames: &Mutex<VecDeque<Vec<u8>>>) {
+fn read_frames(mut stdout: impl Read, frame_size: usize, frames: &SyncSender<Vec<u8>>) {
     loop {
-        let backlog = frames.lock().expect("video frame queue poisoned").len();
-        if backlog >= QUEUE_LIMIT {
-            std::thread::sleep(std::time::Duration::from_millis(5));
-            continue;
-        }
         let mut frame = vec![0u8; frame_size];
-        match stdout.read_exact(&mut frame) {
-            Ok(()) => frames
-                .lock()
-                .expect("video frame queue poisoned")
-                .push_back(frame),
-            Err(_) => return,
+        if stdout.read_exact(&mut frame).is_err() || frames.send(frame).is_err() {
+            return;
         }
     }
 }

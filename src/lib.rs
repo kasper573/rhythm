@@ -1,7 +1,6 @@
 pub mod core;
 pub mod scenes;
 
-use crate::core::SCREEN_SIZE;
 use crate::core::config::GameConfig;
 use crate::core::font::FontPlugin;
 use crate::core::input::InputPlugin;
@@ -10,6 +9,7 @@ use crate::core::note_field::NoteFieldPlugin;
 use crate::core::note_skin::NoteSkinPlugin;
 use crate::core::settings::SettingsPlugin;
 use crate::core::sfx::SfxPlugin;
+use crate::core::{CLEAR_COLOR, SCREEN_SIZE};
 use bevy::prelude::*;
 
 pub fn run() {
@@ -42,7 +42,7 @@ pub fn run() {
                     ..default()
                 }),
         )
-        .insert_resource(ClearColor(Color::srgb(0.04, 0.04, 0.07)))
+        .insert_resource(ClearColor(CLEAR_COLOR))
         .insert_resource(config)
         .insert_resource(StepfileLibrary::scan())
         .add_plugins((

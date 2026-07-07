@@ -1,7 +1,7 @@
 use crate::core::config::GameConfig;
 use crate::core::font::GameFont;
 use crate::core::input::{Actions, GameAction};
-use crate::core::menu::{Menu, MenuInputLock, MenuItem, MenuSelected};
+use crate::core::menu::{INACTIVE_COLOR, Menu, MenuInputLock, MenuItem, MenuSelected, TITLE_COLOR};
 use crate::core::settings::Settings;
 use crate::core::sfx::{PlaySfx, Sfx};
 use crate::scenes::{GameScene, SceneFade, scene_accepts_input};
@@ -67,7 +67,7 @@ fn enter(
             parent.spawn((
                 Text::new("Keymap"),
                 font.sized(52.0),
-                TextColor(Color::srgb(0.95, 0.85, 0.4)),
+                TextColor(TITLE_COLOR),
                 Node {
                     margin: UiRect::bottom(Val::Px(24.0)),
                     ..default()
@@ -91,7 +91,7 @@ fn enter(
                             MenuItem(index),
                             Text::new(row_label(action, &settings, &config)),
                             font.sized(26.0),
-                            TextColor(Color::srgb(0.45, 0.45, 0.55)),
+                            TextColor(INACTIVE_COLOR),
                         ));
                     }
                 });

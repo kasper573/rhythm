@@ -1,6 +1,7 @@
 use crate::core::config::GameConfig;
 use crate::core::font::GameFont;
 use crate::core::input::{Actions, GameAction, NavPulse};
+use crate::core::menu::{ACTIVE_COLOR, INACTIVE_COLOR, TITLE_COLOR};
 use crate::core::note_field::NoteSpeed;
 use crate::core::note_skin::NoteSkinLibrary;
 use crate::core::settings::Settings;
@@ -51,9 +52,6 @@ struct ActiveRow(usize);
 #[derive(Component)]
 struct RowText(usize);
 
-const ACTIVE_COLOR: Color = Color::WHITE;
-const INACTIVE_COLOR: Color = Color::srgb(0.45, 0.45, 0.55);
-
 fn enter(mut commands: Commands, font: Res<GameFont>) {
     commands.insert_resource(ActiveRow(0));
     commands
@@ -73,7 +71,7 @@ fn enter(mut commands: Commands, font: Res<GameFont>) {
             parent.spawn((
                 Text::new("Player Options"),
                 font.sized(52.0),
-                TextColor(Color::srgb(0.95, 0.85, 0.4)),
+                TextColor(TITLE_COLOR),
                 Node {
                     margin: UiRect::bottom(Val::Px(24.0)),
                     ..default()

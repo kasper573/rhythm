@@ -1,6 +1,7 @@
 use crate::core::config::{GameConfig, Judgment};
 use crate::core::font::GameFont;
 use crate::core::input::{Actions, GameAction};
+use crate::core::menu::TITLE_COLOR;
 use crate::core::sfx::{PlaySfx, Sfx};
 use crate::scenes::file_player::ScoreResults;
 use crate::scenes::file_select::FileSelectTarget;
@@ -64,14 +65,13 @@ fn enter(
             parent.spawn((
                 Text::new(results.title.clone()),
                 font.sized(46.0),
-                TextColor(Color::srgb(0.95, 0.85, 0.4)),
+                TextColor(TITLE_COLOR),
                 Node {
                     margin: UiRect::bottom(Val::Px(28.0)),
                     ..default()
                 },
             ));
-            // Grades from best to worst (config is validated smallest window
-            // first), with the always-existing Miss at the end.
+            // Best to worst (config validates smallest window first), Miss last.
             for (grade, count) in config.grades.iter().zip(&grade_counts) {
                 parent.spawn((
                     Text::new(format!("{:<12} {count}", grade.name)),

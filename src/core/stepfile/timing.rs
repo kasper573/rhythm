@@ -1,8 +1,5 @@
 use crate::core::units::{Beat, Seconds};
 
-/// Converts between musical beats and audio-clock seconds for one stepfile,
-/// accounting for the file's offset, BPM changes, and stops.
-///
 /// All `Seconds` values are positions on the audio clock of the music file:
 /// beat zero maps to `-offset` seconds, matching the .sm `#OFFSET` convention.
 #[derive(Debug, Clone, PartialEq)]

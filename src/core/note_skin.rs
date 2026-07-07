@@ -10,8 +10,7 @@ pub struct ActiveNoteSkin {
     pub name: String,
     pub sheet: Handle<Image>,
     pub layout: Handle<TextureAtlasLayout>,
-    /// `(quant, base atlas index)` per tap row; frames follow the base.
-    tap_rows: Vec<(u32, usize)>,
+    tap_rows: Vec<TapRow>,
     pub tap_frames: usize,
     pub tap_beats_per_cycle: f64,
     pub receptor_frames: [usize; 2],
@@ -32,7 +31,7 @@ pub struct ActiveNoteSkin {
     /// the cap takes over.
     pub hold_body_stop_above_tail: f32,
     pub hold_cap_size: Vec2,
-    /// Brightness of dropped (NG) hold parts, per the skin.
+    /// Brightness of dropped (NG) hold parts.
     pub dropped_brightness: f32,
 }
 
@@ -41,12 +40,12 @@ impl ActiveNoteSkin {
     pub fn quant_row(&self, quant: u32) -> usize {
         self.tap_rows
             .iter()
-            .position(|(row_quant, _)| *row_quant == quant)
+            .position(|row| row.quant == quant)
             .unwrap_or(self.tap_rows.len() - 1)
     }
 
     pub fn tap_base(&self, row: usize) -> usize {
-        self.tap_rows[row.min(self.tap_rows.len() - 1)].1
+        self.tap_rows[row.min(self.tap_rows.len() - 1)].first_frame
     }
 
     /// Hold head sprite for a skin row; skins with a single shared head
@@ -65,6 +64,11 @@ impl ActiveNoteSkin {
 #[derive(Resource)]
 pub struct NoteSkinLibrary {
     pub skins: Vec<NoteSkinEntry>,
+}
+
+struct TapRow {
+    quant: u32,
+    first_frame: usize,
 }
 
 pub struct NoteSkinEntry {
@@ -141,7 +145,7 @@ pub fn load_note_skin(
     let taps = &manifest.taps;
     let mut tap_rows = Vec::new();
     for (row, quant) in taps.quants.iter().enumerate() {
-        let mut base = None;
+        let mut first_frame = None;
         for frame in 0..taps.frames {
             let index = rect(
                 [
@@ -150,9 +154,12 @@ pub fn load_note_skin(
                 ],
                 taps.frame_size,
             );
-            base.get_or_insert(index);
+            first_frame.get_or_insert(index);
         }
-        tap_rows.push((*quant, base.expect("taps have at least one frame")));
+        tap_rows.push(TapRow {
+            quant: *quant,
+            first_frame: first_frame.expect("taps have at least one frame"),
+        });
     }
 
     let receptor_frames = [

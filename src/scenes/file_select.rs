@@ -14,7 +14,7 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::sprite::Anchor;
 use std::time::Duration;
 
-/// The stepfile and chart the player picked; the file player scene requires it.
+/// The file player scene's entry param.
 #[derive(Resource, Debug, Clone, Copy)]
 pub struct SelectedStepfile {
     pub id: StepfileId,
@@ -76,6 +76,7 @@ const WHEEL_X: f32 = 330.0;
 /// Rows shift right as they leave the center, curving the wheel.
 const BULGE_PER_ROW: f32 = 3.0;
 const PREVIEW_DEBOUNCE: Seconds = Seconds(0.35);
+const BANNER_SIZE: Vec2 = Vec2::new(500.0, 156.0);
 
 const BACKDROP_COLOR: Color = Color::srgb(0.05, 0.085, 0.03);
 const STEPFILE_BAR: Color = Color::srgb(0.10, 0.19, 0.07);
@@ -96,8 +97,7 @@ struct Wheel {
     /// Rows of visual displacement remaining from recent navigation; eased
     /// back to zero every frame so the active item spins into the center.
     scroll_offset: f32,
-    /// The one group whose stepfiles are listed, if any.
-    expanded: Option<usize>,
+    expanded_group: Option<usize>,
     /// Stepfile whose music the preview aims at, plus its debounce clock.
     preview_stepfile: Option<StepfileId>,
     preview_wait: Seconds,
@@ -107,9 +107,9 @@ struct Wheel {
     dirty: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 enum WheelEntry {
-    Group { index: usize, label: String },
+    Group { index: usize },
     Stepfile { id: StepfileId },
 }
 
@@ -126,19 +126,7 @@ struct SlotTitle;
 struct SlotArtist;
 
 #[derive(Component)]
-struct InfoBanner;
-
-#[derive(Component)]
-struct InfoBannerText;
-
-#[derive(Component)]
-struct InfoBpmText;
-
-#[derive(Component)]
-struct InfoDifficultyText;
-
-#[derive(Component)]
-struct InfoStatsText;
+struct InfoPanel;
 
 fn enter(
     mut commands: Commands,
@@ -159,23 +147,20 @@ fn enter(
             }))
         });
     commands.remove_resource::<FileSelectTarget>();
-    let expanded = target.map(|target| match target {
+    let expanded_group = target.map(|target| match target {
         FileSelectTarget::Group(index) => index,
         FileSelectTarget::Stepfile(id) => id.group,
     });
-    let entries = build_entries(&library, expanded);
+    let entries = build_entries(&library, expanded_group);
     let active = target
         .and_then(|target| {
             entries.iter().position(|entry| match (target, entry) {
                 (FileSelectTarget::Stepfile(id), WheelEntry::Stepfile { id: entry_id }) => {
                     *entry_id == id
                 }
-                (
-                    FileSelectTarget::Group(index),
-                    WheelEntry::Group {
-                        index: entry_index, ..
-                    },
-                ) => *entry_index == index,
+                (FileSelectTarget::Group(index), WheelEntry::Group { index: entry_index }) => {
+                    *entry_index == index
+                }
                 _ => false,
             })
         })
@@ -247,8 +232,6 @@ fn enter(
         Transform::from_xyz(WHEEL_X, 0.0, 12.0),
     ));
 
-    spawn_info_panel(&mut commands, &font, &bar_image);
-
     if library.is_empty() {
         commands.spawn((
             DespawnOnExit(GameScene::FileSelect),
@@ -263,7 +246,7 @@ fn enter(
         entries,
         active,
         scroll_offset: 0.0,
-        expanded,
+        expanded_group,
         preview_stepfile: None,
         preview_wait: Seconds::ZERO,
         preview_entity: None,
@@ -274,52 +257,6 @@ fn enter(
 
 fn exit(mut commands: Commands) {
     commands.remove_resource::<Wheel>();
-}
-
-fn spawn_info_panel(commands: &mut Commands, font: &GameFont, bar_image: &Handle<Image>) {
-    commands.spawn((
-        DespawnOnExit(GameScene::FileSelect),
-        InfoBanner,
-        Sprite {
-            image: bar_image.clone(),
-            color: BANNER_TINT,
-            custom_size: Some(Vec2::new(500.0, 156.0)),
-            ..default()
-        },
-        Transform::from_xyz(-320.0, 190.0, 5.0),
-    ));
-    commands.spawn((
-        DespawnOnExit(GameScene::FileSelect),
-        InfoBannerText,
-        Text2d::new(""),
-        font.sized(24.0),
-        TextColor(BANNER_TEXT),
-        Transform::from_xyz(-320.0, 190.0, 5.5),
-    ));
-    commands.spawn((
-        DespawnOnExit(GameScene::FileSelect),
-        InfoBpmText,
-        Text2d::new(""),
-        font.sized(28.0),
-        TextColor(BPM_TEXT),
-        Transform::from_xyz(-320.0, 70.0, 5.0),
-    ));
-    commands.spawn((
-        DespawnOnExit(GameScene::FileSelect),
-        InfoDifficultyText,
-        Text2d::new(""),
-        font.sized(34.0),
-        TextColor(Color::WHITE),
-        Transform::from_xyz(-320.0, 18.0, 5.0),
-    ));
-    commands.spawn((
-        DespawnOnExit(GameScene::FileSelect),
-        InfoStatsText,
-        Text2d::new(""),
-        font.sized(22.0),
-        TextColor(Color::srgb(0.75, 0.9, 0.7)),
-        Transform::from_xyz(-320.0, -70.0, 5.0),
-    ));
 }
 
 fn navigate(
@@ -410,7 +347,7 @@ fn select(
         *held += Seconds(time.delta_secs_f64());
         if before < OPTIONS_HOLD && *held >= OPTIONS_HOLD {
             let row = match &wheel.entries[wheel.active] {
-                WheelEntry::Group { index, .. } => FileSelectTarget::Group(*index),
+                WheelEntry::Group { index } => FileSelectTarget::Group(*index),
                 WheelEntry::Stepfile { id } => FileSelectTarget::Stepfile(*id),
             };
             commands.insert_resource(row);
@@ -426,18 +363,16 @@ fn select(
     }
 
     sfx.write(PlaySfx(Sfx::WheelSelect));
-    match wheel.entries[wheel.active].clone() {
-        WheelEntry::Group { index, .. } => {
+    match wheel.entries[wheel.active] {
+        WheelEntry::Group { index } => {
             // Only one group is ever expanded: opening a group closes the
             // previous one, opening it again closes it.
-            wheel.expanded = (wheel.expanded != Some(index)).then_some(index);
-            wheel.entries = build_entries(&library, wheel.expanded);
+            wheel.expanded_group = (wheel.expanded_group != Some(index)).then_some(index);
+            wheel.entries = build_entries(&library, wheel.expanded_group);
             wheel.active = wheel
                 .entries
                 .iter()
-                .position(
-                    |entry| matches!(entry, WheelEntry::Group { index: i, .. } if *i == index),
-                )
+                .position(|entry| matches!(entry, WheelEntry::Group { index: i } if *i == index))
                 .unwrap_or(0);
             wheel.dirty = true;
             sfx.write(PlaySfx(Sfx::GroupToggle));
@@ -502,8 +437,9 @@ fn refresh_wheel_rows(
     for (slot, mut text, mut color, mut transform) in &mut titles {
         let is_center = slot.0 == CENTER;
         match slot_entry(&wheel, slot.0) {
-            Some(WheelEntry::Group { label, .. }) => {
-                text.0 = label.clone();
+            Some(WheelEntry::Group { index }) => {
+                let group = &library.groups[*index];
+                text.0 = format!("{} ({})", group.name, group.stepfiles.len());
                 color.0 = GROUP_TEXT;
                 transform.translation.y = 0.0;
             }
@@ -539,93 +475,113 @@ fn refresh_wheel_rows(
     }
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+/// Rebuilt from scratch: despawn-and-respawn beats mutating a panel of
+/// text entities in place.
 fn refresh_info_panel(
     mut wheel: ResMut<Wheel>,
     library: Res<StepfileLibrary>,
     preferred: Res<PreferredDifficulty>,
     asset_server: Res<AssetServer>,
-    mut banner: Single<&mut Sprite, With<InfoBanner>>,
-    mut banner_text: Single<&mut Text2d, (With<InfoBannerText>, Without<InfoBpmText>)>,
-    mut bpm_text: Single<&mut Text2d, (With<InfoBpmText>, Without<InfoDifficultyText>)>,
-    mut difficulty_text: Single<
-        (&mut Text2d, &mut TextColor),
-        (With<InfoDifficultyText>, Without<InfoBannerText>),
-    >,
-    mut stats_text: Single<
-        &mut Text2d,
-        (
-            With<InfoStatsText>,
-            Without<InfoBannerText>,
-            Without<InfoBpmText>,
-            Without<InfoDifficultyText>,
-        ),
-    >,
+    font: Res<GameFont>,
+    panels: Query<Entity, With<InfoPanel>>,
+    mut commands: Commands,
 ) {
     if !wheel.dirty {
         return;
     }
     wheel.dirty = false;
+    for panel in &panels {
+        commands.entity(panel).despawn();
+    }
+    let Some(entry) = wheel.entries.get(wheel.active).copied() else {
+        return;
+    };
 
-    let (difficulty_label, difficulty_color) = &mut *difficulty_text;
-    match wheel.entries.get(wheel.active) {
-        Some(WheelEntry::Stepfile { id }) => {
-            let entry = library.stepfile(*id);
-            match entry.banner_path().as_deref().and_then(asset_server_path) {
-                Some(path) => {
-                    banner.image = asset_server.load(path);
-                    banner.color = Color::WHITE;
-                    banner_text.0 = String::new();
-                }
-                None => {
-                    banner.image = wheel.bar_image.clone();
-                    banner.color = BANNER_TINT;
-                    banner_text.0 = entry.display_title();
-                }
-            }
-            bpm_text.0 = bpm_label(&entry.stepfile);
-            match chart_for_preference(&entry.stepfile, preferred.0) {
-                Some(index) => {
-                    let chart = &entry.stepfile.charts[index];
-                    let (name, color) = difficulty_style(&chart.difficulty);
-                    difficulty_label.0 = format!("{name} {}", chart.meter);
-                    difficulty_color.0 = color;
-                    stats_text.0 = stats_label(&entry.stepfile, index);
-                }
-                None => {
-                    difficulty_label.0 = String::new();
-                    stats_text.0 = String::new();
-                }
-            }
+    let (banner_path, fallback_title, headline, chart) = match entry {
+        WheelEntry::Stepfile { id } => {
+            let entry = library.stepfile(id);
+            (
+                entry.banner_path(),
+                entry.display_title(),
+                bpm_label(&entry.stepfile),
+                chart_for_preference(&entry.stepfile, preferred.0).map(|index| (id, index)),
+            )
         }
-        Some(WheelEntry::Group { index, .. }) => {
-            let group = &library.groups[*index];
-            match group.banner_path.as_deref().and_then(asset_server_path) {
-                Some(path) => {
-                    banner.image = asset_server.load(path);
-                    banner.color = Color::WHITE;
-                    banner_text.0 = String::new();
-                }
-                None => {
-                    banner.image = wheel.bar_image.clone();
-                    banner.color = BANNER_TINT;
-                    banner_text.0 = group.name.clone();
-                }
-            }
-            bpm_text.0 = match group.stepfiles.len() {
+        WheelEntry::Group { index } => {
+            let group = &library.groups[index];
+            let headline = match group.stepfiles.len() {
                 1 => "1 stepfile".to_string(),
                 count => format!("{count} stepfiles"),
             };
-            difficulty_label.0 = String::new();
-            stats_text.0 = String::new();
+            (
+                group.banner_path.clone(),
+                group.name.clone(),
+                headline,
+                None,
+            )
         }
-        None => {
-            banner_text.0 = String::new();
-            bpm_text.0 = String::new();
-            difficulty_label.0 = String::new();
-            stats_text.0 = String::new();
-        }
-    }
+    };
+
+    commands
+        .spawn((
+            DespawnOnExit(GameScene::FileSelect),
+            InfoPanel,
+            Transform::from_xyz(-320.0, 0.0, 5.0),
+            Visibility::default(),
+        ))
+        .with_children(|panel| {
+            match banner_path.as_deref().and_then(asset_server_path) {
+                Some(path) => {
+                    panel.spawn((
+                        Sprite {
+                            image: asset_server.load(path),
+                            custom_size: Some(BANNER_SIZE),
+                            ..default()
+                        },
+                        Transform::from_xyz(0.0, 190.0, 0.0),
+                    ));
+                }
+                None => {
+                    panel.spawn((
+                        Sprite {
+                            image: wheel.bar_image.clone(),
+                            color: BANNER_TINT,
+                            custom_size: Some(BANNER_SIZE),
+                            ..default()
+                        },
+                        Transform::from_xyz(0.0, 190.0, 0.0),
+                    ));
+                    panel.spawn((
+                        Text2d::new(fallback_title),
+                        font.sized(24.0),
+                        TextColor(BANNER_TEXT),
+                        Transform::from_xyz(0.0, 190.0, 0.5),
+                    ));
+                }
+            }
+            panel.spawn((
+                Text2d::new(headline),
+                font.sized(28.0),
+                TextColor(BPM_TEXT),
+                Transform::from_xyz(0.0, 70.0, 0.0),
+            ));
+            let Some((id, index)) = chart else { return };
+            let stepfile = &library.stepfile(id).stepfile;
+            let chart = &stepfile.charts[index];
+            let (name, color) = difficulty_style(&chart.difficulty);
+            panel.spawn((
+                Text2d::new(format!("{name} {}", chart.meter)),
+                font.sized(34.0),
+                TextColor(color),
+                Transform::from_xyz(0.0, 18.0, 0.0),
+            ));
+            panel.spawn((
+                Text2d::new(stats_label(stepfile, index)),
+                font.sized(22.0),
+                TextColor(Color::srgb(0.75, 0.9, 0.7)),
+                Transform::from_xyz(0.0, -70.0, 0.0),
+            ));
+        });
 }
 
 fn stats_label(stepfile: &Stepfile, chart_index: usize) -> String {
@@ -715,14 +671,11 @@ fn slot_entry(wheel: &Wheel, slot: usize) -> Option<&WheelEntry> {
     wheel.entries.get(index as usize)
 }
 
-fn build_entries(library: &StepfileLibrary, expanded: Option<usize>) -> Vec<WheelEntry> {
+fn build_entries(library: &StepfileLibrary, expanded_group: Option<usize>) -> Vec<WheelEntry> {
     let mut entries = Vec::new();
     for (group_index, group) in library.groups.iter().enumerate() {
-        let is_expanded = expanded == Some(group_index);
-        entries.push(WheelEntry::Group {
-            index: group_index,
-            label: format!("{} ({})", group.name, group.stepfiles.len()),
-        });
+        let is_expanded = expanded_group == Some(group_index);
+        entries.push(WheelEntry::Group { index: group_index });
         if !is_expanded {
             continue;
         }

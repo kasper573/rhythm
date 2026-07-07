@@ -6,6 +6,10 @@ use bevy::prelude::*;
 use bevy::state::state::FreelyMutableState;
 use std::marker::PhantomData;
 
+pub const TITLE_COLOR: Color = Color::srgb(0.95, 0.85, 0.4);
+pub const ACTIVE_COLOR: Color = Color::WHITE;
+pub const INACTIVE_COLOR: Color = Color::srgb(0.45, 0.45, 0.55);
+
 #[derive(Component)]
 pub struct Menu {
     pub active: usize,
@@ -105,10 +109,6 @@ impl<S: FreelyMutableState> Plugin for MenuPlugin<S> {
             );
     }
 }
-
-const TITLE_COLOR: Color = Color::srgb(0.95, 0.85, 0.4);
-const ACTIVE_COLOR: Color = Color::srgb(1.0, 1.0, 1.0);
-const INACTIVE_COLOR: Color = Color::srgb(0.45, 0.45, 0.55);
 
 fn menus_active<S: FreelyMutableState>(lock: Res<MenuInputLock>, fade: Res<SceneFade<S>>) -> bool {
     !lock.0 && fade.accepts_input()
