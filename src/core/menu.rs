@@ -6,16 +6,12 @@ use bevy::prelude::*;
 use bevy::state::state::FreelyMutableState;
 use std::marker::PhantomData;
 
-/// A simple vertical list menu driven by ¤Next¤/¤Previous¤/¤Select¤.
-/// Spawn one per scene (see [`spawn_menu`]) and read [`MenuSelected`]
-/// messages to react to activations.
 #[derive(Component)]
 pub struct Menu {
     pub active: usize,
     pub len: usize,
 }
 
-/// Marks a selectable row of a [`Menu`]; the index matches the item order.
 #[derive(Component)]
 pub struct MenuItem(pub usize);
 
@@ -24,13 +20,9 @@ pub struct MenuSelected {
     pub index: usize,
 }
 
-/// While `true`, menus ignore all input (used by the keymap scene's
-/// press-a-key prompt).
 #[derive(Resource, Default)]
 pub struct MenuInputLock(pub bool);
 
-/// Spawns a full-screen menu scene: a title and a vertical list of items,
-/// despawned when `scene` exits.
 pub fn spawn_menu<S: States>(
     commands: &mut Commands,
     font: &GameFont,

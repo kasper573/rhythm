@@ -1,55 +1,26 @@
 use bevy::prelude::*;
 use std::collections::HashMap;
+use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
 
-/// Every unique sound effect in the game.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIter, IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum Sfx {
-    /// A: menu next/previous
     Navigate,
-    /// B: menu select
     Select,
-    /// C: cancel / go back
     Cancel,
-    /// D: stepfile wheel next/previous
     WheelMove,
-    /// E: stepfile wheel select
     WheelSelect,
-    /// F: group collapse toggle
     GroupToggle,
-    /// G: start a file
     StartFile,
-    /// H: metronome tick (also mixed into the pre-rendered tick track)
     Tick,
 }
 
 impl Sfx {
-    pub const ALL: [Sfx; 8] = [
-        Sfx::Navigate,
-        Sfx::Select,
-        Sfx::Cancel,
-        Sfx::WheelMove,
-        Sfx::WheelSelect,
-        Sfx::GroupToggle,
-        Sfx::StartFile,
-        Sfx::Tick,
-    ];
-
-    /// Path relative to the asset root.
-    pub fn asset_path(self) -> &'static str {
-        match self {
-            Sfx::Navigate => "sfx/navigate.wav",
-            Sfx::Select => "sfx/select.wav",
-            Sfx::Cancel => "sfx/cancel.wav",
-            Sfx::WheelMove => "sfx/wheel_move.wav",
-            Sfx::WheelSelect => "sfx/wheel_select.wav",
-            Sfx::GroupToggle => "sfx/group_toggle.wav",
-            Sfx::StartFile => "sfx/start_file.wav",
-            Sfx::Tick => "sfx/tick.wav",
-        }
+    pub fn asset_path(self) -> String {
+        format!("sfx/{}.wav", <&str>::from(self))
     }
 }
 
-/// Write this message from anywhere to play a one-shot sound effect.
 #[derive(Message)]
 pub struct PlaySfx(pub Sfx);
 
@@ -67,8 +38,7 @@ impl Plugin for SfxPlugin {
 struct SfxLibrary(HashMap<Sfx, Handle<AudioSource>>);
 
 fn load_sfx(mut commands: Commands, asset_server: Res<AssetServer>) {
-    let handles = Sfx::ALL
-        .into_iter()
+    let handles = Sfx::iter()
         .map(|sfx| (sfx, asset_server.load(sfx.asset_path())))
         .collect();
     commands.insert_resource(SfxLibrary(handles));

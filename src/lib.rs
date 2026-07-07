@@ -1,5 +1,4 @@
 pub mod core;
-pub mod integrations;
 pub mod scenes;
 
 use crate::core::SCREEN_SIZE;
@@ -8,9 +7,9 @@ use crate::core::font::FontPlugin;
 use crate::core::input::InputPlugin;
 use crate::core::library::StepfileLibrary;
 use crate::core::note_field::NoteFieldPlugin;
+use crate::core::note_skin::NoteSkinPlugin;
 use crate::core::settings::SettingsPlugin;
 use crate::core::sfx::SfxPlugin;
-use crate::integrations::SettingsNoteSkinPlugin;
 use bevy::prelude::*;
 
 pub fn run() {
@@ -49,7 +48,7 @@ pub fn run() {
         .add_plugins((
             FontPlugin,
             settings_plugin,
-            SettingsNoteSkinPlugin,
+            NoteSkinPlugin,
             NoteFieldPlugin,
             InputPlugin,
             SfxPlugin,

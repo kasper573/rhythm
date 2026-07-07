@@ -33,13 +33,10 @@ impl StepfileTiming {
         Beat(anchor.beat + (seconds.0 - anchor.seconds) * anchor.beats_per_second)
     }
 
-    /// Fractional position within the current beat at the given audio time,
-    /// in `0.0..1.0`. Convenient for animations that loop every beat.
     pub fn beat_phase(&self, seconds: Seconds) -> f64 {
         self.beat_at_seconds(seconds).phase()
     }
 
-    /// Smallest and largest BPM that occur in the file.
     pub fn bpm_range(&self) -> (f64, f64) {
         self.anchors
             .iter()

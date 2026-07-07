@@ -27,22 +27,19 @@ pub struct StepfileEntry {
     pub dir: PathBuf,
 }
 
-/// Identifies one stepfile in the library by group and position.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StepfileId {
     pub group: usize,
     pub stepfile: usize,
 }
 
-/// Whether a background-change file name refers to a video.
 pub fn is_video_file(name: &str) -> bool {
     has_extension(Path::new(name), &["avi", "mpg", "mpeg", "mp4"])
 }
 
 impl StepfileLibrary {
-    /// Loads the library from `stepfiles/<group>/<stepfile>/*.sm`. Files that
-    /// break the convention and stepfiles that fail to parse are skipped with
-    /// a logged warning.
+    /// Files that break the convention and stepfiles that fail to parse are
+    /// skipped with a logged warning.
     pub fn scan() -> StepfileLibrary {
         let root = asset_root().join("stepfiles");
         let mut groups: Vec<StepfileGroup> = Vec::new();
@@ -154,7 +151,6 @@ impl StepfileEntry {
         self.first_file_with_extension(&["mp3", "ogg", "wav", "flac"])
     }
 
-    /// The static background image, if one exists on disk.
     pub fn background_path(&self) -> Option<PathBuf> {
         if let Some(name) = &self.stepfile.background
             && let Some(path) = self.resolve_file(name)
@@ -164,7 +160,6 @@ impl StepfileEntry {
         None
     }
 
-    /// The banner image, if one exists on disk.
     pub fn banner_path(&self) -> Option<PathBuf> {
         if let Some(name) = &self.stepfile.banner
             && let Some(path) = self.resolve_file(name)
@@ -190,7 +185,6 @@ impl StepfileEntry {
     }
 }
 
-/// Parses every `*.sm` directly inside one stepfile folder.
 fn load_stepfile_folder(dir: &Path) -> Vec<StepfileEntry> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
@@ -213,8 +207,6 @@ fn load_stepfile_folder(dir: &Path) -> Vec<StepfileEntry> {
         .collect()
 }
 
-/// The group banner is the image file named after the group folder itself:
-/// `stepfiles/<group>/<group>.<image extension>`.
 fn group_banner(group_path: &Path, group_name: &str) -> Option<PathBuf> {
     let wanted_stem = group_name.to_lowercase();
     std::fs::read_dir(group_path)

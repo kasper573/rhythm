@@ -31,6 +31,7 @@ bevy = { version = "0.19", default-features = false, features = [
     "serialize",
 ] }
 clap = { version = "4", features = ["derive"] }
+derive_more = { version = "2", features = ["add", "add_assign", "mul", "not", "display"] }
 hound = "3"
 # Not used directly: routes the text layouter's ICU4X warnings through `log`
 # (and thus the log filter) instead of raw stderr prints in debug builds.
@@ -39,6 +40,7 @@ json_comments = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 dirs = "6"
+strum = { version = "0.27", features = ["derive"] }
 thiserror = "2"
 
 [dev-dependencies]

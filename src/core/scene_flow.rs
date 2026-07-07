@@ -19,8 +19,8 @@ impl<S: FreelyMutableState> SceneFade<S> {
         self.phase = FadePhase::FadingOut { to, alpha };
     }
 
-    /// Whether scenes should react to input right now. Input is ignored while
-    /// fading out to avoid acting on a scene that is already on its way out.
+    /// Input is ignored while fading out, to avoid acting on a scene that is
+    /// already on its way out.
     pub fn accepts_input(&self) -> bool {
         !matches!(self.phase, FadePhase::FadingOut { .. })
     }

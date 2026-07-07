@@ -7,13 +7,13 @@ use crate::core::settings::Settings;
 use crate::core::sfx::{PlaySfx, Sfx};
 use crate::scenes::{GameScene, SceneFade, scene_accepts_input};
 use bevy::prelude::*;
+use strum::{EnumCount, EnumIter, IntoEnumIterator, IntoStaticStr};
 
-/// A matrix of the player's stepfile options: ¤Next¤/¤Previous¤ move between
-/// rows, ¤Left¤/¤Right¤ swap the active row's value, ¤Cancel¤ returns to the
-/// file select scene. Values live in the settings, so edits persist
-/// immediately. Reached by holding ¤Select¤ on the wheel; the wheel row to
-/// return to stays parked in [`FileSelectTarget`](crate::scenes::file_select::FileSelectTarget)
-/// for the trip back.
+/// Edits the stepfile options in place: they live in the settings, so
+/// changes persist immediately. Reached by holding ¤Select¤ on the wheel;
+/// the wheel row to return to stays parked in
+/// [`FileSelectTarget`](crate::scenes::file_select::FileSelectTarget) until
+/// ¤Cancel¤ leads back.
 pub struct PlayerOptionsPlugin;
 
 impl Plugin for PlayerOptionsPlugin {
@@ -31,28 +31,18 @@ impl Plugin for PlayerOptionsPlugin {
     }
 }
 
-/// Rows of the options matrix, in display order.
-const ROWS: [OptionRow; 3] = [
-    OptionRow::SpeedType,
-    OptionRow::SpeedModifier,
-    OptionRow::NoteSkin,
-];
-
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, EnumCount, EnumIter, IntoStaticStr)]
 enum OptionRow {
+    #[strum(serialize = "Speed Type")]
     SpeedType,
+    #[strum(serialize = "Speed Modifier")]
     SpeedModifier,
+    #[strum(serialize = "Note Skin")]
     NoteSkin,
 }
 
-impl OptionRow {
-    fn label(self) -> &'static str {
-        match self {
-            OptionRow::SpeedType => "Speed Type",
-            OptionRow::SpeedModifier => "Speed Modifier",
-            OptionRow::NoteSkin => "Note Skin",
-        }
-    }
+fn row(index: usize) -> OptionRow {
+    OptionRow::iter().nth(index).expect("row index is wrapped")
 }
 
 #[derive(Resource)]
@@ -89,7 +79,7 @@ fn enter(mut commands: Commands, font: Res<GameFont>) {
                     ..default()
                 },
             ));
-            for index in 0..ROWS.len() {
+            for index in 0..OptionRow::COUNT {
                 parent.spawn((
                     RowText(index),
                     Text::new(""),
@@ -115,11 +105,11 @@ fn handle_pulses(
     for pulse in pulses.read() {
         match pulse.action {
             GameAction::Previous => {
-                active.0 = (active.0 + ROWS.len() - 1) % ROWS.len();
+                active.0 = (active.0 + OptionRow::COUNT - 1) % OptionRow::COUNT;
                 sfx.write(PlaySfx(Sfx::Navigate));
             }
             GameAction::Next => {
-                active.0 = (active.0 + 1) % ROWS.len();
+                active.0 = (active.0 + 1) % OptionRow::COUNT;
                 sfx.write(PlaySfx(Sfx::Navigate));
             }
             GameAction::Left | GameAction::Right => {
@@ -128,7 +118,7 @@ fn handle_pulses(
                 } else {
                     1
                 };
-                if change_value(ROWS[active.0], delta, &mut settings, &config, &skins) {
+                if change_value(row(active.0), delta, &mut settings, &config, &skins) {
                     sfx.write(PlaySfx(Sfx::Navigate));
                 }
             }
@@ -214,8 +204,8 @@ fn refresh_rows(
     if !active.is_changed() && !settings.is_changed() {
         return;
     }
-    for (row, mut text, mut color) in &mut rows {
-        let (values, selected) = row_values(ROWS[row.0], &settings, &config, &skins);
+    for (row_text, mut text, mut color) in &mut rows {
+        let (values, selected) = row_values(row(row_text.0), &settings, &config, &skins);
         let values: Vec<String> = values
             .into_iter()
             .enumerate()
@@ -227,8 +217,9 @@ fn refresh_rows(
                 }
             })
             .collect();
-        text.0 = format!("{:<18} {}", ROWS[row.0].label(), values.join("   "));
-        color.0 = if row.0 == active.0 {
+        let label: &str = row(row_text.0).into();
+        text.0 = format!("{label:<18} {}", values.join("   "));
+        color.0 = if row_text.0 == active.0 {
             ACTIVE_COLOR
         } else {
             INACTIVE_COLOR
@@ -294,7 +285,6 @@ fn selected_index(options: &[f32], value: f32) -> usize {
         .unwrap_or(0)
 }
 
-/// Whole numbers without a fraction ("300"), fractions as-is ("0.25").
 fn format_value(value: f32) -> String {
     if value.fract() == 0.0 {
         format!("{value:.0}")

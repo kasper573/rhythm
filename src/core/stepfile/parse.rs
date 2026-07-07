@@ -1,6 +1,5 @@
 use super::{
-    BgChange, Chart, Difficulty, DisplayBpm, Note, NoteKind, Stepfile, StepfileError,
-    StepfileTiming, StepsType,
+    BgChange, Chart, DisplayBpm, Note, NoteKind, Stepfile, StepfileError, StepfileTiming, StepsType,
 };
 use crate::core::units::{Beat, Seconds};
 use std::collections::BTreeMap;
@@ -132,7 +131,6 @@ fn parse_number(value: &str) -> f64 {
     value.trim().parse().unwrap_or(0.0)
 }
 
-/// Parses `beat=number,beat=number,...` lists as used by `#BPMS` and `#STOPS`.
 fn parse_beat_number_pairs(value: &str) -> Vec<(Beat, f64)> {
     value
         .split(',')
@@ -189,13 +187,19 @@ fn parse_chart(value: &str) -> Option<Chart> {
         return None;
     };
 
-    let steps_type = parse_steps_type(steps_type.trim());
+    let steps_type: StepsType = steps_type
+        .trim()
+        .parse()
+        .expect("parsing with a default variant is infallible");
     let (columns, notes) = parse_note_data(note_data, steps_type.columns())?;
 
     Some(Chart {
         steps_type,
         description: description.trim().to_string(),
-        difficulty: parse_difficulty(difficulty.trim()),
+        difficulty: difficulty
+            .trim()
+            .parse()
+            .expect("parsing with a default variant is infallible"),
         meter: meter.trim().parse().unwrap_or(0),
         radar: radar
             .split(',')
@@ -204,29 +208,6 @@ fn parse_chart(value: &str) -> Option<Chart> {
         columns,
         notes,
     })
-}
-
-fn parse_steps_type(tag: &str) -> StepsType {
-    match tag.to_ascii_lowercase().as_str() {
-        "dance-single" => StepsType::DanceSingle,
-        "dance-double" => StepsType::DanceDouble,
-        "dance-solo" => StepsType::DanceSolo,
-        "dance-couple" => StepsType::DanceCouple,
-        _ => StepsType::Other(tag.to_string()),
-    }
-}
-
-/// Accepts both modern names and their legacy aliases.
-fn parse_difficulty(tag: &str) -> Difficulty {
-    match tag.to_ascii_lowercase().as_str() {
-        "beginner" => Difficulty::Beginner,
-        "easy" | "basic" | "light" => Difficulty::Easy,
-        "medium" | "another" | "trick" | "standard" => Difficulty::Medium,
-        "hard" | "ssr" | "maniac" | "heavy" => Difficulty::Hard,
-        "challenge" | "smaniac" | "expert" | "oni" => Difficulty::Challenge,
-        "edit" => Difficulty::Edit,
-        _ => Difficulty::Other(tag.to_string()),
-    }
 }
 
 /// Parses measure-based note data. Returns the column count (inferred from

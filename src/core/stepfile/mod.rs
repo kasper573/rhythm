@@ -6,8 +6,8 @@ pub use timing::StepfileTiming;
 use crate::core::units::{Beat, Seconds};
 use std::collections::BTreeMap;
 use std::path::Path;
+use strum::EnumString;
 
-/// A fully parsed .sm simfile: metadata, timing data, and every chart.
 #[derive(Debug, Clone)]
 pub struct Stepfile {
     pub title: String,
@@ -77,7 +77,6 @@ pub enum StepfileError {
     NoCharts,
 }
 
-/// One difficulty of one play style within a stepfile.
 #[derive(Debug, Clone)]
 pub struct Chart {
     pub steps_type: StepsType,
@@ -129,7 +128,6 @@ impl Chart {
     }
 }
 
-/// Chart facts shown on the stepfile select screen.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ChartStats {
     /// Every arrow the player must step on (hold heads included).
@@ -141,12 +139,18 @@ pub struct ChartStats {
     pub mines: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, EnumString)]
+#[strum(ascii_case_insensitive)]
 pub enum StepsType {
+    #[strum(serialize = "dance-single")]
     DanceSingle,
+    #[strum(serialize = "dance-double")]
     DanceDouble,
+    #[strum(serialize = "dance-solo")]
     DanceSolo,
+    #[strum(serialize = "dance-couple")]
     DanceCouple,
+    #[strum(default)]
     Other(String),
 }
 
@@ -163,14 +167,36 @@ impl StepsType {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// The canonical names plus the legacy aliases still found in old files.
+#[derive(Debug, Clone, PartialEq, Eq, EnumString)]
+#[strum(ascii_case_insensitive)]
 pub enum Difficulty {
     Beginner,
+    #[strum(serialize = "easy", serialize = "basic", serialize = "light")]
     Easy,
+    #[strum(
+        serialize = "medium",
+        serialize = "another",
+        serialize = "trick",
+        serialize = "standard"
+    )]
     Medium,
+    #[strum(
+        serialize = "hard",
+        serialize = "ssr",
+        serialize = "maniac",
+        serialize = "heavy"
+    )]
     Hard,
+    #[strum(
+        serialize = "challenge",
+        serialize = "smaniac",
+        serialize = "expert",
+        serialize = "oni"
+    )]
     Challenge,
     Edit,
+    #[strum(default)]
     Other(String),
 }
 
@@ -190,7 +216,6 @@ impl Difficulty {
     }
 }
 
-/// A single note event within a chart.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Note {
     pub beat: Beat,
@@ -212,7 +237,6 @@ impl Note {
         }
     }
 
-    /// Whether the player is expected to step on this note.
     pub fn is_steppable(&self) -> bool {
         matches!(
             self.kind,

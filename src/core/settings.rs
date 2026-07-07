@@ -5,7 +5,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-/// User settings. Any mutation is automatically persisted to disk.
+/// Any mutation is automatically persisted to disk.
 #[derive(Resource, Debug, Clone, PartialEq, Serialize)]
 pub struct Settings {
     pub keymap: Keymap,
@@ -53,8 +53,7 @@ impl Plugin for SettingsPlugin {
 }
 
 /// The on-disk shape: every section optional, so files written by older
-/// versions still load. Missing stepfile options fall back to the config's
-/// defaults.
+/// versions still load.
 #[derive(Default, Deserialize)]
 #[serde(default)]
 struct SettingsFile {

@@ -61,6 +61,25 @@
   "miss_appearance": { "name": "Miss", "color": "#F23F3F" },
   "tick_volume": 1.3,
   "note_quants": [4, 8, 12, 16, 24, 32, 48, 64],
+  "default_keymap": {
+    "Next": "ArrowDown",
+    "Previous": "ArrowUp",
+    "Select": "Enter",
+    "Cancel": "Escape",
+    "Reset": "Delete",
+    "Left": "ArrowLeft",
+    "Down": "ArrowDown",
+    "Up": "ArrowUp",
+    "Right": "ArrowRight",
+    "ToggleAutoSync": "F5",
+    "ToggleTickAudio": "F6",
+    "DecreaseAudioLatency": "F7",
+    "IncreaseAudioLatency": "F8",
+    "DecreaseVisualDelay": "F9",
+    "IncreaseVisualDelay": "F10",
+    "DecreaseMachineOffset": "F11",
+    "IncreaseMachineOffset": "F12"
+  },
   "speed_modifiers": {
     "Constant": {
       "options": [150, 300, 500, 700, 850, 1000],

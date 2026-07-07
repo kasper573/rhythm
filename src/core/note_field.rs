@@ -8,7 +8,6 @@ pub const TARGET_Y: f32 = 260.0;
 pub const COLUMN_SPACING: f32 = 100.0;
 pub const ARROW_SIZE: f32 = 88.0;
 
-/// How arrows travel.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum NoteSpeed {
     /// A constant rate regardless of the chart's tempo, expressed as the
@@ -71,16 +70,14 @@ impl NoteScroll {
     }
 }
 
-/// One of the four step receptors.
 #[derive(Component)]
 pub struct Receptor {
     pub column: usize,
-    /// Whether the panel is pressed; the press tween follows this.
+    /// The press tween follows this.
     pub held: bool,
     press: f32,
 }
 
-/// A tap arrow or hold head scrolling toward its receptor.
 #[derive(Component)]
 pub struct NoteArrow {
     pub time: Seconds,
@@ -127,16 +124,12 @@ impl HoldVisualState {
     }
 }
 
-/// One piece of a hold's tail, linked to its head arrow entity.
 #[derive(Component)]
 pub struct HoldPart {
     pub head: Entity,
     pub piece: HoldPiece,
 }
 
-/// The hold tail: the body pattern is anchored to the tail so it always
-/// meets the cap at a tile boundary, and the cap is centered on the tail
-/// below the body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HoldPiece {
     Body,
@@ -149,7 +142,6 @@ pub struct MineNote {
     pub beat: Beat,
 }
 
-/// Fades a sprite out where it stands, then despawns it.
 #[derive(Component)]
 pub struct ArrowFade {
     pub remaining: f32,
@@ -165,7 +157,6 @@ impl ArrowFade {
     }
 }
 
-/// A briefly visible effect that grows slightly and fades away.
 #[derive(Component)]
 pub struct Popup {
     pub remaining: f32,
@@ -181,7 +172,6 @@ impl Popup {
     }
 }
 
-/// Everything the field needs to spawn one steppable note.
 pub struct NoteSpawn {
     pub time: Seconds,
     pub beat: Beat,
@@ -192,7 +182,6 @@ pub struct NoteSpawn {
     pub end: Option<(Seconds, Beat)>,
 }
 
-/// The entities spawned for one note, for the caller to tag and track.
 pub struct SpawnedNote {
     pub head: Entity,
     /// The hold's tail pieces; empty for taps.
@@ -394,8 +383,6 @@ fn scroll_arrows(
     }
 }
 
-/// Drives the skin's animations: tap notes cycle their quant row over the
-/// skin's beat cycle, receptors flash their two frames within each beat.
 fn animate_skin_frames(
     clock: Res<NoteFieldClock>,
     skin: Res<ActiveNoteSkin>,
@@ -428,8 +415,7 @@ fn animate_skin_frames(
 
 const PRESS_SECONDS: f32 = 0.25;
 
-/// Held receptors tween "into the screen": back along Z with a shrink to
-/// sell the depth, cubic-bezier eased, 250ms each way.
+/// Held receptors tween back along Z with a shrink to sell the depth.
 fn animate_receptor_press(time: Res<Time>, mut receptors: Query<(&mut Receptor, &mut Transform)>) {
     for (mut receptor, mut transform) in &mut receptors {
         if !receptor.held && receptor.press == 0.0 {
@@ -478,8 +464,6 @@ fn animate_hold_parts(
             head_y = head_y.min(TARGET_Y);
         }
         let end_y = scroll.y_at(hold.end, hold.end_beat);
-        // The body runs from the head's center to a bit above the tail,
-        // where the cap takes over.
         let body_bottom = end_y + skin.hold_body_stop_above_tail * scale;
 
         let active = hold.state.active();
@@ -558,7 +542,6 @@ fn animate_hold_parts(
     }
 }
 
-/// Mines scroll like arrows and spin as they go.
 fn animate_mines(
     clock: Res<NoteFieldClock>,
     skin: Res<ActiveNoteSkin>,

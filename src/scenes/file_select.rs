@@ -322,7 +322,6 @@ fn spawn_info_panel(commands: &mut Commands, font: &GameFont, bar_image: &Handle
     ));
 }
 
-/// ¤Left¤/¤Right¤ spin the wheel.
 fn navigate(
     mut pulses: MessageReader<NavPulse>,
     mut wheel: ResMut<Wheel>,
@@ -349,7 +348,6 @@ fn navigate(
     }
 }
 
-/// ¤Up¤/¤Down¤ pick a harder/easier chart of the active stepfile.
 fn change_difficulty(
     actions: Actions,
     mut wheel: ResMut<Wheel>,
@@ -630,7 +628,6 @@ fn refresh_info_panel(
     }
 }
 
-/// Chart facts for the info panel: counts and playable length.
 fn stats_label(stepfile: &Stepfile, chart_index: usize) -> String {
     let chart = &stepfile.charts[chart_index];
     let stats = chart.stats();

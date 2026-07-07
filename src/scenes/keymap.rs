@@ -1,3 +1,4 @@
+use crate::core::config::GameConfig;
 use crate::core::font::GameFont;
 use crate::core::input::{Actions, GameAction};
 use crate::core::menu::{Menu, MenuInputLock, MenuItem, MenuSelected};
@@ -7,6 +8,7 @@ use crate::scenes::{GameScene, SceneFade, scene_accepts_input};
 use bevy::input::ButtonState;
 use bevy::input::keyboard::KeyboardInput;
 use bevy::prelude::*;
+use strum::{EnumCount, IntoEnumIterator};
 
 pub struct KeymapScenePlugin;
 
@@ -41,7 +43,12 @@ struct Prompt {
 #[derive(Component)]
 struct PromptLabel;
 
-fn enter(mut commands: Commands, settings: Res<Settings>, font: Res<GameFont>) {
+fn enter(
+    mut commands: Commands,
+    settings: Res<Settings>,
+    config: Res<GameConfig>,
+    font: Res<GameFont>,
+) {
     commands.init_resource::<Prompt>();
     commands
         .spawn((
@@ -70,7 +77,7 @@ fn enter(mut commands: Commands, settings: Res<Settings>, font: Res<GameFont>) {
                 .spawn((
                     Menu {
                         active: 0,
-                        len: GameAction::ALL.len(),
+                        len: GameAction::COUNT,
                     },
                     Node {
                         flex_direction: FlexDirection::Column,
@@ -79,10 +86,10 @@ fn enter(mut commands: Commands, settings: Res<Settings>, font: Res<GameFont>) {
                     },
                 ))
                 .with_children(|list| {
-                    for (index, action) in GameAction::ALL.into_iter().enumerate() {
+                    for (index, action) in GameAction::iter().enumerate() {
                         list.spawn((
                             MenuItem(index),
-                            Text::new(row_label(action, &settings)),
+                            Text::new(row_label(action, &settings, &config)),
                             font.sized(26.0),
                             TextColor(Color::srgb(0.45, 0.45, 0.55)),
                         ));
@@ -112,7 +119,7 @@ fn open_prompt(
     mut lock: ResMut<MenuInputLock>,
 ) {
     for selection in selected.read() {
-        prompt.action = Some(GameAction::ALL[selection.index]);
+        prompt.action = GameAction::iter().nth(selection.index);
         prompt.just_opened = true;
         lock.0 = true;
     }
@@ -122,6 +129,7 @@ fn capture_prompt_key(
     mut prompt: ResMut<Prompt>,
     mut keyboard: MessageReader<KeyboardInput>,
     mut settings: ResMut<Settings>,
+    config: Res<GameConfig>,
     mut lock: ResMut<MenuInputLock>,
     mut sfx: MessageWriter<PlaySfx>,
 ) {
@@ -138,7 +146,7 @@ fn capture_prompt_key(
         if event.state != ButtonState::Pressed || event.repeat {
             continue;
         }
-        if event.key_code == settings.keymap.key(GameAction::Cancel) {
+        if event.key_code == settings.keymap.key(GameAction::Cancel, &config) {
             sfx.write(PlaySfx(Sfx::Cancel));
         } else {
             settings.keymap.set(action, event.key_code);
@@ -155,13 +163,21 @@ fn reset_active_binding(
     prompt: Res<Prompt>,
     menus: Query<&Menu>,
     mut settings: ResMut<Settings>,
+    config: Res<GameConfig>,
     mut sfx: MessageWriter<PlaySfx>,
 ) {
-    if prompt.action.is_some() || !settings.keymap.just_pressed(&keys, GameAction::Reset) {
+    if prompt.action.is_some()
+        || !settings
+            .keymap
+            .just_pressed(&keys, GameAction::Reset, &config)
+    {
         return;
     }
     for menu in &menus {
-        settings.keymap.reset(GameAction::ALL[menu.active]);
+        let Some(action) = GameAction::iter().nth(menu.active) else {
+            continue;
+        };
+        settings.keymap.reset(action);
         sfx.write(PlaySfx(Sfx::Select));
     }
 }
@@ -180,13 +196,17 @@ fn handle_cancel(
 
 fn refresh_rows(
     settings: Res<Settings>,
+    config: Res<GameConfig>,
     prompt: Res<Prompt>,
     mut rows: Query<(&MenuItem, &mut Text), Without<PromptLabel>>,
     mut prompt_label: Single<&mut Text, With<PromptLabel>>,
 ) {
     if settings.is_changed() {
         for (item, mut text) in &mut rows {
-            text.0 = row_label(GameAction::ALL[item.0], &settings);
+            let Some(action) = GameAction::iter().nth(item.0) else {
+                continue;
+            };
+            text.0 = row_label(action, &settings, &config);
         }
     }
     if prompt.is_changed() {
@@ -197,6 +217,10 @@ fn refresh_rows(
     }
 }
 
-fn row_label(action: GameAction, settings: &Settings) -> String {
-    format!("{:<30} {:?}", action.label(), settings.keymap.key(action))
+fn row_label(action: GameAction, settings: &Settings, config: &GameConfig) -> String {
+    format!(
+        "{:<30} {:?}",
+        action.label(),
+        settings.keymap.key(action, config)
+    )
 }

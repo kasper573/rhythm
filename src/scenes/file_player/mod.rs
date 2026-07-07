@@ -22,8 +22,7 @@ use crate::scenes::{GameScene, SceneFade, scene_accepts_input};
 use bevy::audio::AudioSinkPlayback;
 use bevy::prelude::*;
 
-/// Everything the score scene reports about a finished playthrough. Grades
-/// are derived from the raw outcomes by whoever displays them.
+/// Grades are derived from the raw outcomes by whoever displays them.
 #[derive(Resource, Debug, Clone)]
 pub struct ScoreResults {
     pub id: StepfileId,
@@ -81,7 +80,6 @@ impl Plugin for FilePlayerPlugin {
 
 const LEAD_IN: Seconds = Seconds(2.0);
 
-/// Live state of one playthrough.
 #[derive(Resource)]
 pub(super) struct PlaySession {
     pub title: String,
@@ -178,7 +176,6 @@ pub(super) struct JudgmentShown {
     pub combo: u32,
 }
 
-/// The music sink for the current playthrough.
 #[derive(Component)]
 pub(super) struct MusicTrack;
 
@@ -336,9 +333,6 @@ fn enter(
         );
     }
 
-    // The tick track: one pre-rendered audio file with a tick at every step
-    // moment, played in lockstep with the music and simply muted while the
-    // toggle is off.
     let tick_times: Vec<Seconds> = notes.iter().map(|note| note.time).collect();
     match render_tick_track(
         &asset_root().join(Sfx::Tick.asset_path()),
@@ -522,6 +516,7 @@ fn toggle_tick_audio(actions: Actions, mut tick: Query<&mut AudioSink, With<Tick
 fn adjust_timing_offsets(
     keys: Res<ButtonInput<KeyCode>>,
     mut settings: ResMut<Settings>,
+    config: Res<GameConfig>,
     mut osd: Query<(&mut Text, &mut TextColor), With<OffsetOsd>>,
 ) {
     let step = if shift_held(&keys) { 10 } else { 1 };
@@ -542,10 +537,10 @@ fn adjust_timing_offsets(
     let mut osd_line = None;
     for (index, (decrease, increase)) in pairs.into_iter().enumerate() {
         let mut delta: i64 = 0;
-        if settings.keymap.just_pressed(&keys, increase) {
+        if settings.keymap.just_pressed(&keys, increase, &config) {
             delta += step;
         }
-        if settings.keymap.just_pressed(&keys, decrease) {
+        if settings.keymap.just_pressed(&keys, decrease, &config) {
             delta -= step;
         }
         if delta == 0 {

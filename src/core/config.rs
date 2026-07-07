@@ -1,10 +1,12 @@
 use crate::core::assets::asset_root;
+use crate::core::input::GameAction;
 use crate::core::note_field::NoteSpeed;
 use crate::core::units::Seconds;
 use bevy::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize};
+use std::collections::BTreeMap;
+use strum::IntoEnumIterator;
 
-/// Runtime game configuration loaded from `assets/game_config.json`.
 #[derive(Resource, Debug, Clone, Deserialize)]
 pub struct GameConfig {
     /// Case-insensitive search strings `(group, stepfile)` picking the
@@ -13,7 +15,6 @@ pub struct GameConfig {
     pub wheel_default: (String, String),
     /// Grading windows ordered best to worst (smallest window first).
     pub grades: Vec<GradeDef>,
-    /// How the always-existing Miss grade is displayed.
     pub miss_appearance: MissAppearance,
     /// Tick track volume: `0..=1` attenuates, `1..=2` boosts. Capped at 2 so
     /// a config typo can never blow anyone's eardrums out.
@@ -21,14 +22,13 @@ pub struct GameConfig {
     /// The note denominations the game recognizes; notes on finer grids
     /// snap to the last entry. Note skins are cross-referenced by these.
     pub note_quants: Vec<u32>,
-    /// The speed values the player options scene offers per speed type.
+    /// Must bind every action; the settings hold the player's overrides.
+    pub default_keymap: BTreeMap<GameAction, KeyCode>,
     pub speed_modifiers: SpeedModifiers,
-    /// Stepfile options used until the player saves their own.
     pub default_stepfile_options: StepfileOptions,
 }
 
-/// The player's presentation choices for playing stepfiles: persisted in the
-/// user settings, edited in the player options scene.
+/// The player's presentation choices for playing stepfiles.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StepfileOptions {
     /// Folder name of the note skin under `assets/note_skins`.
@@ -44,7 +44,6 @@ pub struct SpeedModifiers {
 }
 
 impl SpeedModifiers {
-    /// The value set for a speed's type.
     pub fn set(&self, speed: NoteSpeed) -> &SpeedModifierSet {
         match speed {
             NoteSpeed::Constant(_) => &self.constant,
@@ -74,7 +73,6 @@ pub struct GradeDef {
     pub color: Color,
     #[serde(default)]
     pub breaks_combo: bool,
-    /// How this grade's judgment text reports input timing.
     #[serde(default, deserialize_with = "timing_feedback")]
     pub timing_feedback: TimingFeedback,
 }
@@ -160,7 +158,6 @@ impl GameConfig {
         }
     }
 
-    /// The grade an outcome represents under this grading config.
     pub fn judge(&self, outcome: StepOutcome) -> Judgment {
         match outcome {
             StepOutcome::Hit { error } => Judgment::Grade(
@@ -211,6 +208,12 @@ impl GameConfig {
             self.note_quants.iter().all(|quant| *quant > 0),
             "{source}: note_quants must be positive"
         );
+        for action in GameAction::iter() {
+            assert!(
+                self.default_keymap.contains_key(&action),
+                "{source}: default_keymap must bind {action:?}"
+            );
+        }
     }
 }
 

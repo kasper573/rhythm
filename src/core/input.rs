@@ -1,114 +1,86 @@
+use crate::core::config::GameConfig;
 use crate::core::settings::Settings;
 use crate::core::units::Seconds;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use strum::{EnumCount, EnumIter, IntoStaticStr};
 
-/// Every remappable action in the game.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    EnumCount,
+    EnumIter,
+    IntoStaticStr,
+)]
 pub enum GameAction {
     Next,
     Previous,
     Select,
     Cancel,
     Reset,
+    #[strum(serialize = "Step left")]
     Left,
+    #[strum(serialize = "Step down")]
     Down,
+    #[strum(serialize = "Step up")]
     Up,
+    #[strum(serialize = "Step right")]
     Right,
+    #[strum(serialize = "Toggle AutoSync")]
     ToggleAutoSync,
+    #[strum(serialize = "Toggle tick audio")]
     ToggleTickAudio,
+    #[strum(serialize = "Decrease audio latency")]
     DecreaseAudioLatency,
+    #[strum(serialize = "Increase audio latency")]
     IncreaseAudioLatency,
+    #[strum(serialize = "Decrease visual delay")]
     DecreaseVisualDelay,
+    #[strum(serialize = "Increase visual delay")]
     IncreaseVisualDelay,
+    #[strum(serialize = "Decrease machine offset")]
     DecreaseMachineOffset,
+    #[strum(serialize = "Increase machine offset")]
     IncreaseMachineOffset,
 }
 
 impl GameAction {
-    pub const ALL: [GameAction; 17] = [
-        GameAction::Next,
-        GameAction::Previous,
-        GameAction::Select,
-        GameAction::Cancel,
-        GameAction::Reset,
-        GameAction::Left,
-        GameAction::Down,
-        GameAction::Up,
-        GameAction::Right,
-        GameAction::ToggleAutoSync,
-        GameAction::ToggleTickAudio,
-        GameAction::DecreaseAudioLatency,
-        GameAction::IncreaseAudioLatency,
-        GameAction::DecreaseVisualDelay,
-        GameAction::IncreaseVisualDelay,
-        GameAction::DecreaseMachineOffset,
-        GameAction::IncreaseMachineOffset,
-    ];
-
     pub fn label(self) -> &'static str {
-        match self {
-            GameAction::Next => "Next",
-            GameAction::Previous => "Previous",
-            GameAction::Select => "Select",
-            GameAction::Cancel => "Cancel",
-            GameAction::Reset => "Reset",
-            GameAction::Left => "Step left",
-            GameAction::Down => "Step down",
-            GameAction::Up => "Step up",
-            GameAction::Right => "Step right",
-            GameAction::ToggleAutoSync => "Toggle AutoSync",
-            GameAction::ToggleTickAudio => "Toggle tick audio",
-            GameAction::DecreaseAudioLatency => "Decrease audio latency",
-            GameAction::IncreaseAudioLatency => "Increase audio latency",
-            GameAction::DecreaseVisualDelay => "Decrease visual delay",
-            GameAction::IncreaseVisualDelay => "Increase visual delay",
-            GameAction::DecreaseMachineOffset => "Decrease machine offset",
-            GameAction::IncreaseMachineOffset => "Increase machine offset",
-        }
-    }
-
-    pub fn default_key(self) -> KeyCode {
-        match self {
-            GameAction::Next => KeyCode::ArrowDown,
-            GameAction::Previous => KeyCode::ArrowUp,
-            GameAction::Select => KeyCode::Enter,
-            GameAction::Cancel => KeyCode::Escape,
-            GameAction::Reset => KeyCode::Delete,
-            GameAction::Left => KeyCode::ArrowLeft,
-            GameAction::Down => KeyCode::ArrowDown,
-            GameAction::Up => KeyCode::ArrowUp,
-            GameAction::Right => KeyCode::ArrowRight,
-            GameAction::ToggleAutoSync => KeyCode::F5,
-            GameAction::ToggleTickAudio => KeyCode::F6,
-            GameAction::DecreaseAudioLatency => KeyCode::F7,
-            GameAction::IncreaseAudioLatency => KeyCode::F8,
-            GameAction::DecreaseVisualDelay => KeyCode::F9,
-            GameAction::IncreaseVisualDelay => KeyCode::F10,
-            GameAction::DecreaseMachineOffset => KeyCode::F11,
-            GameAction::IncreaseMachineOffset => KeyCode::F12,
-        }
+        self.into()
     }
 }
 
-/// Maps actions to physical keys. Missing entries fall back to the default.
+/// The player's key overrides; actions without one use the config's default.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Keymap(BTreeMap<GameAction, KeyCode>);
 
 impl Keymap {
-    pub fn key(&self, action: GameAction) -> KeyCode {
+    pub fn key(&self, action: GameAction, config: &GameConfig) -> KeyCode {
         self.0
             .get(&action)
             .copied()
-            .unwrap_or_else(|| action.default_key())
+            .unwrap_or(config.default_keymap[&action])
     }
 
     /// For systems that need mutable [`Settings`](crate::core::settings::Settings)
     /// access and therefore cannot use the [`Actions`] param.
-    pub fn just_pressed(&self, keys: &ButtonInput<KeyCode>, action: GameAction) -> bool {
-        keys.just_pressed(self.key(action))
+    pub fn just_pressed(
+        &self,
+        keys: &ButtonInput<KeyCode>,
+        action: GameAction,
+        config: &GameConfig,
+    ) -> bool {
+        keys.just_pressed(self.key(action, config))
     }
 
     pub fn set(&mut self, action: GameAction, key: KeyCode) {
@@ -120,28 +92,28 @@ impl Keymap {
     }
 }
 
-/// Convenient action-level view over the raw keyboard input.
 #[derive(SystemParam)]
 pub struct Actions<'w> {
     keys: Res<'w, ButtonInput<KeyCode>>,
     settings: Res<'w, Settings>,
+    config: Res<'w, GameConfig>,
 }
 
 impl Actions<'_> {
     pub fn just_pressed(&self, action: GameAction) -> bool {
-        self.keys.just_pressed(self.settings.keymap.key(action))
+        self.keys.just_pressed(self.key(action))
     }
 
     pub fn pressed(&self, action: GameAction) -> bool {
-        self.keys.pressed(self.settings.keymap.key(action))
+        self.keys.pressed(self.key(action))
     }
 
     pub fn just_released(&self, action: GameAction) -> bool {
-        self.keys.just_released(self.settings.keymap.key(action))
+        self.keys.just_released(self.key(action))
     }
 
-    pub fn shift_held(&self) -> bool {
-        shift_held(&self.keys)
+    fn key(&self, action: GameAction) -> KeyCode {
+        self.settings.keymap.key(action, &self.config)
     }
 }
 
@@ -149,10 +121,8 @@ pub fn shift_held(keys: &ButtonInput<KeyCode>) -> bool {
     keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight)
 }
 
-/// Fired when a navigation action (¤Next¤/¤Previous¤/¤Left¤/¤Right¤) is
-/// pressed, and repeatedly while held, so lists scroll comfortably. Menus
-/// and the stepfile wheel consume the actions they care about instead of
-/// polling the keyboard.
+/// A press of ¤Next¤/¤Previous¤/¤Left¤/¤Right¤, re-fired while held so
+/// lists scroll comfortably.
 #[derive(Message)]
 pub struct NavPulse {
     pub action: GameAction,

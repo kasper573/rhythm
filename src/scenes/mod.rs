@@ -10,8 +10,6 @@ use crate::core::menu::MenuPlugin;
 use crate::core::scene_flow::SceneFlowPlugin;
 use bevy::prelude::*;
 
-/// Every scene in the game. Scene systems run under `in_state`, scene
-/// entities carry `DespawnOnExit(GameScene::...)`.
 #[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum GameScene {
     #[default]
@@ -24,10 +22,8 @@ pub enum GameScene {
     Score,
 }
 
-/// The scene fade driving [`GameScene`] transitions.
 pub type SceneFade = crate::core::scene_flow::SceneFade<GameScene>;
 
-/// Run condition: the current scene is fully faded in and accepting input.
 pub fn scene_accepts_input(fade: Res<SceneFade>) -> bool {
     fade.accepts_input()
 }

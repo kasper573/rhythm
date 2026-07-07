@@ -109,7 +109,6 @@ pub(super) fn apply_background_changes(
     }
 }
 
-/// Pulls decoded frames into the video texture, paced by the music clock.
 pub(super) fn stream_video_frames(
     session: Res<PlaySession>,
     settings: Res<Settings>,
