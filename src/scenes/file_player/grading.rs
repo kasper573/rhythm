@@ -1,4 +1,4 @@
-use super::{JudgmentShown, PlaySession, direction_action};
+use super::{HoldOutcome, JudgmentShown, MineOutcome, PlaySession, direction_action};
 use crate::core::config::{GameConfig, StepOutcome};
 use crate::core::font::GameFont;
 use crate::core::input::Actions;
@@ -103,8 +103,8 @@ pub(super) fn expire_missed_notes(
             let note = &mut session.notes[cursor];
             match &mut note.hold {
                 Some(hold) => {
-                    hold.result = Some(false);
-                    spawn_hold_popup(&mut commands, &font, note.column, false);
+                    hold.result = Some(HoldOutcome::Ng);
+                    spawn_hold_popup(&mut commands, &font, note.column, HoldOutcome::Ng);
                 }
                 None => {
                     commands
@@ -157,14 +157,14 @@ pub(super) fn update_holds(
         hold.life = hold.life.clamp(0.0, 1.0);
 
         if now.0 >= hold.end.0 && hold.life > 0.0 {
-            hold.result = Some(true);
+            hold.result = Some(HoldOutcome::Ok);
             commands
                 .entity(entity)
                 .insert(ArrowFade::over(GRADED_FADE_SECONDS));
-            spawn_hold_popup(&mut commands, &font, column, true);
+            spawn_hold_popup(&mut commands, &font, column, HoldOutcome::Ok);
         } else if hold.life <= 0.0 {
-            hold.result = Some(false);
-            spawn_hold_popup(&mut commands, &font, column, false);
+            hold.result = Some(HoldOutcome::Ng);
+            spawn_hold_popup(&mut commands, &font, column, HoldOutcome::Ng);
         }
     }
 }
@@ -183,15 +183,16 @@ pub(super) fn update_mines(
         if mine.outcome.is_some() || mine.time.0 > now.0 {
             continue;
         }
-        let hit = actions.pressed(direction_action(mine.column));
-        mine.outcome = Some(hit);
-        if hit {
-            commands.entity(mine.entity).despawn();
-            let explosion = spawn_mine_explosion(&mut commands, &skin, mine.column);
-            commands
-                .entity(explosion)
-                .insert(DespawnOnExit(GameScene::FilePlayer));
+        if !actions.pressed(direction_action(mine.column)) {
+            mine.outcome = Some(MineOutcome::Avoided);
+            continue;
         }
+        mine.outcome = Some(MineOutcome::Hit);
+        commands.entity(mine.entity).despawn();
+        let explosion = spawn_mine_explosion(&mut commands, &skin, mine.column);
+        commands
+            .entity(explosion)
+            .insert(DespawnOnExit(GameScene::FilePlayer));
     }
 }
 
@@ -221,17 +222,17 @@ fn apply_outcome(
     });
 }
 
-fn spawn_hold_popup(commands: &mut Commands, font: &GameFont, column: usize, ok: bool) {
+fn spawn_hold_popup(commands: &mut Commands, font: &GameFont, column: usize, outcome: HoldOutcome) {
+    let (label, color) = match outcome {
+        HoldOutcome::Ok => ("OK", Color::srgb(0.45, 0.95, 0.5)),
+        HoldOutcome::Ng => ("NG", Color::srgb(0.95, 0.35, 0.35)),
+    };
     commands.spawn((
         DespawnOnExit(GameScene::FilePlayer),
         Popup::over(0.6),
-        Text2d::new(if ok { "OK" } else { "NG" }),
+        Text2d::new(label),
         font.sized(30.0),
-        TextColor(if ok {
-            Color::srgb(0.45, 0.95, 0.5)
-        } else {
-            Color::srgb(0.95, 0.35, 0.35)
-        }),
+        TextColor(color),
         Transform::from_xyz(column_x(column), TARGET_Y - 54.0, 21.0),
     ));
 }

@@ -44,8 +44,8 @@ impl NoteFieldClock {
         self.timing.beat_at_seconds(self.visible).0
     }
 
-    pub fn scroll(&self) -> Scroll {
-        Scroll {
+    pub fn scroll(&self) -> NoteScroll {
+        NoteScroll {
             now: self.visible,
             now_beat: self.beat(),
             speed: self.speed,
@@ -55,13 +55,13 @@ impl NoteFieldClock {
 
 /// A per-frame snapshot placing notes on screen: [`NoteSpeed::Constant`]
 /// spaces notes by their seconds, [`NoteSpeed::Dynamic`] by their beats.
-pub struct Scroll {
+pub struct NoteScroll {
     now: Seconds,
     now_beat: f64,
     speed: NoteSpeed,
 }
 
-impl Scroll {
+impl NoteScroll {
     pub fn y_at(&self, time: Seconds, beat: Beat) -> f32 {
         let arrows_until = match self.speed {
             NoteSpeed::Constant(scroll_bpm) => (time - self.now).0 * scroll_bpm as f64 / 60.0,

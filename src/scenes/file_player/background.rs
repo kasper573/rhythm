@@ -1,4 +1,5 @@
 use super::PlaySession;
+use crate::core::SCREEN_SIZE;
 use crate::core::assets::asset_server_path;
 use crate::core::library::{StepfileEntry, is_video_file};
 use crate::core::scene_flow::GameScene;
@@ -47,7 +48,7 @@ pub(super) fn spawn_background(
             image: initial.unwrap_or_default(),
             // Dimmed so arrows and text stay readable in front of it.
             color: Color::srgb(0.5, 0.5, 0.5),
-            custom_size: Some(Vec2::new(1280.0, 720.0)),
+            custom_size: Some(SCREEN_SIZE),
             ..default()
         },
         Transform::from_xyz(0.0, 0.0, 0.0),
@@ -134,7 +135,8 @@ fn start_video(
     match VideoStream::open(path, start_time, images) {
         Ok(stream) => {
             // Fit inside the window, preserving the video's aspect ratio.
-            let scale = (1280.0 / stream.width as f32).min(720.0 / stream.height as f32);
+            let scale =
+                (SCREEN_SIZE.x / stream.width as f32).min(SCREEN_SIZE.y / stream.height as f32);
             let size = Vec2::new(stream.width as f32, stream.height as f32) * scale;
             commands.spawn((
                 DespawnOnExit(GameScene::FilePlayer),

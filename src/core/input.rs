@@ -1,4 +1,5 @@
 use crate::core::settings::Settings;
+use crate::core::units::Seconds;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -166,13 +167,13 @@ impl Plugin for InputPlugin {
     }
 }
 
-const REPEAT_DELAY_SECONDS: f32 = 0.4;
-const REPEAT_INTERVAL_SECONDS: f32 = 0.09;
+const REPEAT_DELAY: Seconds = Seconds(0.4);
+const REPEAT_INTERVAL: Seconds = Seconds(0.09);
 
 fn emit_nav_pulses(
     actions: Actions,
     time: Res<Time>,
-    mut held: Local<[f32; 4]>,
+    mut held: Local<[Seconds; 4]>,
     mut pulses: MessageWriter<NavPulse>,
 ) {
     for (slot, action) in [
@@ -185,20 +186,18 @@ fn emit_nav_pulses(
     .enumerate()
     {
         if actions.just_pressed(action) {
-            held[slot] = 0.0;
+            held[slot] = Seconds::ZERO;
             pulses.write(NavPulse { action });
         } else if actions.pressed(action) {
             let before = held[slot];
-            held[slot] += time.delta_secs();
-            let repeats_before =
-                ((before - REPEAT_DELAY_SECONDS) / REPEAT_INTERVAL_SECONDS).floor();
-            let repeats_after =
-                ((held[slot] - REPEAT_DELAY_SECONDS) / REPEAT_INTERVAL_SECONDS).floor();
-            if held[slot] >= REPEAT_DELAY_SECONDS && repeats_after > repeats_before {
+            held[slot] += Seconds(time.delta_secs_f64());
+            let repeats_before = ((before - REPEAT_DELAY) / REPEAT_INTERVAL).floor();
+            let repeats_after = ((held[slot] - REPEAT_DELAY) / REPEAT_INTERVAL).floor();
+            if held[slot] >= REPEAT_DELAY && repeats_after > repeats_before {
                 pulses.write(NavPulse { action });
             }
         } else {
-            held[slot] = 0.0;
+            held[slot] = Seconds::ZERO;
         }
     }
 }

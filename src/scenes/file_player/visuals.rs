@@ -1,8 +1,11 @@
-use super::{ComboText, JudgmentShown, JudgmentText, OffsetOsd, PlaySession, direction_action};
+use super::{
+    ComboText, HoldOutcome, JudgmentShown, JudgmentText, OffsetOsd, PlaySession, direction_action,
+};
 use crate::core::config::{GameConfig, Judgment, StepOutcome, TimingFeedback};
 use crate::core::input::Actions;
 use crate::core::note_field::{HoldVisual, HoldVisualState, NoteFieldClock, Receptor};
 use crate::core::settings::Settings;
+use crate::core::units::Seconds;
 use bevy::prelude::*;
 
 /// Pushes the session's state into the note field: the drawn timeline, the
@@ -28,8 +31,8 @@ pub(super) fn sync_note_field(
     for note in &session.notes {
         let Some(hold) = &note.hold else { continue };
         let state = match (hold.engaged, hold.result) {
-            (_, Some(true)) => HoldVisualState::Ok,
-            (_, Some(false)) => HoldVisualState::Dropped,
+            (_, Some(HoldOutcome::Ok)) => HoldVisualState::Ok,
+            (_, Some(HoldOutcome::Ng)) => HoldVisualState::Dropped,
             (false, None) => HoldVisualState::Pending,
             (true, None) if hold.held_now => HoldVisualState::Held,
             (true, None) => HoldVisualState::Released,
@@ -90,19 +93,19 @@ fn judgment_display(config: &GameConfig, outcome: StepOutcome) -> (String, Color
     (text, definition.color)
 }
 
-const COMBO_BOUNCE_SECONDS: f32 = 0.18;
+const COMBO_BOUNCE: Seconds = Seconds(0.18);
 
 pub(super) fn update_combo_text(
     time: Res<Time>,
     mut shown: MessageReader<JudgmentShown>,
     mut label: Single<(&mut Text2d, &mut Transform, &mut Visibility), With<ComboText>>,
-    mut bounce: Local<f32>,
+    mut bounce: Local<Seconds>,
     mut last_combo: Local<u32>,
 ) {
     let (text, transform, visibility) = &mut *label;
     for message in shown.read() {
         if message.combo > *last_combo {
-            *bounce = COMBO_BOUNCE_SECONDS;
+            *bounce = COMBO_BOUNCE;
         }
         *last_combo = message.combo;
         if message.combo == 0 {
@@ -112,8 +115,8 @@ pub(super) fn update_combo_text(
             text.0 = format!("{} combo", message.combo);
         }
     }
-    *bounce = (*bounce - time.delta_secs()).max(0.0);
-    let scale = 1.0 + 0.22 * (*bounce / COMBO_BOUNCE_SECONDS);
+    *bounce = (*bounce - Seconds(time.delta_secs_f64())).max(Seconds::ZERO);
+    let scale = 1.0 + 0.22 * (*bounce / COMBO_BOUNCE) as f32;
     if transform.scale.x != scale {
         transform.scale = Vec3::splat(scale);
     }

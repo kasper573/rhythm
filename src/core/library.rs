@@ -34,6 +34,11 @@ pub struct StepfileId {
     pub stepfile: usize,
 }
 
+/// Whether a background-change file name refers to a video.
+pub fn is_video_file(name: &str) -> bool {
+    has_extension(Path::new(name), &["avi", "mpg", "mpeg", "mp4"])
+}
+
 impl StepfileLibrary {
     /// Loads the library from `stepfiles/<group>/<stepfile>/*.sm`. Files that
     /// break the convention and stepfiles that fail to parse are skipped with
@@ -253,18 +258,4 @@ fn preferred_text<'a>(original: &'a str, transliterated: &'a str) -> &'a str {
     } else {
         original
     }
-}
-
-fn is_media_path(path: &Path) -> bool {
-    path.extension().is_some_and(|extension| {
-        matches!(
-            extension.to_string_lossy().to_lowercase().as_str(),
-            "avi" | "mpg" | "mpeg" | "mp4"
-        )
-    })
-}
-
-/// Whether a background-change file name refers to a video.
-pub fn is_video_file(name: &str) -> bool {
-    is_media_path(Path::new(name))
 }

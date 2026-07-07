@@ -1,3 +1,4 @@
+use crate::core::SCREEN_SIZE;
 use crate::core::assets::asset_server_path;
 use crate::core::config::GameConfig;
 use crate::core::font::GameFont;
@@ -74,7 +75,7 @@ const BAR_HEIGHT: f32 = 50.0;
 const WHEEL_X: f32 = 330.0;
 /// Rows shift right as they leave the center, curving the wheel.
 const BULGE_PER_ROW: f32 = 3.0;
-const PREVIEW_DEBOUNCE_SECONDS: f32 = 0.35;
+const PREVIEW_DEBOUNCE: Seconds = Seconds(0.35);
 
 const BACKDROP_COLOR: Color = Color::srgb(0.05, 0.085, 0.03);
 const STEPFILE_BAR: Color = Color::srgb(0.10, 0.19, 0.07);
@@ -99,7 +100,7 @@ struct Wheel {
     expanded: Option<usize>,
     /// Stepfile whose music the preview aims at, plus its debounce clock.
     preview_stepfile: Option<StepfileId>,
-    preview_wait: f32,
+    preview_wait: Seconds,
     preview_entity: Option<Entity>,
     /// The generated rounded-gradient texture shared by bars and panels.
     bar_image: Handle<Image>,
@@ -180,13 +181,13 @@ fn enter(
             })
         })
         .unwrap_or(0);
-    let bar_image = images.add(rounded_gradient_image(512, 64, 16.0));
+    let bar_image = images.add(rounded_image(512, 64, 16.0, None));
 
     commands.spawn((
         DespawnOnExit(GameScene::FileSelect),
         Sprite {
             color: BACKDROP_COLOR,
-            custom_size: Some(Vec2::new(1280.0, 720.0)),
+            custom_size: Some(SCREEN_SIZE),
             ..default()
         },
         Transform::from_xyz(0.0, 0.0, 0.0),
@@ -234,11 +235,11 @@ fn enter(
     commands.spawn((
         DespawnOnExit(GameScene::FileSelect),
         Sprite {
-            image: images.add(rounded_overlay_image(
+            image: images.add(rounded_image(
                 overlay_size.x as u32,
                 overlay_size.y as u32,
                 18.0,
-                5.0,
+                Some(5.0),
             )),
             color: BORDER_COLOR,
             custom_size: Some(overlay_size),
@@ -265,7 +266,7 @@ fn enter(
         scroll_offset: 0.0,
         expanded,
         preview_stepfile: None,
-        preview_wait: 0.0,
+        preview_wait: Seconds::ZERO,
         preview_entity: None,
         bar_image,
         dirty: true,
@@ -388,7 +389,7 @@ fn change_difficulty(
 }
 
 /// How long ¤Select¤ must be held to open the player options.
-const OPTIONS_HOLD_SECONDS: f32 = 0.5;
+const OPTIONS_HOLD: Seconds = Seconds(0.5);
 
 /// Tapping ¤Select¤ acts on the active row; holding it opens the player
 /// options instead, passing the active row along so coming back lands here.
@@ -396,7 +397,7 @@ const OPTIONS_HOLD_SECONDS: f32 = 0.5;
 fn select(
     actions: Actions,
     time: Res<Time>,
-    mut held: Local<f32>,
+    mut held: Local<Seconds>,
     mut wheel: ResMut<Wheel>,
     library: Res<StepfileLibrary>,
     preferred: Res<PreferredDifficulty>,
@@ -409,8 +410,8 @@ fn select(
     }
     if actions.pressed(GameAction::Select) {
         let before = *held;
-        *held += time.delta_secs();
-        if before < OPTIONS_HOLD_SECONDS && *held >= OPTIONS_HOLD_SECONDS {
+        *held += Seconds(time.delta_secs_f64());
+        if before < OPTIONS_HOLD && *held >= OPTIONS_HOLD {
             let row = match &wheel.entries[wheel.active] {
                 WheelEntry::Group { index, .. } => FileSelectTarget::Group(*index),
                 WheelEntry::Stepfile { id } => FileSelectTarget::Stepfile(*id),
@@ -421,8 +422,8 @@ fn select(
         }
         return;
     }
-    let tapped = actions.just_released(GameAction::Select) && *held < OPTIONS_HOLD_SECONDS;
-    *held = 0.0;
+    let tapped = actions.just_released(GameAction::Select) && *held < OPTIONS_HOLD;
+    *held = Seconds::ZERO;
     if !tapped {
         return;
     }
@@ -660,7 +661,7 @@ fn update_preview(
 
     if wheel.preview_stepfile != active_stepfile {
         wheel.preview_stepfile = active_stepfile;
-        wheel.preview_wait = 0.0;
+        wheel.preview_wait = Seconds::ZERO;
         if let Some(preview) = wheel.preview_entity.take() {
             commands.entity(preview).try_despawn();
         }
@@ -671,8 +672,8 @@ fn update_preview(
     if wheel.preview_entity.is_some() {
         return;
     }
-    wheel.preview_wait += time.delta_secs();
-    if wheel.preview_wait < PREVIEW_DEBOUNCE_SECONDS {
+    wheel.preview_wait += Seconds(time.delta_secs_f64());
+    if wheel.preview_wait < PREVIEW_DEBOUNCE {
         return;
     }
 
@@ -822,10 +823,12 @@ fn bpm_label(stepfile: &Stepfile) -> String {
     }
 }
 
-/// A white rounded outline with a faint interior wash, generated at the
-/// exact size it is drawn so the ring stays uniformly thick. Tinted and
-/// fixed over the wheel's center row.
-fn rounded_overlay_image(width: u32, height: u32, radius: f32, border: f32) -> Image {
+/// A white vertical-gradient rounded rectangle for sprites to tint: every
+/// bar and panel in this scene, and — with a `hollow_border` — the
+/// active-row frame, whose interior fades to a faint wash so the rows
+/// beneath stay readable. Generated at the exact size it is drawn so edges
+/// and ring stay uniformly thick.
+fn rounded_image(width: u32, height: u32, radius: f32, hollow_border: Option<f32>) -> Image {
     const INTERIOR_WASH: f32 = 0.18;
     let mut data = Vec::with_capacity((width * height * 4) as usize);
     for y in 0..height {
@@ -836,43 +839,11 @@ fn rounded_overlay_image(width: u32, height: u32, radius: f32, border: f32) -> I
             let to_edge_y =
                 (y as f32 + 0.5 - height as f32 / 2.0).abs() - (height as f32 / 2.0 - radius);
             let distance = Vec2::new(to_edge_x.max(0.0), to_edge_y.max(0.0)).length() - radius;
-            let coverage = (0.5 - distance).clamp(0.0, 1.0);
-            let interior = (-distance - border).clamp(0.0, 1.0);
-            let alpha = coverage * (1.0 - interior * (1.0 - INTERIOR_WASH));
-            data.extend_from_slice(&[
-                brightness as u8,
-                brightness as u8,
-                brightness as u8,
-                (alpha * 255.0) as u8,
-            ]);
-        }
-    }
-    Image::new(
-        Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        data,
-        TextureFormat::Rgba8UnormSrgb,
-        Default::default(),
-    )
-}
-
-/// A white vertical-gradient rounded rectangle; tinting it with a sprite
-/// color produces every bar and panel in this scene.
-fn rounded_gradient_image(width: u32, height: u32, radius: f32) -> Image {
-    let mut data = Vec::with_capacity((width * height * 4) as usize);
-    for y in 0..height {
-        let brightness = 255.0 - 130.0 * (y as f32 / (height - 1) as f32);
-        for x in 0..width {
-            let to_edge_x =
-                (x as f32 + 0.5 - width as f32 / 2.0).abs() - (width as f32 / 2.0 - radius);
-            let to_edge_y =
-                (y as f32 + 0.5 - height as f32 / 2.0).abs() - (height as f32 / 2.0 - radius);
-            let distance = Vec2::new(to_edge_x.max(0.0), to_edge_y.max(0.0)).length() - radius;
-            let alpha = (0.5 - distance).clamp(0.0, 1.0);
+            let mut alpha = (0.5 - distance).clamp(0.0, 1.0);
+            if let Some(border) = hollow_border {
+                let interior = (-distance - border).clamp(0.0, 1.0);
+                alpha *= 1.0 - interior * (1.0 - INTERIOR_WASH);
+            }
             data.extend_from_slice(&[
                 brightness as u8,
                 brightness as u8,

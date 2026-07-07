@@ -93,10 +93,10 @@ pub(super) struct PlaySession {
     /// Raw playback time as the audio mixer reports it (queue position).
     pub clock: Seconds,
     pub last_sink_position: Seconds,
-    /// Wall-clock seconds since the tracks were started, for measuring how
-    /// far the mixer's queue runs ahead of real time (the audio latency).
-    pub wall_since_play: f64,
-    pub latency_samples: Vec<f32>,
+    /// Wall-clock time since the tracks were started, for measuring how far
+    /// the mixer's queue runs ahead of real time (the audio latency).
+    pub wall_since_play: Seconds,
+    pub latency_samples: Vec<Seconds>,
     pub combo: u32,
     pub max_combo: u32,
     pub last_note_time: Seconds,
@@ -148,17 +148,28 @@ pub(super) struct HoldState {
     pub engaged: bool,
     /// Whether the panel is currently satisfied (held, for holds).
     pub held_now: bool,
-    /// `Some(true)` = OK (held to the end), `Some(false)` = NG (dropped or
-    /// head missed).
-    pub result: Option<bool>,
+    pub result: Option<HoldOutcome>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum HoldOutcome {
+    /// Held to the end.
+    Ok,
+    /// Dropped, or the head was missed.
+    Ng,
 }
 
 pub(super) struct SessionMine {
     pub time: Seconds,
     pub column: usize,
     pub entity: Entity,
-    /// `Some(true)` = stepped on (hit), `Some(false)` = avoided.
-    pub outcome: Option<bool>,
+    pub outcome: Option<MineOutcome>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum MineOutcome {
+    Hit,
+    Avoided,
 }
 
 /// Announces a judged note so the judgment/combo displays can react.
@@ -372,7 +383,7 @@ fn enter(
         phase: PlayPhase::LeadIn { remaining: LEAD_IN },
         clock: -LEAD_IN,
         last_sink_position: Seconds(-1.0),
-        wall_since_play: 0.0,
+        wall_since_play: Seconds::ZERO,
         latency_samples: Vec::new(),
         combo: 0,
         max_combo: 0,
@@ -607,13 +618,13 @@ fn finish_when_complete(
         max_combo: session.max_combo,
         holds_ok: holds
             .iter()
-            .filter(|hold| hold.result == Some(true))
+            .filter(|hold| hold.result == Some(HoldOutcome::Ok))
             .count() as u32,
         holds_total: holds.len() as u32,
         mines_hit: session
             .mines
             .iter()
-            .filter(|mine| mine.outcome == Some(true))
+            .filter(|mine| mine.outcome == Some(MineOutcome::Hit))
             .count() as u32,
         mines_total: session.mines.len() as u32,
     });

@@ -1,6 +1,7 @@
 pub mod core;
 pub mod scenes;
 
+use crate::core::SCREEN_SIZE;
 use crate::core::config::GameConfig;
 use crate::core::font::FontPlugin;
 use crate::core::input::InputPlugin;
@@ -20,7 +21,7 @@ pub fn run() {
                 .set(WindowPlugin {
                     primary_window: Some(Window {
                         title: "Rhythm".to_string(),
-                        resolution: (1280, 720).into(),
+                        resolution: SCREEN_SIZE.as_uvec2().into(),
                         // Inputs are judged at frame granularity; vsync would
                         // quantize presses to the display refresh (+0..16ms of
                         // one-sided timing error at 60Hz).

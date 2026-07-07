@@ -52,7 +52,7 @@ pub(super) fn advance_clock(
         }
         PlayPhase::Playing => {
             session.clock += delta;
-            session.wall_since_play += delta.0;
+            session.wall_since_play += delta;
             let position = music
                 .single()
                 .or(tick.single())
@@ -103,15 +103,15 @@ fn servo_clock(session: &mut PlaySession, position: Seconds, first_report: bool)
 /// enough samples are in: the first-start audio latency estimate.
 fn measure_audio_latency(session: &mut PlaySession, position: Seconds) -> Option<Millis> {
     let wall = session.wall_since_play;
-    if (0.3..2.0).contains(&wall) {
-        session.latency_samples.push((position.0 - wall) as f32);
+    if (0.3..2.0).contains(&wall.0) {
+        session.latency_samples.push(position - wall);
         return None;
     }
-    if wall < 2.0 || session.latency_samples.is_empty() {
+    if wall.0 < 2.0 || session.latency_samples.is_empty() {
         return None;
     }
     let mut samples = std::mem::take(&mut session.latency_samples);
-    samples.sort_by(f32::total_cmp);
+    samples.sort_by(|a, b| a.0.total_cmp(&b.0));
     let median = samples[samples.len() / 2];
-    Some(Millis((median * 1000.0).round().max(0.0) as i64))
+    Some(Millis(median.to_millis().round().max(0.0) as i64))
 }
