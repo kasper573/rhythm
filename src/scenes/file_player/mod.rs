@@ -12,13 +12,13 @@ use crate::core::note_field::{
     NoteFieldClock, NoteFieldSystems, NoteSpawn, spawn_mine, spawn_note, spawn_receptors,
 };
 use crate::core::note_skin::ActiveNoteSkin;
-use crate::core::scene_flow::{GameScene, SceneFade, scene_accepts_input};
 use crate::core::settings::{Settings, TimingSettings};
 use crate::core::sfx::{PlaySfx, Sfx};
 use crate::core::stepfile::NoteKind;
 use crate::core::tick_track::render_tick_track;
 use crate::core::units::{Beat, Millis, Seconds};
 use crate::scenes::file_select::{FileSelectTarget, SelectedStepfile};
+use crate::scenes::{GameScene, SceneFade, scene_accepts_input};
 use bevy::audio::AudioSinkPlayback;
 use bevy::prelude::*;
 

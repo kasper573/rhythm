@@ -3,9 +3,9 @@ use crate::core::font::GameFont;
 use crate::core::input::{Actions, GameAction, NavPulse};
 use crate::core::note_field::NoteSpeed;
 use crate::core::note_skin::NoteSkinLibrary;
-use crate::core::scene_flow::{GameScene, SceneFade, scene_accepts_input};
 use crate::core::settings::Settings;
 use crate::core::sfx::{PlaySfx, Sfx};
+use crate::scenes::{GameScene, SceneFade, scene_accepts_input};
 use bevy::prelude::*;
 
 /// A matrix of the player's stepfile options: ¤Next¤/¤Previous¤ move between

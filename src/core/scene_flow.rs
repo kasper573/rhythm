@@ -1,28 +1,17 @@
 use bevy::prelude::*;
+use bevy::state::state::FreelyMutableState;
+use std::marker::PhantomData;
 
-/// Every scene in the game. Scene systems run under `in_state`, scene
-/// entities carry `DespawnOnExit(GameScene::...)`.
-#[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum GameScene {
-    #[default]
-    MainMenu,
-    SettingsMenu,
-    Keymap,
-    FileSelect,
-    PlayerOptions,
-    FilePlayer,
-    Score,
-}
-
-/// Drives the mandatory scene transition: fade to black, swap scene while
-/// black, fade back in. All scene switches must go through [`SceneFade::begin`].
+/// Drives the mandatory scene transition for the scene state `S`: fade to
+/// black, swap scene while black, fade back in. All scene switches must go
+/// through [`SceneFade::begin`].
 #[derive(Resource)]
-pub struct SceneFade {
-    phase: FadePhase,
+pub struct SceneFade<S: FreelyMutableState> {
+    phase: FadePhase<S>,
 }
 
-impl SceneFade {
-    pub fn begin(&mut self, to: GameScene) {
+impl<S: FreelyMutableState> SceneFade<S> {
+    pub fn begin(&mut self, to: S) {
         if matches!(self.phase, FadePhase::FadingOut { .. }) {
             return;
         }
@@ -44,32 +33,33 @@ impl SceneFade {
     }
 }
 
-/// Run condition: the current scene is fully faded in and accepting input.
-pub fn scene_accepts_input(fade: Res<SceneFade>) -> bool {
-    fade.accepts_input()
+pub struct SceneFlowPlugin<S>(PhantomData<S>);
+
+impl<S> Default for SceneFlowPlugin<S> {
+    fn default() -> Self {
+        SceneFlowPlugin(PhantomData)
+    }
 }
 
-pub struct SceneFlowPlugin;
-
-impl Plugin for SceneFlowPlugin {
+impl<S: FreelyMutableState + FromWorld> Plugin for SceneFlowPlugin<S> {
     fn build(&self, app: &mut App) {
-        app.init_state::<GameScene>()
+        app.init_state::<S>()
             // Boot behind a fully black overlay that fades in like any other
             // scene entrance.
-            .insert_resource(SceneFade {
+            .insert_resource(SceneFade::<S> {
                 phase: FadePhase::FadingIn { alpha: 1.0 },
             })
             .add_systems(Startup, spawn_fade_overlay)
-            .add_systems(Update, run_fade);
+            .add_systems(Update, run_fade::<S>);
     }
 }
 
 const FADE_SECONDS: f32 = 0.3;
 
-#[derive(Clone, Copy)]
-enum FadePhase {
+#[derive(Clone)]
+enum FadePhase<S> {
     Idle,
-    FadingOut { to: GameScene, alpha: f32 },
+    FadingOut { to: S, alpha: f32 },
     FadingIn { alpha: f32 },
 }
 
@@ -90,17 +80,17 @@ fn spawn_fade_overlay(mut commands: Commands) {
     ));
 }
 
-fn run_fade(
+fn run_fade<S: FreelyMutableState>(
     time: Res<Time>,
-    mut fade: ResMut<SceneFade>,
-    mut next_scene: ResMut<NextState<GameScene>>,
+    mut fade: ResMut<SceneFade<S>>,
+    mut next_scene: ResMut<NextState<S>>,
     mut overlay: Single<&mut BackgroundColor, With<FadeOverlay>>,
 ) {
     if matches!(fade.phase, FadePhase::Idle) {
         return;
     }
     let step = time.delta_secs() / FADE_SECONDS;
-    fade.phase = match fade.phase {
+    fade.phase = match fade.phase.clone() {
         FadePhase::Idle => FadePhase::Idle,
         FadePhase::FadingOut { to, alpha } => {
             let alpha = alpha + step;

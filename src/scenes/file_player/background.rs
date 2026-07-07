@@ -2,11 +2,11 @@ use super::PlaySession;
 use crate::core::SCREEN_SIZE;
 use crate::core::assets::asset_server_path;
 use crate::core::library::{StepfileEntry, is_video_file};
-use crate::core::scene_flow::GameScene;
 use crate::core::settings::Settings;
 use crate::core::stepfile::StepfileTiming;
 use crate::core::units::Seconds;
 use crate::core::video::VideoStream;
+use crate::scenes::GameScene;
 use bevy::prelude::*;
 use std::path::{Path, PathBuf};
 

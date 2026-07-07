@@ -1,6 +1,6 @@
 use crate::core::font::GameFont;
 use crate::core::menu::{MenuSelected, spawn_menu};
-use crate::core::scene_flow::{GameScene, SceneFade};
+use crate::scenes::{GameScene, SceneFade};
 use bevy::prelude::*;
 
 pub struct MainMenuPlugin;

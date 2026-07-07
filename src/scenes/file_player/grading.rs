@@ -4,8 +4,8 @@ use crate::core::font::GameFont;
 use crate::core::input::Actions;
 use crate::core::note_field::{ArrowFade, Popup, TARGET_Y, column_x, spawn_mine_explosion};
 use crate::core::note_skin::ActiveNoteSkin;
-use crate::core::scene_flow::GameScene;
 use crate::core::settings::Settings;
+use crate::scenes::GameScene;
 use bevy::prelude::*;
 
 const GRADED_FADE_SECONDS: f32 = 0.05;

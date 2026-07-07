@@ -1,8 +1,8 @@
 use crate::core::font::GameFont;
 use crate::core::input::{Actions, GameAction};
 use crate::core::menu::{MenuSelected, spawn_menu};
-use crate::core::scene_flow::{GameScene, SceneFade, scene_accepts_input};
 use crate::core::sfx::{PlaySfx, Sfx};
+use crate::scenes::{GameScene, SceneFade, scene_accepts_input};
 use bevy::prelude::*;
 
 pub struct SettingsMenuPlugin;

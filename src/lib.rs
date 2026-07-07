@@ -7,9 +7,7 @@ use crate::core::config::GameConfig;
 use crate::core::font::FontPlugin;
 use crate::core::input::InputPlugin;
 use crate::core::library::StepfileLibrary;
-use crate::core::menu::MenuPlugin;
 use crate::core::note_field::NoteFieldPlugin;
-use crate::core::scene_flow::SceneFlowPlugin;
 use crate::core::settings::SettingsPlugin;
 use crate::core::sfx::SfxPlugin;
 use crate::integrations::SettingsNoteSkinPlugin;
@@ -55,8 +53,6 @@ pub fn run() {
             NoteFieldPlugin,
             InputPlugin,
             SfxPlugin,
-            SceneFlowPlugin,
-            MenuPlugin,
             scenes::ScenesPlugin,
         ))
         .add_systems(Startup, spawn_camera)

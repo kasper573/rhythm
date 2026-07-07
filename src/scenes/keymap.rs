@@ -1,9 +1,9 @@
 use crate::core::font::GameFont;
 use crate::core::input::{Actions, GameAction};
 use crate::core::menu::{Menu, MenuInputLock, MenuItem, MenuSelected};
-use crate::core::scene_flow::{GameScene, SceneFade, scene_accepts_input};
 use crate::core::settings::Settings;
 use crate::core::sfx::{PlaySfx, Sfx};
+use crate::scenes::{GameScene, SceneFade, scene_accepts_input};
 use bevy::input::ButtonState;
 use bevy::input::keyboard::KeyboardInput;
 use bevy::prelude::*;

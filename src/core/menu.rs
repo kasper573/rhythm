@@ -1,8 +1,10 @@
 use crate::core::font::GameFont;
 use crate::core::input::{Actions, GameAction, NavPulse};
-use crate::core::scene_flow::{GameScene, SceneFade};
+use crate::core::scene_flow::SceneFade;
 use crate::core::sfx::{PlaySfx, Sfx};
 use bevy::prelude::*;
+use bevy::state::state::FreelyMutableState;
+use std::marker::PhantomData;
 
 /// A simple vertical list menu driven by ¤Next¤/¤Previous¤/¤Select¤.
 /// Spawn one per scene (see [`spawn_menu`]) and read [`MenuSelected`]
@@ -27,11 +29,12 @@ pub struct MenuSelected {
 #[derive(Resource, Default)]
 pub struct MenuInputLock(pub bool);
 
-/// Spawns a full-screen menu scene: a title and a vertical list of items.
-pub fn spawn_menu(
+/// Spawns a full-screen menu scene: a title and a vertical list of items,
+/// despawned when `scene` exits.
+pub fn spawn_menu<S: States>(
     commands: &mut Commands,
     font: &GameFont,
-    scene: GameScene,
+    scene: S,
     title: &str,
     items: &[&str],
 ) {
@@ -88,9 +91,17 @@ pub fn spawn_menu(
         });
 }
 
-pub struct MenuPlugin;
+/// Menus pause while the scene fade for `S` is running, so the plugin is
+/// generic over the app's scene state.
+pub struct MenuPlugin<S>(PhantomData<S>);
 
-impl Plugin for MenuPlugin {
+impl<S> Default for MenuPlugin<S> {
+    fn default() -> Self {
+        MenuPlugin(PhantomData)
+    }
+}
+
+impl<S: FreelyMutableState> Plugin for MenuPlugin<S> {
     fn build(&self, app: &mut App) {
         app.init_resource::<MenuInputLock>()
             .add_message::<MenuSelected>()
@@ -98,7 +109,7 @@ impl Plugin for MenuPlugin {
                 Update,
                 (menu_navigate, menu_select, menu_highlight)
                     .chain()
-                    .run_if(menus_active),
+                    .run_if(menus_active::<S>),
             );
     }
 }
@@ -107,7 +118,7 @@ const TITLE_COLOR: Color = Color::srgb(0.95, 0.85, 0.4);
 const ACTIVE_COLOR: Color = Color::srgb(1.0, 1.0, 1.0);
 const INACTIVE_COLOR: Color = Color::srgb(0.45, 0.45, 0.55);
 
-fn menus_active(lock: Res<MenuInputLock>, fade: Res<SceneFade>) -> bool {
+fn menus_active<S: FreelyMutableState>(lock: Res<MenuInputLock>, fade: Res<SceneFade<S>>) -> bool {
     !lock.0 && fade.accepts_input()
 }
 
