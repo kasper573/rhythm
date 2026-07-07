@@ -1,0 +1,51 @@
+[package]
+name = "rhythm"
+version = "0.1.0"
+edition = "2024"
+default-run = "rhythm"
+
+[dependencies]
+bevy = { version = "0.19", default-features = false, features = [
+    # default features minus bevy_gilrs (gamepad), which needs libudev headers
+    "default_app",
+    "std",
+    "bevy_winit",
+    "default_font",
+    "multi_threaded",
+    "x11",
+    "wayland",
+    "2d_bevy_render",
+    "scene",
+    "picking",
+    "ui_api",
+    "ui_bevy_render",
+    "bevy_ui_widgets",
+    "bevy_audio",
+    "vorbis",
+    "mp3",
+    "wav",
+    "keyboard",
+    "mouse",
+    "png",
+    "jpeg",
+    "serialize",
+] }
+clap = { version = "4", features = ["derive"] }
+hound = "3"
+# Not used directly: routes the text layouter's ICU4X warnings through `log`
+# (and thus the log filter) instead of raw stderr prints in debug builds.
+icu_provider = { version = "2", default-features = false, features = ["logging"] }
+json_comments = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+dirs = "6"
+thiserror = "2"
+
+[dev-dependencies]
+glob = "0.3"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
