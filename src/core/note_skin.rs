@@ -29,7 +29,6 @@ pub struct ActiveNoteSkin {
     pub hold_cap_active: usize,
     pub mine: usize,
     pub mine_spin_beats: f64,
-    pub tap_explosion: usize,
     pub mine_explosion: usize,
     pub hold_body_inactive: Handle<Image>,
     pub hold_body_active: Handle<Image>,
@@ -133,7 +132,7 @@ pub fn load_note_skin(
     let hold_body_inactive = load_body(&manifest.hold_body.inactive);
     let hold_body_active = load_body(&manifest.hold_body.active);
 
-    let mut layout = TextureAtlasLayout::new_empty(UVec2::new(4096, 4096));
+    let mut layout = TextureAtlasLayout::new_empty(UVec2::ZERO);
     let mut rect = |pos: [u32; 2], size: [u32; 2]| {
         layout.add_texture(URect::new(
             pos[0],
@@ -179,9 +178,12 @@ pub fn load_note_skin(
     let hold_cap_inactive = rect(manifest.hold_cap.inactive, manifest.hold_cap.size);
     let hold_cap_active = rect(manifest.hold_cap.active, manifest.hold_cap.size);
     let mine = rect(manifest.mine.pos, manifest.mine.size);
-    let tap_explosion = rect(manifest.tap_explosion.pos, manifest.tap_explosion.size);
     let mine_explosion = rect(manifest.mine_explosion.pos, manifest.mine_explosion.size);
 
+    layout.size = layout
+        .textures
+        .iter()
+        .fold(UVec2::ZERO, |size, rect| size.max(rect.max));
     let layout = layouts.add(layout);
 
     ActiveNoteSkin {
@@ -199,7 +201,6 @@ pub fn load_note_skin(
         hold_cap_active,
         mine,
         mine_spin_beats: manifest.mine.spin_beats,
-        tap_explosion,
         mine_explosion,
         hold_body_inactive,
         hold_body_active,
@@ -269,7 +270,6 @@ struct Manifest {
     hold_head: HoldHeadManifest,
     hold_cap: StatePairManifest,
     mine: MineManifest,
-    tap_explosion: RegionManifest,
     mine_explosion: RegionManifest,
     hold_body: HoldBodyManifest,
     dropped_brightness: f32,

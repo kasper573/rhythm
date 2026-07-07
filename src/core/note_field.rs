@@ -438,7 +438,7 @@ fn animate_receptor_press(time: Res<Time>, mut receptors: Query<(&mut Receptor, 
         let step = time.delta_secs() / PRESS_SECONDS;
         let step = if receptor.held { step } else { -step };
         receptor.press = (receptor.press + step).clamp(0.0, 1.0);
-        let eased = ease_in_out_cubic(receptor.press);
+        let eased = EaseFunction::CubicInOut.sample_clamped(receptor.press);
         transform.translation.z = 10.0 - 6.0 * eased;
         transform.scale = Vec3::splat(1.0 - 0.22 * eased);
     }
@@ -649,13 +649,5 @@ fn set_rect(sprite: &mut Mut<Sprite>, rect: Option<Rect>) {
 fn set_visibility(visibility: &mut Mut<Visibility>, wanted: Visibility) {
     if **visibility != wanted {
         **visibility = wanted;
-    }
-}
-
-fn ease_in_out_cubic(t: f32) -> f32 {
-    if t < 0.5 {
-        4.0 * t * t * t
-    } else {
-        1.0 - (-2.0 * t + 2.0).powi(3) / 2.0
     }
 }

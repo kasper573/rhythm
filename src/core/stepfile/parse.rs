@@ -71,7 +71,7 @@ pub(super) fn parse_stepfile(text: &str) -> Result<Stepfile, StepfileError> {
         }
     }
 
-    if bpms.is_empty() {
+    if !bpms.iter().any(|(_, bpm)| *bpm > 0.0) {
         return Err(StepfileError::NoBpms);
     }
     if charts.is_empty() {
