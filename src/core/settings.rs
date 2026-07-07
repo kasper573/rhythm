@@ -1,4 +1,4 @@
-use crate::core::config::{GameConfig, StepfileOptions};
+use crate::core::config::StepfileOptions;
 use crate::core::input::Keymap;
 use crate::core::units::Millis;
 use bevy::prelude::*;
@@ -40,16 +40,14 @@ impl TimingSettings {
     }
 }
 
-pub struct SettingsPlugin;
+pub struct SettingsPlugin {
+    /// Stepfile options for settings files that predate the field.
+    pub default_stepfile: StepfileOptions,
+}
 
 impl Plugin for SettingsPlugin {
     fn build(&self, app: &mut App) {
-        let defaults = app
-            .world()
-            .resource::<GameConfig>()
-            .default_stepfile_options
-            .clone();
-        app.insert_resource(load_settings(defaults))
+        app.insert_resource(load_settings(self.default_stepfile.clone()))
             .add_systems(Update, save_settings);
     }
 }

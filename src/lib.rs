@@ -1,4 +1,5 @@
 pub mod core;
+pub mod integrations;
 pub mod scenes;
 
 use crate::core::SCREEN_SIZE;
@@ -8,13 +9,17 @@ use crate::core::input::InputPlugin;
 use crate::core::library::StepfileLibrary;
 use crate::core::menu::MenuPlugin;
 use crate::core::note_field::NoteFieldPlugin;
-use crate::core::note_skin::NoteSkinPlugin;
 use crate::core::scene_flow::SceneFlowPlugin;
 use crate::core::settings::SettingsPlugin;
 use crate::core::sfx::SfxPlugin;
+use crate::integrations::SettingsNoteSkinPlugin;
 use bevy::prelude::*;
 
 pub fn run() {
+    let config = GameConfig::load();
+    let settings_plugin = SettingsPlugin {
+        default_stepfile: config.default_stepfile_options.clone(),
+    };
     App::new()
         .add_plugins(
             DefaultPlugins
@@ -41,13 +46,13 @@ pub fn run() {
                 }),
         )
         .insert_resource(ClearColor(Color::srgb(0.04, 0.04, 0.07)))
-        .insert_resource(GameConfig::load())
+        .insert_resource(config)
         .insert_resource(StepfileLibrary::scan())
         .add_plugins((
             FontPlugin,
-            // The skin plugin loads the skin named by the settings.
-            SettingsPlugin,
-            NoteSkinPlugin,
+            settings_plugin,
+            // Wires the active note skin to the settings.
+            SettingsNoteSkinPlugin,
             NoteFieldPlugin,
             InputPlugin,
             SfxPlugin,

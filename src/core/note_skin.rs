@@ -1,5 +1,4 @@
 use crate::core::assets::asset_root;
-use crate::core::settings::Settings;
 use bevy::image::{ImageAddressMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor};
 use bevy::prelude::*;
 use serde::Deserialize;
@@ -7,8 +6,8 @@ use serde::Deserialize;
 /// The loaded note skin: one sprite sheet with atlas indices for taps,
 /// receptors, hold heads/caps, mines, and explosions, plus standalone
 /// vertically-tileable hold body images. Loaded from
-/// `assets/note_skins/<name>/manifest.json`, where `<name>` comes from the
-/// settings' stepfile options.
+/// `assets/note_skins/<name>/manifest.json` by [`load_note_skin`]; which
+/// skin is active is the integration layer's choice.
 #[derive(Resource)]
 pub struct ActiveNoteSkin {
     /// Folder name of the skin, as referenced by the settings.
@@ -75,30 +74,9 @@ pub struct NoteSkinLibrary {
 }
 
 pub struct NoteSkinEntry {
-    /// Folder name, as stored in the settings.
+    /// Folder name, as referenced by [`ActiveNoteSkin::name`].
     pub name: String,
     pub display_name: String,
-}
-
-pub struct NoteSkinPlugin;
-
-impl Plugin for NoteSkinPlugin {
-    fn build(&self, app: &mut App) {
-        let name = app
-            .world()
-            .resource::<Settings>()
-            .stepfile
-            .note_skin
-            .clone();
-        let skin = app.world_mut().resource_scope(
-            |world, mut layouts: Mut<Assets<TextureAtlasLayout>>| {
-                load_note_skin(world.resource::<AssetServer>(), &mut layouts, &name)
-            },
-        );
-        app.insert_resource(skin)
-            .insert_resource(scan_note_skins())
-            .add_systems(Update, reload_changed_skin);
-    }
 }
 
 /// Panics on a missing or invalid skin: the requested skin must exist.
@@ -217,22 +195,8 @@ pub fn load_note_skin(
     }
 }
 
-/// Reloads the active skin whenever the settings point at a different one
-/// (the player options scene edits them).
-fn reload_changed_skin(
-    settings: Res<Settings>,
-    asset_server: Res<AssetServer>,
-    mut layouts: ResMut<Assets<TextureAtlasLayout>>,
-    mut skin: ResMut<ActiveNoteSkin>,
-) {
-    if !settings.is_changed() || skin.name == settings.stepfile.note_skin {
-        return;
-    }
-    *skin = load_note_skin(&asset_server, &mut layouts, &settings.stepfile.note_skin);
-}
-
 /// Lists the note skins on disk by their manifests' display names.
-fn scan_note_skins() -> NoteSkinLibrary {
+pub fn scan_note_skins() -> NoteSkinLibrary {
     let root = asset_root().join("note_skins");
     let entries = std::fs::read_dir(&root)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", root.display()));
