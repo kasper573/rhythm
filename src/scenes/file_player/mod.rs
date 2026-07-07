@@ -137,9 +137,8 @@ pub(super) struct SessionNote {
     pub hold: Option<HoldState>,
 }
 
-/// Live state of one hold or roll: life refills while satisfied and drains
-/// through a grace window otherwise; reaching zero drops the hold (NG),
-/// reaching the tail with life left keeps it (OK).
+/// Live state of one hold or roll; the life rules live in
+/// [`grading::update_holds`].
 pub(super) struct HoldState {
     pub end: Seconds,
     pub roll: bool,
@@ -213,7 +212,6 @@ fn enter(
     mut audio_sources: ResMut<Assets<AudioSource>>,
     mut fade: ResMut<SceneFade>,
 ) {
-    // This scene requires a stepfile to function.
     let Some(selected) = selected else {
         fade.begin(GameScene::FileSelect);
         return;
@@ -321,7 +319,6 @@ fn enter(
         });
     }
 
-    // Music, when it exists on disk.
     if let Some(path) = entry.music_path().as_deref().and_then(asset_server_path) {
         commands.spawn((
             DespawnOnExit(GameScene::FilePlayer),

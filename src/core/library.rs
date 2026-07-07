@@ -109,8 +109,6 @@ impl StepfileLibrary {
 impl StepfileEntry {
     pub fn display_title(&self) -> String {
         let stepfile = &self.stepfile;
-        // The bundled font has no CJK glyphs, so fall back to the
-        // transliterated title when the original wouldn't render.
         let title = preferred_text(&stepfile.title, &stepfile.title_translit);
         let subtitle = preferred_text(&stepfile.subtitle, &stepfile.subtitle_translit);
         if title.is_empty() {
@@ -251,9 +249,11 @@ fn warn_if_stray_stepfile(path: &Path) {
     }
 }
 
+/// Prefers the transliterated variant over a CJK original, so the library's
+/// displayed names read and sort consistently in one script.
 fn preferred_text<'a>(original: &'a str, transliterated: &'a str) -> &'a str {
-    let unrenderable = original.chars().any(|char| char as u32 >= 0x2E80);
-    if unrenderable && !transliterated.is_empty() {
+    let cjk = original.chars().any(|char| char as u32 >= 0x2E80);
+    if cjk && !transliterated.is_empty() {
         transliterated
     } else {
         original

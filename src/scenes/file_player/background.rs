@@ -134,7 +134,6 @@ fn start_video(
     }
     match VideoStream::open(path, start_time, images) {
         Ok(stream) => {
-            // Fit inside the window, preserving the video's aspect ratio.
             let scale =
                 (SCREEN_SIZE.x / stream.width as f32).min(SCREEN_SIZE.y / stream.height as f32);
             let size = Vec2::new(stream.width as f32, stream.height as f32) * scale;

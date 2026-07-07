@@ -13,9 +13,9 @@ use bevy::prelude::*;
 /// between. The clock therefore snaps once to the first report and then
 /// applies small, slew-limited corrections toward each fresh report edge —
 /// never jumping, never running backwards — so judgments see a smooth,
-/// accurate timeline. (An earlier version snapped to the staircase in both
-/// directions, which made the judged timeline oscillate by tens of
-/// milliseconds whenever the audio quantum exceeded the snap threshold.)
+/// accurate timeline. Snapping to the staircase directly would make the
+/// judged timeline oscillate by tens of milliseconds whenever the audio
+/// quantum exceeds the snap threshold.
 pub(super) fn advance_clock(
     time: Res<Time>,
     mut session: ResMut<PlaySession>,

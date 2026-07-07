@@ -60,7 +60,6 @@ pub(super) fn grade_step_inputs(
         );
         let note = &mut session.notes[index];
         match &mut note.hold {
-            // Stepping the head brings the hold to life.
             Some(hold) => {
                 hold.engaged = true;
                 hold.life = 1.0;

@@ -623,8 +623,9 @@ fn fade_popups(
     }
 }
 
-/// Assigns only on change, so unchanged entities don't get flagged for
-/// re-extraction every frame.
+// The setters below assign only on change, so unchanged entities don't get
+// flagged for re-extraction every frame.
+
 fn set_atlas_index(sprite: &mut Mut<Sprite>, index: usize) {
     if sprite
         .texture_atlas
@@ -636,16 +637,12 @@ fn set_atlas_index(sprite: &mut Mut<Sprite>, index: usize) {
     }
 }
 
-/// Assigns only on change, so unchanged entities don't get flagged for
-/// re-extraction every frame.
 fn set_rect(sprite: &mut Mut<Sprite>, rect: Option<Rect>) {
     if sprite.rect != rect {
         sprite.rect = rect;
     }
 }
 
-/// Assigns only on change, so unchanged entities don't get flagged for
-/// re-extraction every frame.
 fn set_visibility(visibility: &mut Mut<Visibility>, wanted: Visibility) {
     if **visibility != wanted {
         **visibility = wanted;

@@ -51,7 +51,6 @@ pub fn run() {
         .add_plugins((
             FontPlugin,
             settings_plugin,
-            // Wires the active note skin to the settings.
             SettingsNoteSkinPlugin,
             NoteFieldPlugin,
             InputPlugin,

@@ -148,8 +148,7 @@ fn enter(
     target: Option<Res<FileSelectTarget>>,
     mut images: ResMut<Assets<Image>>,
 ) {
-    // The entry param names the row to land on; without one, the configured
-    // default. Only the target row's group starts expanded.
+    // Only the target row's group starts expanded.
     let target = target
         .map(|target| *target)
         .or_else(|| wheel_default_selection(&library, &config).map(FileSelectTarget::Stepfile))
