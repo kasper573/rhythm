@@ -74,6 +74,8 @@
   "bright_arrow_flash_combo": 100,
   "player_max_health": 100,
   "healthbar": {
+    "glow": { "speed": 4, "easing": [0.7, 0, 1, 0.3] },
+    "liquid": { "speed": 1, "easing": [0.37, 0, 0.63, 1] },
     "colors": [
       [0, [33, "#2A7B9B"], [100, "#53D6ED"]],
       [50, [33, "#FD1D1D"], [100, "#FCB045"]],

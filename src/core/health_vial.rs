@@ -1,4 +1,5 @@
 use crate::core::config::{GameConfig, HealthColorStop};
+use crate::core::note_field::NoteFieldClock;
 use bevy::prelude::*;
 use bevy::render::render_resource::AsBindGroup;
 use bevy::shader::ShaderRef;
@@ -31,11 +32,13 @@ pub fn spawn_health_vial(
 ) -> Entity {
     let material = materials.add(HealthVialMaterial {
         params: Vec4::ZERO,
+        geometry: Vec4::new(GLOW_MARGIN, 0.0, 0.0, 0.0),
         colors: [Vec4::ZERO; GRADIENT_SAMPLES],
     });
-    // HealthVial rides the insert rather than the scene patch so the first
-    // animation frame is guaranteed to see the real fill, not a default.
-    commands
+    // The outer node is the vial's spec rect; the shader node hangs past
+    // it on every side so the glow has room to breathe without moving the
+    // vial itself.
+    let vial = commands
         .spawn_scene(bsn! {
             Node {
                 position_type: PositionType::Absolute,
@@ -45,21 +48,38 @@ pub fn spawn_health_vial(
                 height: percent(80),
             }
         })
+        .id();
+    // HealthVial rides the insert rather than the scene patch so the first
+    // animation frame is guaranteed to see the real fill, not a default.
+    commands
+        .spawn_scene(bsn! {
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(-GLOW_MARGIN),
+                right: px(-GLOW_MARGIN),
+                top: px(-GLOW_MARGIN),
+                bottom: px(-GLOW_MARGIN),
+            }
+        })
         .insert((
             HealthVial { fill },
             MaterialNode(material),
             VialMotion::default(),
-        ))
-        .id()
+            ChildOf(vial),
+        ));
+    vial
 }
 
 #[derive(AsBindGroup, Asset, TypePath, Clone)]
 pub struct HealthVialMaterial {
-    /// `(liquid level, turbulence, 0, 0)`.
+    /// `(liquid level, turbulence, glow pulse, gradient scroll)`.
     #[uniform(0)]
     params: Vec4,
-    /// The active gradient sampled bottom-to-top at fixed positions.
+    /// `(glow margin in node pixels, 0, 0, 0)`.
     #[uniform(1)]
+    geometry: Vec4,
+    /// The active gradient sampled bottom-to-top at fixed positions.
+    #[uniform(2)]
     colors: [Vec4; GRADIENT_SAMPLES],
 }
 
@@ -70,6 +90,8 @@ impl UiMaterial for HealthVialMaterial {
 }
 
 const GRADIENT_SAMPLES: usize = 16;
+/// Node pixels reserved around the vial for the pulsing glow.
+const GLOW_MARGIN: f32 = 20.0;
 /// The liquid level's time constant toward the target fill.
 const LEVEL_TAU: f32 = 0.25;
 /// How long stirred-up waves take to settle back to a flat surface.
@@ -90,6 +112,7 @@ struct VialMotion {
 fn animate_vials(
     time: Res<Time>,
     config: Res<GameConfig>,
+    clock: Option<Res<NoteFieldClock>>,
     mut materials: ResMut<Assets<HealthVialMaterial>>,
     mut vials: Query<(
         &HealthVial,
@@ -98,6 +121,11 @@ fn animate_vials(
     )>,
 ) {
     let delta = time.delta_secs();
+    // The same beat the arrows animate on, so every pulse shares one clock.
+    let beat = clock.map(|clock| clock.beat()).unwrap_or(0.0);
+    let glow = config.healthbar.glow.pulse(beat);
+    // One full trip through the mirrored gradient (two units) per cycle.
+    let scroll = (config.healthbar.liquid.progress(beat) * 2.0).rem_euclid(2.0);
     for (vial, mut motion, node) in &mut vials {
         let stops = &config.healthbar.gradient_at(vial.fill * 100.0).stops;
         let targets: Vec<Vec4> = (0..GRADIENT_SAMPLES)
@@ -131,7 +159,7 @@ fn animate_vials(
         }
 
         if let Some(mut material) = materials.get_mut(&node.0) {
-            material.params = Vec4::new(motion.level, motion.turbulence, 0.0, 0.0);
+            material.params = Vec4::new(motion.level, motion.turbulence, glow, scroll);
             material.colors = motion.colors;
         }
     }

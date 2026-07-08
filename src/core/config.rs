@@ -2,6 +2,7 @@ use crate::core::assets::asset_root;
 use crate::core::input::GameAction;
 use crate::core::note_field::NoteSpeed;
 use crate::core::units::Seconds;
+use bevy::math::cubic_splines::CubicSegment;
 use bevy::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::BTreeMap;
@@ -75,10 +76,49 @@ pub struct MissDef {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct HealthBarConfig {
+    /// The vial's glass glow, pulsing with the music.
+    pub glow: RhythmCycle,
+    /// The liquid gradient's looping scroll, ebbing with the music.
+    pub liquid: RhythmCycle,
     /// Gradient presets keyed by the health percentage they take effect
     /// at; the active preset is the last one at or below current health.
     /// Sorted ascending.
     pub colors: Vec<HealthGradient>,
+}
+
+/// An animation cycle locked to the music. `speed` counts cycles per
+/// measure — 4 cycles once every beat, 1 once every measure — and
+/// `easing` is a CSS-style cubic bezier `[x1, y1, x2, y2]` shaping the
+/// progression within each cycle.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RhythmCycle {
+    pub speed: f64,
+    pub easing: [f32; 4],
+}
+
+impl RhythmCycle {
+    /// Eased progression through the current cycle, `0..=1`, continuous
+    /// across cycle boundaries for animations that wrap.
+    pub fn progress(&self, beat: f64) -> f32 {
+        self.ease(self.phase(beat))
+    }
+
+    /// Pulse intensity `0..=1` whose apex lands exactly on the cycle
+    /// boundary (the configured beat): the phase is folded so intensity
+    /// rises into the beat and falls away from it, shaped by the easing.
+    pub fn pulse(&self, beat: f64) -> f32 {
+        self.ease((2.0 * self.phase(beat) - 1.0).abs())
+    }
+
+    /// Cycle phase `0..1`; .sm measures are four beats.
+    fn phase(&self, beat: f64) -> f32 {
+        (beat * self.speed / 4.0).rem_euclid(1.0) as f32
+    }
+
+    fn ease(&self, t: f32) -> f32 {
+        let [x1, y1, x2, y2] = self.easing;
+        CubicSegment::new_bezier_easing((x1, y1), (x2, y2)).ease(t)
+    }
 }
 
 impl HealthBarConfig {
@@ -299,6 +339,16 @@ impl GameConfig {
             !self.healthbar.colors.is_empty(),
             "{source}: healthbar colors must not be empty"
         );
+        for cycle in [&self.healthbar.glow, &self.healthbar.liquid] {
+            assert!(
+                cycle.speed > 0.0,
+                "{source}: healthbar cycle speeds must be positive"
+            );
+            assert!(
+                (0.0..=1.0).contains(&cycle.easing[0]) && (0.0..=1.0).contains(&cycle.easing[2]),
+                "{source}: healthbar easing x control points must be within 0..=1"
+            );
+        }
         for pair in self.healthbar.colors.windows(2) {
             assert!(
                 pair[0].min_health < pair[1].min_health,
