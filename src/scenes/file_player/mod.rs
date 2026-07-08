@@ -17,7 +17,7 @@ use crate::core::note_skin::ActiveNoteSkin;
 use crate::core::scene_flow::SpawnScoped;
 use crate::core::settings::{Settings, TimingSettings};
 use crate::core::sfx::{PlaySfx, Sfx};
-use crate::core::stepfile::{Chart, Difficulty, StepfileClock, StepfileTiming};
+use crate::core::stepfile::{Chart, Difficulty, MusicPlayer, StepfileClock, StepfileTiming};
 use crate::core::tick_track::render_tick_track;
 use crate::core::units::{Millis, Seconds};
 use crate::scenes::file_select::{FileSelectTarget, SelectedStepfile};
@@ -340,7 +340,8 @@ fn enter(
     });
 }
 
-fn exit(mut commands: Commands) {
+fn exit(mut commands: Commands, mut music: ResMut<MusicPlayer>) {
+    music.stop(&mut commands);
     commands.remove_resource::<PlaySession>();
     commands.remove_resource::<NoteFieldClock>();
     commands.remove_resource::<SelectedStepfile>();

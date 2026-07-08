@@ -9,14 +9,14 @@ use crate::core::sfx::{PlaySfx, Sfx};
 use crate::core::units::Percent;
 use crate::scenes::file_player::{PlayResult, ScoreResults};
 use crate::scenes::file_select::FileSelectTarget;
-use crate::scenes::{GameScene, SceneFade, scene_accepts_input};
+use crate::scenes::{GameScene, SceneFade, play_default_bgm, scene_accepts_input};
 use bevy::prelude::*;
 
 pub struct ScoreScenePlugin;
 
 impl Plugin for ScoreScenePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(OnEnter(GameScene::Score), enter)
+        app.add_systems(OnEnter(GameScene::Score), (enter, play_default_bgm))
             .add_systems(OnExit(GameScene::Score), exit)
             .add_systems(
                 Update,

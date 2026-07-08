@@ -1,5 +1,5 @@
 use crate::core::assets::asset_root;
-use crate::core::stepfile::Stepfile;
+use crate::core::stepfile::{Bgm, Stepfile};
 use bevy::prelude::*;
 use std::path::{Path, PathBuf};
 
@@ -10,6 +10,10 @@ use std::path::{Path, PathBuf};
 #[derive(Resource, Debug)]
 pub struct StepfileLibrary {
     pub groups: Vec<StepfileGroup>,
+    /// The fallback background music every scene can play: the vetted
+    /// stepfile at `assets/default_bgm/`, deliberately outside the wheel's
+    /// library.
+    pub default_bgm: StepfileEntry,
 }
 
 #[derive(Debug)]
@@ -39,6 +43,10 @@ pub fn is_video_file(name: &str) -> bool {
 
 impl StepfileLibrary {
     pub fn scan() -> StepfileLibrary {
+        let default_bgm = load_stepfile_folder(&asset_root().join("default_bgm"))
+            .into_iter()
+            .next()
+            .expect("assets/default_bgm must hold a valid .sm: it is the global fallback BGM");
         let root = asset_root().join("stepfiles");
         let mut groups: Vec<StepfileGroup> = Vec::new();
 
@@ -49,7 +57,10 @@ impl StepfileLibrary {
                     "cannot read stepfile library at {}: {error}",
                     root.display()
                 );
-                return StepfileLibrary { groups };
+                return StepfileLibrary {
+                    groups,
+                    default_bgm,
+                };
             }
         };
 
@@ -66,7 +77,13 @@ impl StepfileLibrary {
                 for entry in entries.filter_map(Result::ok) {
                     let path = entry.path();
                     if path.is_dir() {
-                        stepfiles.extend(load_stepfile_folder(&path));
+                        // Chart-less stepfiles are valid as music (the
+                        // default BGM is one) but have no place on the wheel.
+                        stepfiles.extend(
+                            load_stepfile_folder(&path)
+                                .into_iter()
+                                .filter(|entry| !entry.stepfile.charts.is_empty()),
+                        );
                     } else {
                         warn_if_stray_stepfile(&path);
                     }
@@ -89,7 +106,10 @@ impl StepfileLibrary {
             "stepfile library: {total} stepfiles in {} groups",
             groups.len()
         );
-        StepfileLibrary { groups }
+        StepfileLibrary {
+            groups,
+            default_bgm,
+        }
     }
 
     pub fn stepfile(&self, id: StepfileId) -> &StepfileEntry {
@@ -107,6 +127,15 @@ impl StepfileLibrary {
 }
 
 impl StepfileEntry {
+    /// This stepfile as background music for the [`MusicPlayer`](crate::core::stepfile::MusicPlayer).
+    pub fn bgm(&self) -> Bgm {
+        Bgm {
+            sm_path: self.sm_path.clone(),
+            stepfile: self.stepfile.clone(),
+            music: self.music_path(),
+        }
+    }
+
     /// The stepfile's own name: its .sm file name without the extension.
     pub fn name(&self) -> String {
         self.sm_path

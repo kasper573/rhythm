@@ -22,6 +22,16 @@ pub enum GameScene {
 
 pub type SceneFade = crate::core::scene_flow::SceneFade<GameScene>;
 
+/// Scenes without music of their own start the default BGM on enter; the
+/// player keeps it running across such scenes uninterrupted.
+pub fn play_default_bgm(
+    library: Res<crate::core::library::StepfileLibrary>,
+    mut music: ResMut<crate::core::stepfile::MusicPlayer>,
+    mut commands: Commands,
+) {
+    music.play(&mut commands, library.default_bgm.bgm());
+}
+
 pub fn scene_accepts_input(fade: Res<SceneFade>) -> bool {
     fade.accepts_input()
 }

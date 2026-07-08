@@ -62,6 +62,9 @@ pub(super) fn refresh_info_panel(
         }
     };
 
+    // Rows without a banner of their own fall back to the default BGM's.
+    let banner_path = banner_path.or_else(|| library.default_bgm.banner_path());
+
     // Real banners cover the fixed rect like a CSS `object-fit: cover`
     // image — scaled to fill, centered, overflow cropped, never stretched.
     // The generated placeholder is made to stretch.

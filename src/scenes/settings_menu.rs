@@ -1,14 +1,14 @@
 use crate::core::input::{Actions, GameAction};
 use crate::core::menu::{MenuSelected, spawn_menu};
 use crate::core::sfx::{PlaySfx, Sfx};
-use crate::scenes::{GameScene, SceneFade, scene_accepts_input};
+use crate::scenes::{GameScene, SceneFade, play_default_bgm, scene_accepts_input};
 use bevy::prelude::*;
 
 pub struct SettingsMenuPlugin;
 
 impl Plugin for SettingsMenuPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(OnEnter(GameScene::SettingsMenu), enter)
+        app.add_systems(OnEnter(GameScene::SettingsMenu), (enter, play_default_bgm))
             .add_systems(
                 Update,
                 (handle_selection, handle_cancel)

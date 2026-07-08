@@ -1,8 +1,10 @@
 mod clock;
+mod music_player;
 mod parse;
 mod timing;
 
 pub use clock::StepfileClock;
+pub use music_player::{Bgm, MusicPlayer, MusicPlayerPlugin};
 pub use timing::StepfileTiming;
 
 use crate::core::units::{Beat, Seconds};
@@ -86,8 +88,6 @@ pub enum StepfileError {
     },
     #[error("stepfile has no valid #BPMS")]
     NoBpms,
-    #[error("stepfile has no parsable #NOTES charts")]
-    NoCharts,
 }
 
 #[derive(Debug, Clone)]

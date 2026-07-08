@@ -10,6 +10,7 @@ use crate::core::note_field::NoteFieldPlugin;
 use crate::core::note_skin::NoteSkinPlugin;
 use crate::core::settings::SettingsPlugin;
 use crate::core::sfx::SfxPlugin;
+use crate::core::stepfile::MusicPlayerPlugin;
 use crate::core::{CLEAR_COLOR, SCREEN_SIZE, size_viewport_covers};
 use bevy::camera::ScalingMode;
 use bevy::prelude::*;
@@ -54,6 +55,7 @@ pub fn run() {
             NoteFieldPlugin,
             HealthVialPlugin,
             HighScoresPlugin,
+            MusicPlayerPlugin,
             InputPlugin,
             SfxPlugin,
             scenes::ScenesPlugin,

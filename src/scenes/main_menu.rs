@@ -1,12 +1,12 @@
 use crate::core::menu::{MenuSelected, spawn_menu};
-use crate::scenes::{GameScene, SceneFade};
+use crate::scenes::{GameScene, SceneFade, play_default_bgm};
 use bevy::prelude::*;
 
 pub struct MainMenuPlugin;
 
 impl Plugin for MainMenuPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(OnEnter(GameScene::MainMenu), enter)
+        app.add_systems(OnEnter(GameScene::MainMenu), (enter, play_default_bgm))
             .add_systems(
                 Update,
                 handle_selection.run_if(in_state(GameScene::MainMenu)),

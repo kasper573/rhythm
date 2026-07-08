@@ -5,7 +5,7 @@ use crate::core::menu::{INACTIVE_COLOR, Menu, MenuInputLock, MenuItem, MenuSelec
 use crate::core::scene_flow::SpawnScoped;
 use crate::core::settings::Settings;
 use crate::core::sfx::{PlaySfx, Sfx};
-use crate::scenes::{GameScene, SceneFade, scene_accepts_input};
+use crate::scenes::{GameScene, SceneFade, play_default_bgm, scene_accepts_input};
 use bevy::input::ButtonState;
 use bevy::input::keyboard::KeyboardInput;
 use bevy::prelude::*;
@@ -15,7 +15,7 @@ pub struct KeymapScenePlugin;
 
 impl Plugin for KeymapScenePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(OnEnter(GameScene::Keymap), enter)
+        app.add_systems(OnEnter(GameScene::Keymap), (enter, play_default_bgm))
             .add_systems(OnExit(GameScene::Keymap), exit)
             .add_systems(
                 Update,

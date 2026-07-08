@@ -29,11 +29,18 @@ impl VideoStream {
     pub fn open(
         path: &Path,
         start_time: Seconds,
+        looping: bool,
         images: &mut Assets<Image>,
     ) -> Result<VideoStream, String> {
         let (width, height, frames_per_second) = probe(path)?;
         let mut process = Command::new("ffmpeg")
-            .args(["-loglevel", "quiet", "-i"])
+            .args(["-loglevel", "quiet"])
+            .args(if looping {
+                &["-stream_loop", "-1"][..]
+            } else {
+                &[][..]
+            })
+            .arg("-i")
             .arg(path)
             .args(["-f", "rawvideo", "-pix_fmt", "rgba", "-"])
             .stdin(Stdio::null())

@@ -166,7 +166,7 @@ fn start_video(
     for video in videos {
         commands.entity(video).despawn();
     }
-    match VideoStream::open(path, start_time, images) {
+    match VideoStream::open(path, start_time, false, images) {
         Ok(stream) => {
             let image = stream.image.clone();
             commands

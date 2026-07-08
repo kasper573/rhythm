@@ -1,23 +1,26 @@
+mod bgm;
 mod info_panel;
 mod player_options;
-mod preview;
 
 use crate::core::assets::asset_server_path;
 use crate::core::config::GameConfig;
 use crate::core::font::game_font;
 use crate::core::high_scores::{HighScores, highscore_key};
 use crate::core::input::{Actions, GameAction, NavPulse};
-use crate::core::library::{StepfileId, StepfileLibrary};
+use crate::core::library::{StepfileId, StepfileLibrary, is_video_file};
 use crate::core::scene_flow::SpawnScoped;
 use crate::core::sfx::{PlaySfx, Sfx};
-use crate::core::stepfile::{Difficulty, Stepfile, StepsType};
+use crate::core::stepfile::{Difficulty, MusicPlayer, Stepfile, StepsType};
 use crate::core::units::Seconds;
+use crate::core::video::VideoStream;
 use crate::core::{SCREEN_SIZE, ViewportCover, at};
 use crate::scenes::{GameScene, SceneFade, scene_accepts_input};
 use bevy::ecs::query::QueryData;
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::sprite::{Anchor, SpriteImageMode, SpriteScalingMode};
+use std::path::PathBuf;
 
 /// The file player scene's entry param.
 #[derive(Resource, Debug, Clone, Copy)]
@@ -72,15 +75,16 @@ impl Plugin for FileSelectPlugin {
                     fit_wheel_rows,
                     animate_wheel,
                     pin_rating_column,
-                    preview::pulse_active_row,
+                    bgm::drive_wheel_bgm,
+                    bgm::pulse_active_row,
                     // The refreshers all observe `Wheel::dirty`; the info
                     // panel runs last and clears it.
                     refresh_scene_background,
+                    stream_wash_videos,
                     fade_scene_background,
                     refresh_wheel_rows,
                     refresh_wheel_ratings,
                     info_panel::refresh_info_panel,
-                    preview::update_preview,
                 )
                     .chain()
                     .run_if(in_state(GameScene::FileSelect).and_then(resource_exists::<Wheel>)),
@@ -167,18 +171,22 @@ struct SlotRoot;
 #[derive(Component, Default, Clone)]
 struct ActiveRowHighlight;
 
-/// One layer of the scene background wash: the active stepfile's
-/// background image over the green backdrop. Changing rows cross-fades:
-/// the incoming layer waits invisible until its image has actually
-/// loaded, then retires every older layer while it eases in — so the old
-/// background always fades under a renderable new one, never against a
-/// gap that the late-loading image would pop into.
-#[derive(Component, Clone, FromTemplate)]
+/// One layer of the scene background wash: the active row's background —
+/// image or looping video — over the green backdrop. Changing rows
+/// cross-fades: the incoming layer waits invisible until its image has
+/// actually loaded, then retires every older layer while it eases in — so
+/// the old background always fades under a renderable new one, never
+/// against a gap that a late-loading image would pop into.
+#[derive(Component)]
 struct SceneBackground {
     /// The opacity this layer eases toward; reaching zero retires it.
     target: f32,
     /// Spawn order; the newest layer leads and retires the older ones.
     sequence: u32,
+    /// The file this layer shows, the identity that keeps a re-selected
+    /// background from restarting (videos get a fresh handle per spawn,
+    /// so handles cannot be the identity).
+    source: PathBuf,
 }
 
 const BACKGROUND_OPACITY: f32 = 0.25;
@@ -328,12 +336,11 @@ fn enter(
         bar_image,
         dirty: true,
     });
-    commands.init_resource::<preview::Preview>();
 }
 
-fn exit(mut commands: Commands) {
+fn exit(mut commands: Commands, mut music: ResMut<MusicPlayer>) {
+    music.stop(&mut commands);
     commands.remove_resource::<Wheel>();
-    commands.remove_resource::<preview::Preview>();
 }
 
 fn navigate(
@@ -591,10 +598,17 @@ fn refresh_wheel_rows(
     }
 }
 
+#[derive(SystemParam)]
+struct BackgroundAssets<'w> {
+    asset_server: Res<'w, AssetServer>,
+    images: ResMut<'w, Assets<Image>>,
+    time: Res<'w, Time>,
+}
+
 fn refresh_scene_background(
     wheel: Res<Wheel>,
     library: Res<StepfileLibrary>,
-    asset_server: Res<AssetServer>,
+    mut assets: BackgroundAssets,
     mut layers: Query<(&mut SceneBackground, &Sprite)>,
     mut commands: Commands,
     mut layer_count: Local<u32>,
@@ -602,17 +616,15 @@ fn refresh_scene_background(
     if !wheel.dirty {
         return;
     }
+    // Rows without a background of their own fall back to the default
+    // BGM's, so the scene always has one to show.
     let path = match wheel.entries.get(wheel.active) {
-        Some(WheelEntry::Stepfile { id }) => library
-            .stepfile(*id)
-            .background_path()
-            .as_deref()
-            .and_then(asset_server_path),
+        Some(WheelEntry::Stepfile { id }) => library.stepfile(*id).background_path(),
         _ => None,
-    };
-    let desired = path.map(|path| asset_server.load::<Image>(path));
-    let Some(handle) = desired else {
-        // Nothing incoming (a group row): fade everything out.
+    }
+    .or_else(|| library.default_bgm.background_path());
+    let Some(path) = path else {
+        // Nothing to show at all: fade everything out.
         for (mut layer, _) in &mut layers {
             layer.target = 0.0;
         }
@@ -620,22 +632,43 @@ fn refresh_scene_background(
     };
     let already_shown = layers
         .iter()
-        .any(|(layer, sprite)| layer.target > 0.0 && sprite.image == handle);
+        .any(|(layer, _)| layer.target > 0.0 && layer.source == path);
     if already_shown {
         return;
     }
+    // The incoming layer: a looping video stream, or a loaded image.
+    let (image, stream) = if is_video_file(&path.to_string_lossy()) {
+        match VideoStream::open(
+            &path,
+            Seconds(assets.time.elapsed_secs_f64()),
+            true,
+            &mut assets.images,
+        ) {
+            Ok(stream) => (stream.image.clone(), Some(stream)),
+            Err(error) => {
+                warn!(
+                    "video background unavailable for {}: {error}",
+                    path.display()
+                );
+                return;
+            }
+        }
+    } else {
+        let Some(asset) = asset_server_path(&path) else {
+            return;
+        };
+        (assets.asset_server.load(asset), None)
+    };
     // Newer layers draw above the ones fading out; the small cycling bump
     // stays well below everything else in the scene.
     *layer_count += 1;
     let z = 0.5 + (*layer_count % 100) as f32 * 0.002;
-    let sequence = *layer_count;
-    commands.spawn_scoped(
+    let mut layer = commands.spawn_scoped(
         GameScene::FileSelect,
         bsn! {
-            SceneBackground { target: {BACKGROUND_OPACITY}, sequence: {sequence} }
             ViewportCover
             Sprite {
-                image: {handle},
+                image: {image},
                 color: Color::srgba(1.0, 1.0, 1.0, 0.0),
                 custom_size: {Some(SCREEN_SIZE)},
                 image_mode: {SpriteImageMode::Scale(SpriteScalingMode::FillCenter)},
@@ -643,6 +676,28 @@ fn refresh_scene_background(
             at(0.0, 0.0, z)
         },
     );
+    layer.insert(SceneBackground {
+        target: BACKGROUND_OPACITY,
+        sequence: *layer_count,
+        source: path,
+    });
+    // The stream owns a live decoder process, so it cannot be a cloneable
+    // template value.
+    if let Some(stream) = stream {
+        layer.insert(stream);
+    }
+}
+
+/// Keeps wash video layers decoding on wall time.
+fn stream_wash_videos(
+    time: Res<Time>,
+    mut images: ResMut<Assets<Image>>,
+    mut videos: Query<&mut VideoStream, With<SceneBackground>>,
+) {
+    let now = Seconds(time.elapsed_secs_f64());
+    for mut video in &mut videos {
+        video.update(now, &mut images);
+    }
 }
 
 /// Eases every background layer toward its target opacity at the wheel's
