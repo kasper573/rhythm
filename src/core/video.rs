@@ -1,17 +1,15 @@
 use crate::core::units::Seconds;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use std::io::Read;
-use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 
-/// Streams a video file into an [`Image`] asset by decoding frames through an
-/// `ffmpeg` subprocess. Playback position is driven by the caller's clock, so
-/// video stays locked to the music; late frames are dropped. When ffmpeg or
-/// ffprobe are unavailable, opening fails and callers keep their static
-/// background instead.
+/// Streams a video file into an [`Image`] asset, decoded in-process by
+/// `video-rs` on a worker thread. Playback position is driven by the
+/// caller's clock, so video stays locked to the music; late frames are
+/// dropped. When the file cannot be decoded, opening fails and callers
+/// keep their static background instead.
 #[derive(Component)]
 pub struct VideoStream {
     pub image: Handle<Image>,
@@ -22,7 +20,6 @@ pub struct VideoStream {
     start_time: Seconds,
     frames_shown: i64,
     frames: Mutex<Receiver<Vec<u8>>>,
-    process: Child,
 }
 
 impl VideoStream {
@@ -32,30 +29,22 @@ impl VideoStream {
         looping: bool,
         images: &mut Assets<Image>,
     ) -> Result<VideoStream, String> {
-        let (width, height, frames_per_second) = probe(path)?;
-        let mut process = Command::new("ffmpeg")
-            .args(["-loglevel", "quiet"])
-            .args(if looping {
-                &["-stream_loop", "-1"][..]
-            } else {
-                &[][..]
-            })
-            .arg("-i")
-            .arg(path)
-            .args(["-f", "rawvideo", "-pix_fmt", "rgba", "-"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|error| format!("could not start ffmpeg: {error}"))?;
-        let stdout = process
-            .stdout
-            .take()
-            .ok_or_else(|| "ffmpeg stdout unavailable".to_string())?;
+        static INIT: std::sync::Once = std::sync::Once::new();
+        INIT.call_once(|| {
+            if let Err(error) = video_rs::init() {
+                warn!("video subsystem init failed: {error}");
+            }
+        });
+        let decoder = video_rs::Decoder::new(path).map_err(|error| error.to_string())?;
+        let (width, height) = decoder.size();
+        let frames_per_second = decoder.frame_rate() as f64;
+        if width == 0 || height == 0 || frames_per_second <= 0.0 {
+            return Err("video reports no dimensions or frame rate".to_string());
+        }
 
         let (sender, frames) = sync_channel(QUEUE_LIMIT);
-        let frame_size = (width * height * 4) as usize;
-        std::thread::spawn(move || read_frames(stdout, frame_size, &sender));
+        let path = path.to_path_buf();
+        std::thread::spawn(move || decode(decoder, path, looping, &sender));
 
         let image = images.add(Image::new_fill(
             Extent3d {
@@ -77,7 +66,6 @@ impl VideoStream {
             start_time,
             frames_shown: 0,
             frames: Mutex::new(frames),
-            process,
         })
     }
 
@@ -101,61 +89,40 @@ impl VideoStream {
     }
 }
 
-impl Drop for VideoStream {
-    fn drop(&mut self) {
-        let _ = self.process.kill();
-        let _ = self.process.wait();
-    }
-}
-
-/// Small buffer of decoded frames; the bounded channel back-pressures
-/// ffmpeg, so the whole video never sits in memory.
+/// Small buffer of decoded frames; the bounded channel back-pressures the
+/// decoder thread, so the whole video never sits in memory. Dropping the
+/// stream disconnects the channel and the thread winds down on its next
+/// send.
 const QUEUE_LIMIT: usize = 8;
 
-fn read_frames(mut stdout: impl Read, frame_size: usize, frames: &SyncSender<Vec<u8>>) {
+/// Feeds decoded frames as RGBA until the receiver is dropped, or until
+/// the file ends when not looping.
+fn decode(
+    mut decoder: video_rs::Decoder,
+    path: PathBuf,
+    looping: bool,
+    frames: &SyncSender<Vec<u8>>,
+) {
     loop {
-        let mut frame = vec![0u8; frame_size];
-        if stdout.read_exact(&mut frame).is_err() || frames.send(frame).is_err() {
+        for frame in decoder.decode_iter() {
+            let Ok((_, frame)) = frame else { break };
+            let Some(rgb) = frame.as_slice() else { break };
+            let mut rgba = Vec::with_capacity(rgb.len() / 3 * 4);
+            for pixel in rgb.chunks_exact(3) {
+                rgba.extend_from_slice(&[pixel[0], pixel[1], pixel[2], 255]);
+            }
+            if frames.send(rgba).is_err() {
+                return;
+            }
+        }
+        if !looping {
             return;
         }
+        // A fresh decoder per lap, instead of seeking the same one back
+        // and flushing codec state by hand.
+        match video_rs::Decoder::new(path.as_path()) {
+            Ok(next) => decoder = next,
+            Err(_) => return,
+        }
     }
-}
-
-fn probe(path: &Path) -> Result<(u32, u32, f64), String> {
-    let output = Command::new("ffprobe")
-        .args([
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=width,height,avg_frame_rate",
-            "-of",
-            "csv=p=0",
-        ])
-        .arg(path)
-        .output()
-        .map_err(|error| format!("could not run ffprobe: {error}"))?;
-    let text = String::from_utf8_lossy(&output.stdout);
-    let mut fields = text.trim().split(',');
-    let width: u32 = fields
-        .next()
-        .and_then(|field| field.parse().ok())
-        .ok_or_else(|| format!("ffprobe gave no width for {}", path.display()))?;
-    let height: u32 = fields
-        .next()
-        .and_then(|field| field.parse().ok())
-        .ok_or_else(|| format!("ffprobe gave no height for {}", path.display()))?;
-    let frames_per_second = fields
-        .next()
-        .and_then(parse_frame_rate)
-        .ok_or_else(|| format!("ffprobe gave no frame rate for {}", path.display()))?;
-    Ok((width, height, frames_per_second))
-}
-
-fn parse_frame_rate(fraction: &str) -> Option<f64> {
-    let (numerator, denominator) = fraction.trim().split_once('/')?;
-    let numerator: f64 = numerator.parse().ok()?;
-    let denominator: f64 = denominator.parse().ok()?;
-    (denominator > 0.0 && numerator > 0.0).then(|| numerator / denominator)
 }
