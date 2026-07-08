@@ -349,11 +349,11 @@ fn navigate(
         match pulse.action {
             GameAction::Left => {
                 wheel.active = (wheel.active + len - 1) % len;
-                wheel.scroll_offset -= 1.0;
+                wheel.scroll_offset += 1.0;
             }
             GameAction::Right => {
                 wheel.active = (wheel.active + 1) % len;
-                wheel.scroll_offset += 1.0;
+                wheel.scroll_offset -= 1.0;
             }
             _ => continue,
         }
@@ -555,7 +555,7 @@ fn refresh_wheel_rows(
         match slot_entry(&wheel, title.slot.0) {
             Some(WheelEntry::Group { index }) => {
                 let group = &library.groups[*index];
-                title.text.0 = format!("{} ({})", group.name, group.stepfiles.len());
+                title.text.0 = group.name.clone();
                 title.color.0 = GROUP_TEXT;
                 title.transform.translation.y = 0.0;
             }
