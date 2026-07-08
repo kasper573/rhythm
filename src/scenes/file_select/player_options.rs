@@ -127,16 +127,19 @@ fn spawn_option_row(
     selected: usize,
 ) {
     let label: &str = row(index).into();
-    option.spawn((
-        RowText(index),
-        Text::new(label),
-        font.sized(28.0),
-        TextColor(INACTIVE_COLOR),
-        Node {
+    option
+        .spawn(Node {
             width: Val::Px(240.0),
             ..default()
-        },
-    ));
+        })
+        .with_children(|cell| {
+            cell.spawn((
+                RowText(index),
+                Text::new(label),
+                font.sized(28.0),
+                TextColor(INACTIVE_COLOR),
+            ));
+        });
     option
         .spawn((
             RowValues(index),
