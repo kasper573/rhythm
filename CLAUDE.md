@@ -52,6 +52,7 @@
 - Any and all public type names must be intuitive and not ambigious if listed
   alongside other public types. Do not rely on crate namespacing to
   disambiguate.
+- You are NEVER allowed to bypass clippy rules (ie. via #[allow])
 
 ## Architecture
 
