@@ -114,6 +114,16 @@ struct Scenario {
     stops: Vec<(f64, f64)>,
 }
 
+/// Everything a scenario leaves on the field between runs.
+type AnyFieldEntity = Or<(
+    With<NoteArrow>,
+    With<HoldPart>,
+    With<MineNote>,
+    With<Receptor>,
+    With<FadeOut>,
+    With<Screenshot>,
+)>;
+
 fn scenario_timing(scenario: &Scenario, cli_bpm: f64) -> StepfileTiming {
     let bpms: Vec<(Beat, f64)> = if scenario.bpms.is_empty() {
         vec![(Beat(0.0), cli_bpm)]
@@ -589,15 +599,7 @@ impl FieldRenderer {
 
     fn clear_field(&mut self) {
         let world = self.apps.main.world_mut();
-        #[allow(clippy::type_complexity)]
-        let mut query = world.query_filtered::<Entity, Or<(
-            With<NoteArrow>,
-            With<HoldPart>,
-            With<MineNote>,
-            With<Receptor>,
-            With<FadeOut>,
-            With<Screenshot>,
-        )>>();
+        let mut query = world.query_filtered::<Entity, AnyFieldEntity>();
         let entities: Vec<Entity> = query.iter(world).collect();
         for entity in entities {
             world.despawn(entity);

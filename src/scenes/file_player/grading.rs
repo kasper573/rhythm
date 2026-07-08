@@ -1,4 +1,4 @@
-use super::{HoldOutcome, JudgmentShown, MineOutcome, PlaySession, direction_action};
+use super::{HoldOutcome, JudgmentShown, MineOutcome, PlaySession, PlaySet, direction_action};
 use crate::core::config::{GameConfig, StepOutcome};
 use crate::core::font::GameFont;
 use crate::core::input::Actions;
@@ -7,7 +7,7 @@ use crate::core::note_field::{
 };
 use crate::core::note_skin::ActiveNoteSkin;
 use crate::core::settings::Settings;
-use crate::scenes::GameScene;
+use crate::scenes::{GameScene, scene_accepts_input};
 use bevy::prelude::*;
 
 /// Hold let-go grace: life drains from full to dropped over this long once
@@ -19,7 +19,21 @@ const HOLD_POPUP_SECONDS: f32 = 0.6;
 
 /// Grades ¤Left¤/¤Down¤/¤Up¤/¤Right¤ presses against the nearest ungraded
 /// note in that column. Inputs that hit no grading window are harmless no-ops.
-pub(super) fn grade_step_inputs(
+pub(super) fn plugin(app: &mut App) {
+    app.add_systems(
+        Update,
+        (
+            grade_step_inputs.run_if(scene_accepts_input),
+            expire_missed_notes,
+            update_holds,
+            update_mines,
+        )
+            .chain()
+            .in_set(PlaySet::Judge),
+    );
+}
+
+fn grade_step_inputs(
     actions: Actions,
     settings: Res<Settings>,
     config: Res<GameConfig>,
@@ -78,7 +92,7 @@ pub(super) fn grade_step_inputs(
 /// Notes expire into Miss once they scroll further past the player than
 /// the widest grading window. A hold whose head was
 /// missed can never be caught, so it drops immediately.
-pub(super) fn expire_missed_notes(
+fn expire_missed_notes(
     settings: Res<Settings>,
     config: Res<GameConfig>,
     font: Res<GameFont>,
@@ -122,7 +136,7 @@ pub(super) fn expire_missed_notes(
 /// down and drain over the grace window otherwise; rolls drain constantly
 /// and refill on fresh steps. Life zero drops the hold (NG); reaching the
 /// tail with life left keeps it (OK).
-pub(super) fn update_holds(
+fn update_holds(
     actions: Actions,
     time: Res<Time>,
     settings: Res<Settings>,
@@ -172,7 +186,7 @@ pub(super) fn update_holds(
 
 /// A mine explodes if its panel is being held as the mine crosses the
 /// receptors; otherwise it passes by harmlessly.
-pub(super) fn update_mines(
+fn update_mines(
     actions: Actions,
     settings: Res<Settings>,
     skin: Res<ActiveNoteSkin>,

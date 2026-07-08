@@ -1,4 +1,4 @@
-use super::{MusicTrack, PlayPhase, PlaySession, TickTrack};
+use super::{MusicTrack, PlayPhase, PlaySession, PlaySet, TickTrack};
 use crate::core::settings::Settings;
 use crate::core::units::{Millis, Seconds};
 use bevy::audio::AudioSinkPlayback;
@@ -16,7 +16,11 @@ use bevy::prelude::*;
 /// accurate timeline. Snapping to the staircase directly would make the
 /// judged timeline oscillate by tens of milliseconds whenever the audio
 /// quantum exceeds the snap threshold.
-pub(super) fn advance_clock(
+pub(super) fn plugin(app: &mut App) {
+    app.add_systems(Update, advance_clock.in_set(PlaySet::Clock));
+}
+
+fn advance_clock(
     time: Res<Time>,
     mut session: ResMut<PlaySession>,
     mut settings: ResMut<Settings>,

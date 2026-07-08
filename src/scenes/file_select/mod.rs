@@ -6,13 +6,12 @@ use crate::core::config::GameConfig;
 use crate::core::font::GameFont;
 use crate::core::input::{Actions, GameAction, NavPulse};
 use crate::core::library::{StepfileId, StepfileLibrary};
-use crate::core::note_skin::NoteSkinLibrary;
-use crate::core::settings::Settings;
 use crate::core::sfx::{PlaySfx, Sfx};
 use crate::core::stepfile::{Difficulty, DisplayBpm, Stepfile, StepsType};
 use crate::core::units::Seconds;
 use crate::scenes::{GameScene, SceneFade, scene_accepts_input};
 use bevy::audio::PlaybackMode;
+use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::sprite::Anchor;
@@ -50,27 +49,24 @@ pub struct FileSelectPlugin;
 impl Plugin for FileSelectPlugin {
     fn build(&self, app: &mut App) {
         app.add_sub_state::<FileSelectMode>()
+            .add_plugins(player_options::plugin)
+            .add_message::<WheelTap>()
             .init_resource::<PreferredDifficulty>()
             .add_systems(OnEnter(GameScene::FileSelect), enter)
             .add_systems(OnExit(GameScene::FileSelect), exit)
             .add_systems(OnEnter(FileSelectMode::Browse), clear_nav_pulses)
-            .add_systems(
-                OnEnter(FileSelectMode::PlayerOptions),
-                (clear_nav_pulses, player_options::enter),
-            )
+            .add_systems(OnEnter(FileSelectMode::PlayerOptions), clear_nav_pulses)
             .add_systems(
                 Update,
                 (
-                    (navigate, change_difficulty, select, cancel)
-                        .run_if(scene_accepts_input.and_then(in_state(FileSelectMode::Browse))),
                     (
-                        player_options::handle_pulses,
-                        player_options::handle_close,
-                        player_options::refresh_rows,
-                        player_options::animate_underline,
-                        player_options::animate_transition,
+                        navigate,
+                        change_difficulty,
+                        track_select,
+                        handle_tap,
+                        cancel,
                     )
-                        .run_if(in_state(FileSelectMode::PlayerOptions)),
+                        .run_if(scene_accepts_input.and_then(in_state(FileSelectMode::Browse))),
                     animate_wheel,
                     // Both refreshers observe `Wheel::dirty`; the info panel
                     // runs last and clears it.
@@ -279,6 +275,14 @@ fn enter(
         ));
     }
 
+    commands.spawn((
+        DespawnOnExit(GameScene::FileSelect),
+        Text2d::new("up/down: change difficulty\nhold select: change options"),
+        font.sized(20.0),
+        TextColor(HELP_TEXT),
+        Transform::from_xyz(-320.0, -214.0, 5.0),
+    ));
+
     commands.insert_resource(Wheel {
         entries,
         active,
@@ -362,71 +366,94 @@ fn change_difficulty(
 /// How long ¤Select¤ must be held to open the player options.
 const OPTIONS_HOLD: Seconds = Seconds(0.5);
 
-/// Tapping ¤Select¤ acts on the active row; holding it opens the player
-/// options modal. Only presses that began in browse are armed — ¤Select¤
-/// also closes the modal, and that press must not tap when browse resumes.
-#[allow(clippy::too_many_arguments)]
-fn select(
+/// A completed ¤Select¤ tap on the wheel, recognized by [`track_select`]
+/// and acted on by [`handle_tap`].
+#[derive(Message)]
+struct WheelTap;
+
+/// The ¤Select¤ hold state: only presses that began in browse are armed —
+/// ¤Select¤ also closes the modal, and that press must not tap when browse
+/// resumes.
+#[derive(Default)]
+struct SelectHold {
+    held: Seconds,
+    armed: bool,
+}
+
+/// Recognizes the ¤Select¤ gesture: holding opens the player options modal,
+/// a shorter tap is passed on as a [`WheelTap`].
+fn track_select(
     actions: Actions,
     time: Res<Time>,
-    mut held: Local<Seconds>,
-    mut armed: Local<bool>,
-    mut wheel: ResMut<Wheel>,
-    library: Res<StepfileLibrary>,
-    preferred: Res<PreferredDifficulty>,
-    mut commands: Commands,
+    mut hold: Local<SelectHold>,
+    wheel: Res<Wheel>,
+    mut taps: MessageWriter<WheelTap>,
     mut sfx: MessageWriter<PlaySfx>,
-    mut fade: ResMut<SceneFade>,
     mut mode: ResMut<NextState<FileSelectMode>>,
 ) {
     if wheel.entries.is_empty() {
         return;
     }
     if actions.just_pressed(GameAction::Select) {
-        *armed = true;
-        *held = Seconds::ZERO;
+        hold.armed = true;
+        hold.held = Seconds::ZERO;
     }
-    if !*armed {
+    if !hold.armed {
         return;
     }
     if actions.pressed(GameAction::Select) {
-        *held += Seconds(time.delta_secs_f64());
-        if *held >= OPTIONS_HOLD {
-            *armed = false;
+        hold.held += Seconds(time.delta_secs_f64());
+        if hold.held >= OPTIONS_HOLD {
+            hold.armed = false;
             sfx.write(PlaySfx(Sfx::Select));
             mode.set(FileSelectMode::PlayerOptions);
         }
         return;
     }
-    if !actions.just_released(GameAction::Select) {
-        return;
+    if actions.just_released(GameAction::Select) {
+        hold.armed = false;
+        taps.write(WheelTap);
     }
-    *armed = false;
+}
 
-    sfx.write(PlaySfx(Sfx::WheelSelect));
-    match wheel.entries[wheel.active] {
-        WheelEntry::Group { index } => {
-            // Only one group is ever expanded: opening a group closes the
-            // previous one, opening it again closes it.
-            wheel.expanded_group = (wheel.expanded_group != Some(index)).then_some(index);
-            wheel.entries = build_entries(&library, wheel.expanded_group);
-            wheel.active = wheel
-                .entries
-                .iter()
-                .position(|entry| matches!(entry, WheelEntry::Group { index: i } if *i == index))
-                .unwrap_or(0);
-            wheel.dirty = true;
-            sfx.write(PlaySfx(Sfx::GroupToggle));
-        }
-        WheelEntry::Stepfile { id } => {
-            if let Some(preview) = wheel.preview_entity.take() {
-                commands.entity(preview).try_despawn();
+/// A tap acts on the active row: groups toggle open, stepfiles start.
+fn handle_tap(
+    mut taps: MessageReader<WheelTap>,
+    mut wheel: ResMut<Wheel>,
+    library: Res<StepfileLibrary>,
+    preferred: Res<PreferredDifficulty>,
+    mut commands: Commands,
+    mut sfx: MessageWriter<PlaySfx>,
+    mut fade: ResMut<SceneFade>,
+) {
+    for _ in taps.read() {
+        sfx.write(PlaySfx(Sfx::WheelSelect));
+        match wheel.entries[wheel.active] {
+            WheelEntry::Group { index } => {
+                // Only one group is ever expanded: opening a group closes
+                // the previous one, opening it again closes it.
+                wheel.expanded_group = (wheel.expanded_group != Some(index)).then_some(index);
+                wheel.entries = build_entries(&library, wheel.expanded_group);
+                wheel.active = wheel
+                    .entries
+                    .iter()
+                    .position(
+                        |entry| matches!(entry, WheelEntry::Group { index: i } if *i == index),
+                    )
+                    .unwrap_or(0);
+                wheel.dirty = true;
+                sfx.write(PlaySfx(Sfx::GroupToggle));
             }
-            let stepfile = &library.stepfile(id).stepfile;
-            let chart = chart_for_preference(stepfile, preferred.0).unwrap_or(0);
-            commands.insert_resource(SelectedStepfile { id, chart });
-            sfx.write(PlaySfx(Sfx::StartFile));
-            fade.begin(GameScene::FilePlayer);
+            WheelEntry::Stepfile { id } => {
+                if let Some(preview) = wheel.preview_entity.take() {
+                    commands.entity(preview).try_despawn();
+                }
+                let stepfile = &library.stepfile(id).stepfile;
+                let chart = chart_for_preference(stepfile, preferred.0).unwrap_or(0);
+                commands.insert_resource(SelectedStepfile { id, chart });
+                sfx.write(PlaySfx(Sfx::StartFile));
+                fade.begin(GameScene::FilePlayer);
+            }
         }
     }
 }
@@ -455,15 +482,20 @@ fn animate_wheel(
     }
 }
 
-#[allow(clippy::type_complexity)]
+#[derive(QueryData)]
+#[query_data(mutable)]
+struct SlotTitleText {
+    slot: &'static WheelSlot,
+    text: &'static mut Text2d,
+    color: &'static mut TextColor,
+    transform: &'static mut Transform,
+}
+
 fn refresh_wheel_rows(
     wheel: Res<Wheel>,
     library: Res<StepfileLibrary>,
     mut roots: Query<(&WheelSlot, &mut Sprite), With<SlotRoot>>,
-    mut titles: Query<
-        (&WheelSlot, &mut Text2d, &mut TextColor, &mut Transform),
-        (With<SlotTitle>, Without<SlotArtist>),
-    >,
+    mut titles: Query<SlotTitleText, (With<SlotTitle>, Without<SlotArtist>)>,
     mut artists: Query<(&WheelSlot, &mut Text2d, &mut TextColor), With<SlotArtist>>,
 ) {
     if !wheel.dirty {
@@ -475,30 +507,30 @@ fn refresh_wheel_rows(
             _ => STEPFILE_BAR,
         };
     }
-    for (slot, mut text, mut color, mut transform) in &mut titles {
-        let is_center = slot.0 == CENTER;
-        match slot_entry(&wheel, slot.0) {
+    for mut title in &mut titles {
+        let is_center = title.slot.0 == CENTER;
+        match slot_entry(&wheel, title.slot.0) {
             Some(WheelEntry::Group { index }) => {
                 let group = &library.groups[*index];
-                text.0 = format!("{} ({})", group.name, group.stepfiles.len());
-                color.0 = GROUP_TEXT;
-                transform.translation.y = 0.0;
+                title.text.0 = format!("{} ({})", group.name, group.stepfiles.len());
+                title.color.0 = GROUP_TEXT;
+                title.transform.translation.y = 0.0;
             }
             Some(WheelEntry::Stepfile { id }) => {
                 let entry = library.stepfile(*id);
-                text.0 = entry.display_title();
-                color.0 = if is_center {
+                title.text.0 = entry.display_title();
+                title.color.0 = if is_center {
                     ACTIVE_STEPFILE_TEXT
                 } else {
                     STEPFILE_TEXT
                 };
-                transform.translation.y = if entry.display_artist().is_empty() {
+                title.transform.translation.y = if entry.display_artist().is_empty() {
                     0.0
                 } else {
                     9.0
                 };
             }
-            None => text.0 = String::new(),
+            None => title.text.0 = String::new(),
         }
     }
     for (slot, mut text, mut color) in &mut artists {
@@ -518,21 +550,16 @@ fn refresh_wheel_rows(
 
 /// Rebuilt from scratch: despawn-and-respawn beats mutating a panel of
 /// text entities in place.
-#[allow(clippy::too_many_arguments)]
 fn refresh_info_panel(
     mut wheel: ResMut<Wheel>,
     library: Res<StepfileLibrary>,
     preferred: Res<PreferredDifficulty>,
-    settings: Res<Settings>,
-    skins: Res<NoteSkinLibrary>,
     asset_server: Res<AssetServer>,
     font: Res<GameFont>,
     panels: Query<Entity, With<InfoPanel>>,
     mut commands: Commands,
 ) {
-    // Settings changes re-render the options summary live while the player
-    // options modal edits them.
-    if !wheel.dirty && !settings.is_changed() {
+    if !wheel.dirty {
         return;
     }
     wheel.dirty = false;
@@ -610,18 +637,6 @@ fn refresh_info_panel(
                 font.sized(28.0),
                 TextColor(BPM_TEXT),
                 Transform::from_xyz(0.0, 70.0, 0.0),
-            ));
-            panel.spawn((
-                Text2d::new(player_options::summary(&settings, &skins)),
-                font.sized(22.0),
-                TextColor(STATS_TEXT),
-                Transform::from_xyz(0.0, -150.0, 0.0),
-            ));
-            panel.spawn((
-                Text2d::new("up/down: change difficulty\nhold select: change options"),
-                font.sized(20.0),
-                TextColor(HELP_TEXT),
-                Transform::from_xyz(0.0, -214.0, 0.0),
             ));
             let Some((id, index)) = chart else { return };
             let stepfile = &library.stepfile(id).stepfile;

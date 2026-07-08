@@ -20,6 +20,7 @@ use crate::core::units::{Beat, Millis, Seconds};
 use crate::scenes::file_select::{FileSelectTarget, SelectedStepfile};
 use crate::scenes::{GameScene, SceneFade, scene_accepts_input};
 use bevy::audio::AudioSinkPlayback;
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
 /// Grades are derived from the raw outcomes by whoever displays them.
@@ -40,42 +41,68 @@ pub struct FilePlayerPlugin;
 impl Plugin for FilePlayerPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<JudgmentShown>()
+            .add_plugins((
+                clock::plugin,
+                grading::plugin,
+                visuals::plugin,
+                background::plugin,
+            ))
+            .configure_sets(
+                Update,
+                (
+                    (PlaySet::Clock, PlaySet::Judge, PlaySet::Tune, PlaySet::Sync)
+                        .chain()
+                        .before(NoteFieldSystems),
+                    PlaySet::Present.after(NoteFieldSystems),
+                )
+                    .run_if(
+                        in_state(GameScene::FilePlayer).and_then(resource_exists::<PlaySession>),
+                    ),
+            )
             .add_systems(OnEnter(GameScene::FilePlayer), enter)
             .add_systems(OnExit(GameScene::FilePlayer), exit)
             .add_systems(
                 Update,
                 (
-                    (
-                        clock::advance_clock,
-                        grading::grade_step_inputs.run_if(scene_accepts_input),
-                        grading::expire_missed_notes,
-                        grading::update_holds,
-                        grading::update_mines,
-                        toggle_tick_audio,
-                        toggle_autosync,
-                        run_autosync,
-                        adjust_timing_offsets,
-                        visuals::sync_note_field,
-                    )
-                        .chain()
-                        .before(NoteFieldSystems),
-                    (
-                        visuals::update_judgment_text,
-                        visuals::update_combo_text,
-                        visuals::fade_offset_osd,
-                        background::apply_background_changes,
-                        background::stream_video_frames,
-                        finish_when_complete,
-                        handle_cancel.run_if(scene_accepts_input),
-                    )
-                        .chain()
-                        .after(NoteFieldSystems),
+                    toggle_tick_audio,
+                    toggle_autosync,
+                    fold_autosync,
+                    update_autosync_status,
+                    adjust_timing_offsets,
                 )
-                    .run_if(
-                        in_state(GameScene::FilePlayer).and_then(resource_exists::<PlaySession>),
-                    ),
+                    .chain()
+                    .in_set(PlaySet::Tune),
+            )
+            .add_systems(
+                Update,
+                (
+                    finish_when_complete,
+                    handle_cancel.run_if(scene_accepts_input),
+                )
+                    .in_set(PlaySet::Present),
             );
     }
+}
+
+/// The frame pipeline around the note field: the phases through `Sync` feed
+/// it and run before [`NoteFieldSystems`]; `Present` reacts to the graded
+/// frame after it.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum PlaySet {
+    Clock,
+    Judge,
+    Tune,
+    Sync,
+    Present,
+}
+
+/// The sources everything on stage is materialized from.
+#[derive(SystemParam)]
+struct StageAssets<'w> {
+    skin: Res<'w, ActiveNoteSkin>,
+    font: Res<'w, GameFont>,
+    asset_server: Res<'w, AssetServer>,
+    audio_sources: ResMut<'w, Assets<AudioSource>>,
 }
 
 const LEAD_IN: Seconds = Seconds(2.0);
@@ -196,17 +223,13 @@ pub(super) struct OffsetOsd;
 #[derive(Component)]
 pub(super) struct AutoSyncText;
 
-#[allow(clippy::too_many_arguments)]
 fn enter(
     mut commands: Commands,
     selected: Option<Res<SelectedStepfile>>,
     library: Res<StepfileLibrary>,
     config: Res<GameConfig>,
     settings: Res<Settings>,
-    skin: Res<ActiveNoteSkin>,
-    font: Res<GameFont>,
-    asset_server: Res<AssetServer>,
-    mut audio_sources: ResMut<Assets<AudioSource>>,
+    mut assets: StageAssets,
     mut fade: ResMut<SceneFade>,
 ) {
     let Some(selected) = selected else {
@@ -232,7 +255,7 @@ fn enter(
 
     let timing = entry.stepfile.timing.clone();
 
-    for entity in spawn_receptors(&mut commands, &skin) {
+    for entity in spawn_receptors(&mut commands, &assets.skin) {
         commands
             .entity(entity)
             .insert(DespawnOnExit(GameScene::FilePlayer));
@@ -249,7 +272,7 @@ fn enter(
         last_note_time = last_note_time.max(timing.seconds_at_beat(note.end_beat()));
 
         if note.kind == NoteKind::Mine {
-            let entity = spawn_mine(&mut commands, &skin, time, note.beat, note.column);
+            let entity = spawn_mine(&mut commands, &assets.skin, time, note.beat, note.column);
             commands
                 .entity(entity)
                 .insert(DespawnOnExit(GameScene::FilePlayer));
@@ -286,7 +309,7 @@ fn enter(
     for note in pending {
         let spawned = spawn_note(
             &mut commands,
-            &skin,
+            &assets.skin,
             &NoteSpawn {
                 time: note.time,
                 beat: note.beat,
@@ -320,7 +343,7 @@ fn enter(
         commands.spawn((
             DespawnOnExit(GameScene::FilePlayer),
             MusicTrack,
-            AudioPlayer::new(asset_server.load(path)),
+            AudioPlayer::new(assets.asset_server.load(path)),
             PlaybackSettings {
                 paused: true,
                 ..PlaybackSettings::ONCE
@@ -340,7 +363,7 @@ fn enter(
         config.tick_volume,
     ) {
         Ok(bytes) => {
-            let handle = audio_sources.add(AudioSource {
+            let handle = assets.audio_sources.add(AudioSource {
                 bytes: bytes.into(),
             });
             commands.spawn((
@@ -357,8 +380,8 @@ fn enter(
         Err(error) => warn!("could not render tick track: {error}"),
     }
 
-    background::spawn_background(&mut commands, &asset_server, entry, &timing);
-    spawn_hud(&mut commands, &font);
+    background::spawn_background(&mut commands, &assets.asset_server, entry, &timing);
+    spawn_hud(&mut commands, &assets.font);
 
     commands.insert_resource(NoteFieldClock {
         visible: -LEAD_IN,
@@ -388,7 +411,6 @@ fn enter(
 fn exit(mut commands: Commands) {
     commands.remove_resource::<PlaySession>();
     commands.remove_resource::<NoteFieldClock>();
-    commands.remove_resource::<background::BackgroundTimeline>();
     commands.remove_resource::<SelectedStepfile>();
 }
 
@@ -464,27 +486,11 @@ fn toggle_autosync(actions: Actions, mut session: ResMut<PlaySession>) {
 /// keep collecting until toggled off.
 const AUTOSYNC_SAMPLES: usize = 24;
 
-#[allow(clippy::type_complexity)]
-fn run_autosync(
+fn fold_autosync(
     mut session: ResMut<PlaySession>,
     mut settings: ResMut<Settings>,
-    mut status: Query<(&mut Text, &mut Visibility), (With<AutoSyncText>, Without<OffsetOsd>)>,
-    mut osd: Query<(&mut Text, &mut TextColor), (With<OffsetOsd>, Without<AutoSyncText>)>,
-    mut shown: Local<Option<(bool, usize)>>,
+    mut osd: MessageWriter<visuals::OffsetOsdLine>,
 ) {
-    let state = (session.autosync, session.autosync_samples.len());
-    if *shown != Some(state) {
-        *shown = Some(state);
-        for (mut text, mut visibility) in &mut status {
-            if session.autosync {
-                text.0 = format!("AutoSync ({}/{AUTOSYNC_SAMPLES} samples)", state.1);
-                *visibility = Visibility::Visible;
-            } else {
-                *visibility = Visibility::Hidden;
-            }
-        }
-    }
-
     if !session.autosync || session.autosync_samples.len() < AUTOSYNC_SAMPLES {
         return;
     }
@@ -496,9 +502,28 @@ fn run_autosync(
         return;
     }
     settings.timing.machine_offset = settings.timing.machine_offset + delta;
-    for (mut text, mut color) in &mut osd {
-        text.0 = format!("Machine offset: {}", settings.timing.machine_offset);
-        color.0.set_alpha(1.0);
+    osd.write(visuals::OffsetOsdLine(format!(
+        "Machine offset: {}",
+        settings.timing.machine_offset
+    )));
+}
+
+fn update_autosync_status(
+    session: Res<PlaySession>,
+    mut status: Single<(&mut Text, &mut Visibility), With<AutoSyncText>>,
+    mut shown: Local<Option<(bool, usize)>>,
+) {
+    let state = (session.autosync, session.autosync_samples.len());
+    if *shown == Some(state) {
+        return;
+    }
+    *shown = Some(state);
+    let (text, visibility) = &mut *status;
+    if session.autosync {
+        text.0 = format!("AutoSync ({}/{AUTOSYNC_SAMPLES} samples)", state.1);
+        **visibility = Visibility::Visible;
+    } else {
+        **visibility = Visibility::Hidden;
     }
 }
 
@@ -517,7 +542,7 @@ fn adjust_timing_offsets(
     keys: Res<ButtonInput<KeyCode>>,
     mut settings: ResMut<Settings>,
     config: Res<GameConfig>,
-    mut osd: Query<(&mut Text, &mut TextColor), With<OffsetOsd>>,
+    mut osd: MessageWriter<visuals::OffsetOsdLine>,
 ) {
     let step = if shift_held(&keys) { 10 } else { 1 };
     let pairs = [
@@ -564,10 +589,7 @@ fn adjust_timing_offsets(
         });
     }
     let Some(line) = osd_line else { return };
-    for (mut text, mut color) in &mut osd {
-        text.0 = line.clone();
-        color.0.set_alpha(1.0);
-    }
+    osd.write(visuals::OffsetOsdLine(line));
 }
 
 fn finish_when_complete(

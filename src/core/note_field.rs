@@ -1,6 +1,7 @@
 use crate::core::note_skin::ActiveNoteSkin;
 use crate::core::stepfile::StepfileTiming;
 use crate::core::units::{Beat, Seconds};
+use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -437,17 +438,31 @@ const BODY_CAP_OVERLAP: f32 = 1.0;
 /// clipped so nothing draws above the head's center. Textures switch
 /// between active and inactive with the hold's state, and dropped holds dim
 /// to the skin's NG brightness.
-#[allow(clippy::type_complexity)]
+#[derive(QueryData)]
+#[query_data(mutable)]
+struct HoldPartSprite {
+    part: &'static HoldPart,
+    transform: &'static mut Transform,
+    sprite: &'static mut Sprite,
+    visibility: &'static mut Visibility,
+}
+
 fn animate_hold_parts(
     clock: Res<NoteFieldClock>,
     skin: Res<ActiveNoteSkin>,
     heads: Query<(&NoteArrow, &HoldVisual)>,
-    mut parts: Query<(&HoldPart, &mut Transform, &mut Sprite, &mut Visibility), Without<NoteArrow>>,
+    mut parts: Query<HoldPartSprite, Without<NoteArrow>>,
 ) {
     let scroll = clock.scroll();
     let scale = ARROW_SIZE / skin.hold_body_size.x;
     let cap_height = skin.hold_cap_size.y * scale;
-    for (part, mut transform, mut sprite, mut visibility) in &mut parts {
+    for item in &mut parts {
+        let HoldPartSpriteItem {
+            part,
+            mut transform,
+            mut sprite,
+            mut visibility,
+        } = item;
         let Ok((arrow, hold)) = heads.get(part.head) else {
             continue;
         };
@@ -556,19 +571,25 @@ fn animate_mines(
     }
 }
 
-#[allow(clippy::type_complexity)]
-fn fade_out(
-    time: Res<Time>,
-    mut commands: Commands,
-    mut fading: Query<(
-        Entity,
-        &mut FadeOut,
-        &mut Transform,
-        Option<&mut TextColor>,
-        Option<&mut Sprite>,
-    )>,
-) {
-    for (entity, mut fade, mut transform, text_color, sprite) in &mut fading {
+#[derive(QueryData)]
+#[query_data(mutable)]
+struct FadingVisual {
+    entity: Entity,
+    fade: &'static mut FadeOut,
+    transform: &'static mut Transform,
+    text_color: Option<&'static mut TextColor>,
+    sprite: Option<&'static mut Sprite>,
+}
+
+fn fade_out(time: Res<Time>, mut commands: Commands, mut fading: Query<FadingVisual>) {
+    for item in &mut fading {
+        let FadingVisualItem {
+            entity,
+            mut fade,
+            mut transform,
+            text_color,
+            sprite,
+        } = item;
         fade.remaining -= time.delta_secs();
         if fade.remaining <= 0.0 {
             commands.entity(entity).despawn();

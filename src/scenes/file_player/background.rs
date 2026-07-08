@@ -1,4 +1,4 @@
-use super::PlaySession;
+use super::{PlaySession, PlaySet};
 use crate::core::SCREEN_SIZE;
 use crate::core::assets::asset_server_path;
 use crate::core::library::{StepfileEntry, is_video_file};
@@ -10,10 +10,29 @@ use crate::scenes::GameScene;
 use bevy::prelude::*;
 use std::path::{Path, PathBuf};
 
+pub(super) fn plugin(app: &mut App) {
+    app.add_message::<BackgroundCue>()
+        .add_systems(OnExit(GameScene::FilePlayer), exit)
+        .add_systems(
+            Update,
+            (
+                cue_background_changes,
+                apply_background_cues,
+                stream_video_frames,
+            )
+                .chain()
+                .in_set(PlaySet::Present),
+        );
+}
+
+fn exit(mut commands: Commands) {
+    commands.remove_resource::<BackgroundTimeline>();
+}
+
 /// Background switches from the stepfile's `#BGCHANGES`, resolved to files
 /// that actually exist, ordered by time.
 #[derive(Resource)]
-pub(super) struct BackgroundTimeline {
+struct BackgroundTimeline {
     changes: Vec<BackgroundChange>,
     next: usize,
 }
@@ -70,34 +89,45 @@ pub(super) fn spawn_background(
     commands.insert_resource(BackgroundTimeline { changes, next: 0 });
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn apply_background_changes(
+/// A background change whose time has come, recognized on the musical
+/// timeline and applied separately.
+#[derive(Message)]
+struct BackgroundCue {
+    time: Seconds,
+    path: PathBuf,
+}
+
+fn cue_background_changes(
     session: Res<PlaySession>,
     settings: Res<Settings>,
     mut timeline: ResMut<BackgroundTimeline>,
+    mut cues: MessageWriter<BackgroundCue>,
+) {
+    let now = session.visible_now(&settings.timing);
+    while timeline.next < timeline.changes.len() && timeline.changes[timeline.next].time.0 <= now.0
+    {
+        cues.write(BackgroundCue {
+            time: timeline.changes[timeline.next].time,
+            path: timeline.changes[timeline.next].path.clone(),
+        });
+        timeline.next += 1;
+    }
+}
+
+fn apply_background_cues(
+    mut cues: MessageReader<BackgroundCue>,
     asset_server: Res<AssetServer>,
     mut images: ResMut<Assets<Image>>,
     mut commands: Commands,
     videos: Query<Entity, With<VideoStream>>,
     mut layer: Single<(&mut Sprite, &mut Visibility), With<BackgroundLayer>>,
 ) {
-    let now = session.visible_now(&settings.timing);
-    while timeline.next < timeline.changes.len() && timeline.changes[timeline.next].time.0 <= now.0
-    {
-        let change_time = timeline.changes[timeline.next].time;
-        let change_path = timeline.changes[timeline.next].path.clone();
-        timeline.next += 1;
-        if is_video_file(&change_path.to_string_lossy()) {
-            start_video(
-                &mut commands,
-                &mut images,
-                &videos,
-                &change_path,
-                change_time,
-            );
+    for cue in cues.read() {
+        if is_video_file(&cue.path.to_string_lossy()) {
+            start_video(&mut commands, &mut images, &videos, &cue.path, cue.time);
             continue;
         }
-        let Some(path) = asset_server_path(&change_path) else {
+        let Some(path) = asset_server_path(&cue.path) else {
             continue;
         };
         for video in &videos {
@@ -109,7 +139,7 @@ pub(super) fn apply_background_changes(
     }
 }
 
-pub(super) fn stream_video_frames(
+fn stream_video_frames(
     session: Res<PlaySession>,
     settings: Res<Settings>,
     mut images: ResMut<Assets<Image>>,

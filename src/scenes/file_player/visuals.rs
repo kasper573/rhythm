@@ -1,5 +1,6 @@
 use super::{
-    ComboText, HoldOutcome, JudgmentShown, JudgmentText, OffsetOsd, PlaySession, direction_action,
+    ComboText, HoldOutcome, JudgmentShown, JudgmentText, OffsetOsd, PlaySession, PlaySet,
+    direction_action,
 };
 use crate::core::config::{GameConfig, Judgment, StepOutcome, TimingFeedback};
 use crate::core::input::Actions;
@@ -8,10 +9,25 @@ use crate::core::settings::Settings;
 use crate::core::units::Seconds;
 use bevy::prelude::*;
 
+pub(super) fn plugin(app: &mut App) {
+    app.add_message::<OffsetOsdLine>()
+        .add_systems(Update, sync_note_field.in_set(PlaySet::Sync))
+        .add_systems(
+            Update,
+            (update_judgment_text, update_combo_text, run_offset_osd)
+                .chain()
+                .in_set(PlaySet::Present),
+        );
+}
+
+/// A line to flash on the timing-offset OSD.
+#[derive(Message)]
+pub(super) struct OffsetOsdLine(pub(super) String);
+
 /// Pushes the session's state into the note field: the drawn timeline, the
 /// receptors' pressed panels, and every hold's render state. Runs after
 /// grading and before the field's animation systems.
-pub(super) fn sync_note_field(
+fn sync_note_field(
     actions: Actions,
     session: Res<PlaySession>,
     settings: Res<Settings>,
@@ -45,7 +61,7 @@ pub(super) fn sync_note_field(
     }
 }
 
-pub(super) fn update_judgment_text(
+fn update_judgment_text(
     time: Res<Time>,
     config: Res<GameConfig>,
     mut shown: MessageReader<JudgmentShown>,
@@ -95,7 +111,7 @@ fn judgment_display(config: &GameConfig, outcome: StepOutcome) -> (String, Color
 
 const COMBO_BOUNCE: Seconds = Seconds(0.18);
 
-pub(super) fn update_combo_text(
+fn update_combo_text(
     time: Res<Time>,
     mut shown: MessageReader<JudgmentShown>,
     mut label: Single<(&mut Text2d, &mut Transform, &mut Visibility), With<ComboText>>,
@@ -122,11 +138,18 @@ pub(super) fn update_combo_text(
     }
 }
 
-pub(super) fn fade_offset_osd(time: Res<Time>, mut osd: Query<&mut TextColor, With<OffsetOsd>>) {
-    for mut color in &mut osd {
-        if color.0.alpha() > 0.0 {
-            let alpha = (color.0.alpha() - time.delta_secs()).max(0.0);
-            color.0.set_alpha(alpha);
-        }
+fn run_offset_osd(
+    time: Res<Time>,
+    mut lines: MessageReader<OffsetOsdLine>,
+    mut osd: Single<(&mut Text, &mut TextColor), With<OffsetOsd>>,
+) {
+    let (text, color) = &mut *osd;
+    for line in lines.read() {
+        text.0 = line.0.clone();
+        color.0.set_alpha(1.0);
+    }
+    if color.0.alpha() > 0.0 {
+        let alpha = (color.0.alpha() - time.delta_secs()).max(0.0);
+        color.0.set_alpha(alpha);
     }
 }
