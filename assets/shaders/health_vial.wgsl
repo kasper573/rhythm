@@ -56,9 +56,12 @@ fn fragment(in: UiVertexOutput) -> @location(0) vec4<f32> {
     let surface = mix(cavity_bottom, cavity_top, level) + waves * turbulence * 0.22;
     let liquid = inner * smoothstep(aa * 2.0, -aa * 2.0, p.y - surface);
 
-    // Liquid body: the vial-spanning gradient, rounded by darkening
-    // toward the walls, with a bright meniscus line at the surface.
-    let height = (p.y - cavity_bottom) / (cavity_top - cavity_bottom);
+    // Liquid body: the gradient spans the fluid itself — its bottom stop
+    // at the cavity floor, its top stop at the liquid level — so it
+    // compresses as health drains. Darkened toward the walls for volume,
+    // with a bright meniscus line at the surface.
+    let liquid_top = mix(cavity_bottom, cavity_top, level);
+    let height = (p.y - cavity_bottom) / max(liquid_top - cavity_bottom, 1e-4);
     let lateral = abs(p.x - 0.5) / OUTER_RADIUS;
     var liquid_color = gradient(height) * (1.08 - 0.38 * lateral * lateral);
     let meniscus = exp(-max(surface - p.y, 0.0) * 26.0) * liquid;
