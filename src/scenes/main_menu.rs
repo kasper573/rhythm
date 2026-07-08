@@ -1,4 +1,3 @@
-use crate::core::font::GameFont;
 use crate::core::menu::{MenuSelected, spawn_menu};
 use crate::scenes::{GameScene, SceneFade};
 use bevy::prelude::*;
@@ -15,10 +14,9 @@ impl Plugin for MainMenuPlugin {
     }
 }
 
-fn enter(mut commands: Commands, font: Res<GameFont>) {
+fn enter(mut commands: Commands) {
     spawn_menu(
         &mut commands,
-        &font,
         GameScene::MainMenu,
         "Rhythm",
         &["File select", "Settings", "Quit"],

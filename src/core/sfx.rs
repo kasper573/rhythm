@@ -1,3 +1,4 @@
+use bevy::audio::PlaybackMode;
 use bevy::prelude::*;
 use std::collections::HashMap;
 use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
@@ -50,9 +51,10 @@ fn play_requested_sfx(
     mut commands: Commands,
 ) {
     for PlaySfx(sfx) in requests.read() {
-        commands.spawn((
-            AudioPlayer(library.0[sfx].clone()),
-            PlaybackSettings::DESPAWN,
-        ));
+        let source = library.0[sfx].clone();
+        commands.spawn_scene(bsn! {
+            AudioPlayer({source})
+            PlaybackSettings { mode: {PlaybackMode::Despawn} }
+        });
     }
 }

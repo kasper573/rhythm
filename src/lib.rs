@@ -2,7 +2,6 @@ pub mod core;
 pub mod scenes;
 
 use crate::core::config::GameConfig;
-use crate::core::font::FontPlugin;
 use crate::core::input::InputPlugin;
 use crate::core::library::StepfileLibrary;
 use crate::core::note_field::NoteFieldPlugin;
@@ -46,7 +45,6 @@ pub fn run() {
         .insert_resource(config)
         .insert_resource(StepfileLibrary::scan())
         .add_plugins((
-            FontPlugin,
             settings_plugin,
             NoteSkinPlugin,
             NoteFieldPlugin,
@@ -54,10 +52,10 @@ pub fn run() {
             SfxPlugin,
             scenes::ScenesPlugin,
         ))
-        .add_systems(Startup, spawn_camera)
+        .add_systems(Startup, camera.spawn())
         .run();
 }
 
-fn spawn_camera(mut commands: Commands) {
-    commands.spawn(Camera2d);
+fn camera() -> impl Scene {
+    bsn! { Camera2d }
 }

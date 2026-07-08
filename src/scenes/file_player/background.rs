@@ -1,11 +1,12 @@
 use super::{PlaySession, PlaySet};
-use crate::core::SCREEN_SIZE;
 use crate::core::assets::asset_server_path;
 use crate::core::library::{StepfileEntry, is_video_file};
+use crate::core::scene_flow::SpawnScoped;
 use crate::core::settings::Settings;
 use crate::core::stepfile::StepfileTiming;
 use crate::core::units::Seconds;
 use crate::core::video::VideoStream;
+use crate::core::{SCREEN_SIZE, at};
 use crate::scenes::GameScene;
 use bevy::prelude::*;
 use std::path::{Path, PathBuf};
@@ -33,6 +34,8 @@ fn exit(mut commands: Commands) {
 /// that actually exist, ordered by time.
 #[derive(Resource)]
 struct BackgroundTimeline {
+    /// The stepfile's own background, shown before any timed change.
+    initial: Option<PathBuf>,
     changes: Vec<BackgroundChange>,
     next: usize,
 }
@@ -42,37 +45,26 @@ struct BackgroundChange {
     path: PathBuf,
 }
 
-#[derive(Component)]
+#[derive(Component, Default, Clone)]
 pub(super) struct BackgroundLayer;
 
 pub(super) fn spawn_background(
     commands: &mut Commands,
-    asset_server: &AssetServer,
     entry: &StepfileEntry,
     timing: &StepfileTiming,
 ) {
-    let initial = entry
-        .background_path()
-        .as_deref()
-        .and_then(asset_server_path)
-        .map(|path| asset_server.load(path));
-    let visibility = match initial {
-        Some(_) => Visibility::Visible,
-        None => Visibility::Hidden,
-    };
-    commands.spawn((
-        DespawnOnExit(GameScene::FilePlayer),
-        BackgroundLayer,
-        Sprite {
-            image: initial.unwrap_or_default(),
-            // Dimmed so arrows and text stay readable in front of it.
-            color: Color::srgb(0.5, 0.5, 0.5),
-            custom_size: Some(SCREEN_SIZE),
-            ..default()
+    commands.spawn_scoped(
+        GameScene::FilePlayer,
+        bsn! {
+            BackgroundLayer
+            Sprite {
+                // Dimmed so arrows and text stay readable in front of it.
+                color: Color::srgb(0.5, 0.5, 0.5),
+                custom_size: {Some(SCREEN_SIZE)},
+            }
+            Visibility::Hidden
         },
-        Transform::from_xyz(0.0, 0.0, 0.0),
-        visibility,
-    ));
+    );
 
     let changes = entry
         .stepfile
@@ -86,7 +78,11 @@ pub(super) fn spawn_background(
             })
         })
         .collect();
-    commands.insert_resource(BackgroundTimeline { changes, next: 0 });
+    commands.insert_resource(BackgroundTimeline {
+        initial: entry.background_path(),
+        changes,
+        next: 0,
+    });
 }
 
 /// A background change whose time has come, recognized on the musical
@@ -103,6 +99,12 @@ fn cue_background_changes(
     mut timeline: ResMut<BackgroundTimeline>,
     mut cues: MessageWriter<BackgroundCue>,
 ) {
+    if let Some(path) = timeline.initial.take() {
+        cues.write(BackgroundCue {
+            time: Seconds::ZERO,
+            path,
+        });
+    }
     let now = session.visible_now(&settings.timing);
     while timeline.next < timeline.changes.len() && timeline.changes[timeline.next].time.0 <= now.0
     {
@@ -166,17 +168,22 @@ fn start_video(
             let scale =
                 (SCREEN_SIZE.x / stream.width as f32).min(SCREEN_SIZE.y / stream.height as f32);
             let size = Vec2::new(stream.width as f32, stream.height as f32) * scale;
-            commands.spawn((
-                DespawnOnExit(GameScene::FilePlayer),
-                Sprite {
-                    image: stream.image.clone(),
-                    color: Color::srgb(0.6, 0.6, 0.6),
-                    custom_size: Some(size),
-                    ..default()
-                },
-                Transform::from_xyz(0.0, 0.0, 0.5),
-                stream,
-            ));
+            let image = stream.image.clone();
+            commands
+                .spawn_scoped(
+                    GameScene::FilePlayer,
+                    bsn! {
+                        Sprite {
+                            image: {image},
+                            color: Color::srgb(0.6, 0.6, 0.6),
+                            custom_size: {Some(size)},
+                        }
+                        at(0.0, 0.0, 0.5)
+                    },
+                )
+                // The stream owns a live decoder process, so it cannot be a
+                // cloneable template value.
+                .insert(stream);
         }
         Err(error) => warn!(
             "video background unavailable for {}: {error}",

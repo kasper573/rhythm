@@ -1,6 +1,6 @@
-use crate::core::font::GameFont;
+use crate::core::font::game_font;
 use crate::core::input::{Actions, GameAction, NavPulse};
-use crate::core::scene_flow::SceneFade;
+use crate::core::scene_flow::{SceneFade, SpawnScoped};
 use crate::core::sfx::{PlaySfx, Sfx};
 use bevy::prelude::*;
 use bevy::state::state::FreelyMutableState;
@@ -10,13 +10,13 @@ pub const TITLE_COLOR: Color = Color::srgb(0.95, 0.85, 0.4);
 pub const ACTIVE_COLOR: Color = Color::WHITE;
 pub const INACTIVE_COLOR: Color = Color::srgb(0.45, 0.45, 0.55);
 
-#[derive(Component)]
+#[derive(Component, Clone, FromTemplate)]
 pub struct Menu {
     pub active: usize,
     pub len: usize,
 }
 
-#[derive(Component)]
+#[derive(Component, Clone, FromTemplate)]
 pub struct MenuItem(pub usize);
 
 #[derive(Message)]
@@ -27,64 +27,57 @@ pub struct MenuSelected {
 #[derive(Resource, Default)]
 pub struct MenuInputLock(pub bool);
 
-pub fn spawn_menu<S: States>(
-    commands: &mut Commands,
-    font: &GameFont,
-    scene: S,
-    title: &str,
-    items: &[&str],
-) {
-    commands
-        .spawn((
-            DespawnOnExit(scene),
+pub fn spawn_menu<S: States>(commands: &mut Commands, scene: S, title: &str, items: &[&str]) {
+    let title = title.to_string();
+    let len = items.len();
+    let entries: Vec<_> = items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let label = item.to_string();
+            let color = if index == 0 {
+                ACTIVE_COLOR
+            } else {
+                INACTIVE_COLOR
+            };
+            bsn! {
+                MenuItem(index)
+                game_font(34.0)
+                Text({label})
+                TextColor({color})
+            }
+        })
+        .collect();
+    commands.spawn_scoped(
+        scene,
+        bsn! {
             Node {
-                width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
+                width: percent(100),
+                height: percent(100),
                 flex_direction: FlexDirection::Column,
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
-                row_gap: Val::Px(16.0),
-                ..default()
-            },
-        ))
-        .with_children(|parent| {
-            parent.spawn((
-                Text::new(title),
-                font.sized(52.0),
-                TextColor(TITLE_COLOR),
-                Node {
-                    margin: UiRect::bottom(Val::Px(32.0)),
-                    ..default()
-                },
-            ));
-            parent
-                .spawn((
-                    Menu {
-                        active: 0,
-                        len: items.len(),
-                    },
+                row_gap: px(16),
+            }
+            Children [
+                (
+                    game_font(52.0)
+                    Text({title})
+                    TextColor({TITLE_COLOR})
+                    Node { margin: {UiRect::bottom(Val::Px(32.0))} }
+                ),
+                (
+                    Menu { active: 0, len: len }
                     Node {
                         flex_direction: FlexDirection::Column,
                         align_items: AlignItems::Center,
-                        row_gap: Val::Px(12.0),
-                        ..default()
-                    },
-                ))
-                .with_children(|list| {
-                    for (index, item) in items.iter().enumerate() {
-                        list.spawn((
-                            MenuItem(index),
-                            Text::new(*item),
-                            font.sized(34.0),
-                            TextColor(if index == 0 {
-                                ACTIVE_COLOR
-                            } else {
-                                INACTIVE_COLOR
-                            }),
-                        ));
+                        row_gap: px(12),
                     }
-                });
-        });
+                    Children [ {entries} ]
+                ),
+            ]
+        },
+    );
 }
 
 /// Menus pause while the scene fade for `S` is running, so the plugin is

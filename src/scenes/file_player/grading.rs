@@ -1,11 +1,13 @@
 use super::{HoldOutcome, JudgmentShown, MineOutcome, PlaySession, PlaySet, direction_action};
+use crate::core::at;
 use crate::core::config::{GameConfig, StepOutcome};
-use crate::core::font::GameFont;
+use crate::core::font::game_font;
 use crate::core::input::Actions;
 use crate::core::note_field::{
     FadeOut, GRADED_FADE_SECONDS, TARGET_Y, column_x, spawn_mine_explosion,
 };
 use crate::core::note_skin::ActiveNoteSkin;
+use crate::core::scene_flow::SpawnScoped;
 use crate::core::settings::Settings;
 use crate::scenes::{GameScene, scene_accepts_input};
 use bevy::prelude::*;
@@ -95,7 +97,6 @@ fn grade_step_inputs(
 fn expire_missed_notes(
     settings: Res<Settings>,
     config: Res<GameConfig>,
-    font: Res<GameFont>,
     mut session: ResMut<PlaySession>,
     mut judgments: MessageWriter<JudgmentShown>,
     mut commands: Commands,
@@ -119,7 +120,7 @@ fn expire_missed_notes(
             match &mut note.hold {
                 Some(hold) => {
                     hold.result = Some(HoldOutcome::Ng);
-                    spawn_hold_popup(&mut commands, &font, note.column, HoldOutcome::Ng);
+                    spawn_hold_popup(&mut commands, note.column, HoldOutcome::Ng);
                 }
                 None => {
                     commands
@@ -140,7 +141,6 @@ fn update_holds(
     actions: Actions,
     time: Res<Time>,
     settings: Res<Settings>,
-    font: Res<GameFont>,
     mut session: ResMut<PlaySession>,
     mut commands: Commands,
 ) {
@@ -176,10 +176,10 @@ fn update_holds(
             commands
                 .entity(entity)
                 .insert(FadeOut::over(GRADED_FADE_SECONDS));
-            spawn_hold_popup(&mut commands, &font, column, HoldOutcome::Ok);
+            spawn_hold_popup(&mut commands, column, HoldOutcome::Ok);
         } else if hold.life <= 0.0 {
             hold.result = Some(HoldOutcome::Ng);
-            spawn_hold_popup(&mut commands, &font, column, HoldOutcome::Ng);
+            spawn_hold_popup(&mut commands, column, HoldOutcome::Ng);
         }
     }
 }
@@ -237,17 +237,20 @@ fn apply_outcome(
     });
 }
 
-fn spawn_hold_popup(commands: &mut Commands, font: &GameFont, column: usize, outcome: HoldOutcome) {
+fn spawn_hold_popup(commands: &mut Commands, column: usize, outcome: HoldOutcome) {
     let (label, color) = match outcome {
         HoldOutcome::Ok => ("OK", Color::srgb(0.45, 0.95, 0.5)),
         HoldOutcome::Ng => ("NG", Color::srgb(0.95, 0.35, 0.35)),
     };
-    commands.spawn((
-        DespawnOnExit(GameScene::FilePlayer),
-        FadeOut::growing(HOLD_POPUP_SECONDS),
-        Text2d::new(label),
-        font.sized(30.0),
-        TextColor(color),
-        Transform::from_xyz(column_x(column), TARGET_Y - 54.0, 21.0),
-    ));
+    commands
+        .spawn_scoped(
+            GameScene::FilePlayer,
+            bsn! {
+                game_font(30.0)
+                Text2d({label.to_string()})
+                TextColor({color})
+                at(column_x(column), TARGET_Y - 54.0, 21.0)
+            },
+        )
+        .insert(FadeOut::growing(HOLD_POPUP_SECONDS));
 }

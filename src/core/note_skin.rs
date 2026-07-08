@@ -1,6 +1,7 @@
 use crate::core::assets::asset_root;
 use crate::core::settings::Settings;
 use bevy::image::{ImageAddressMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor};
+use bevy::math::Rect;
 use bevy::prelude::*;
 use serde::Deserialize;
 
@@ -9,7 +10,8 @@ pub struct ActiveNoteSkin {
     /// Folder name under `assets/note_skins`.
     pub name: String,
     pub sheet: Handle<Image>,
-    pub layout: Handle<TextureAtlasLayout>,
+    /// Sheet regions; every sprite index below points into this.
+    frames: Vec<Rect>,
     tap_rows: Vec<TapRow>,
     pub tap_frames: usize,
     pub tap_beats_per_cycle: f64,
@@ -36,6 +38,10 @@ pub struct ActiveNoteSkin {
 }
 
 impl ActiveNoteSkin {
+    pub fn frame(&self, index: usize) -> Rect {
+        self.frames[index]
+    }
+
     /// The skin row for a quant; unknown quants use the last (finest) row.
     pub fn quant_row(&self, quant: u32) -> usize {
         self.tap_rows
@@ -90,11 +96,7 @@ impl Plugin for NoteSkinPlugin {
             .stepfile
             .note_skin
             .clone();
-        let skin = app.world_mut().resource_scope(
-            |world, mut layouts: Mut<Assets<TextureAtlasLayout>>| {
-                load_note_skin(world.resource::<AssetServer>(), &mut layouts, &name)
-            },
-        );
+        let skin = load_note_skin(app.world().resource::<AssetServer>(), &name);
         app.insert_resource(skin)
             .insert_resource(scan_note_skins())
             .add_systems(Update, reload_changed_skin);
@@ -102,11 +104,7 @@ impl Plugin for NoteSkinPlugin {
 }
 
 /// Panics on a missing or invalid skin: the requested skin must exist.
-pub fn load_note_skin(
-    asset_server: &AssetServer,
-    layouts: &mut Assets<TextureAtlasLayout>,
-    name: &str,
-) -> ActiveNoteSkin {
+pub fn load_note_skin(asset_server: &AssetServer, name: &str) -> ActiveNoteSkin {
     let folder = asset_root().join("note_skins").join(name);
     let manifest_path = folder.join("manifest.json");
     let text = std::fs::read_to_string(&manifest_path)
@@ -132,14 +130,15 @@ pub fn load_note_skin(
     let hold_body_inactive = load_body(&manifest.hold_body.inactive);
     let hold_body_active = load_body(&manifest.hold_body.active);
 
-    let mut layout = TextureAtlasLayout::new_empty(UVec2::ZERO);
+    let mut frames = Vec::new();
     let mut rect = |pos: [u32; 2], size: [u32; 2]| {
-        layout.add_texture(URect::new(
-            pos[0],
-            pos[1],
-            pos[0] + size[0],
-            pos[1] + size[1],
-        ))
+        frames.push(Rect::new(
+            pos[0] as f32,
+            pos[1] as f32,
+            (pos[0] + size[0]) as f32,
+            (pos[1] + size[1]) as f32,
+        ));
+        frames.len() - 1
     };
 
     let taps = &manifest.taps;
@@ -183,16 +182,10 @@ pub fn load_note_skin(
     let mine = rect(manifest.mine.pos, manifest.mine.size);
     let mine_explosion = rect(manifest.mine_explosion.pos, manifest.mine_explosion.size);
 
-    layout.size = layout
-        .textures
-        .iter()
-        .fold(UVec2::ZERO, |size, rect| size.max(rect.max));
-    let layout = layouts.add(layout);
-
     ActiveNoteSkin {
         name: name.to_string(),
         sheet,
-        layout,
+        frames,
         tap_rows,
         tap_frames: taps.frames,
         tap_beats_per_cycle: taps.beats_per_cycle,
@@ -223,13 +216,12 @@ pub fn load_note_skin(
 fn reload_changed_skin(
     settings: Res<Settings>,
     asset_server: Res<AssetServer>,
-    mut layouts: ResMut<Assets<TextureAtlasLayout>>,
     mut skin: ResMut<ActiveNoteSkin>,
 ) {
     if !settings.is_changed() || skin.name == settings.stepfile.note_skin {
         return;
     }
-    *skin = load_note_skin(&asset_server, &mut layouts, &settings.stepfile.note_skin);
+    *skin = load_note_skin(&asset_server, &settings.stepfile.note_skin);
 }
 
 fn scan_note_skins() -> NoteSkinLibrary {

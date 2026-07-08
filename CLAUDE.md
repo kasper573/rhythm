@@ -8,7 +8,7 @@
   engine, audio engine, etc. We want to build a game, and the code in this repo
   should reflect that.
 - Correctness & clarity comes before performance.
-- Tests assert on contracts, never implementation details.
+- No unit tests.
 - No mitigation fixes or hacks. Refactoring is encouraged: Don't hunt symptoms,
   fix root causes.
 - No paintjobs. Think longterm when adding features. Again, refactoring is
@@ -35,8 +35,6 @@
 - small, simple `macro_rules!` codegen is allowed to reduce boilerplate, but
   complex macros are entirely forbidden.
 - Files read consumer-first: public API at top, private helpers at the bottom.
-- No inline tests: every test lives in its crate's `tests/` folder, against the
-  public API.
 - Use `Option`/`Result` and sum types over sentinels/casts. No `unsafe` without
   a justifying comment. Avoid `unwrap`/`panic!` off the test path unless an
   invariant is truly guaranteed.

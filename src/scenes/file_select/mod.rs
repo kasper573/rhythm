@@ -1,14 +1,15 @@
 mod player_options;
 
-use crate::core::SCREEN_SIZE;
 use crate::core::assets::asset_server_path;
 use crate::core::config::GameConfig;
-use crate::core::font::GameFont;
+use crate::core::font::game_font;
 use crate::core::input::{Actions, GameAction, NavPulse};
 use crate::core::library::{StepfileId, StepfileLibrary};
+use crate::core::scene_flow::SpawnScoped;
 use crate::core::sfx::{PlaySfx, Sfx};
 use crate::core::stepfile::{Difficulty, DisplayBpm, Stepfile, StepsType};
 use crate::core::units::Seconds;
+use crate::core::{SCREEN_SIZE, at};
 use crate::scenes::{GameScene, SceneFade, scene_accepts_input};
 use bevy::audio::PlaybackMode;
 use bevy::ecs::query::QueryData;
@@ -146,26 +147,25 @@ enum WheelEntry {
     Stepfile { id: StepfileId },
 }
 
-#[derive(Component, Clone, Copy)]
+#[derive(Component, Clone, Copy, FromTemplate)]
 struct WheelSlot(usize);
 
-#[derive(Component)]
+#[derive(Component, Default, Clone)]
 struct SlotRoot;
 
-#[derive(Component)]
+#[derive(Component, Default, Clone)]
 struct SlotTitle;
 
-#[derive(Component)]
+#[derive(Component, Default, Clone)]
 struct SlotArtist;
 
-#[derive(Component)]
+#[derive(Component, Default, Clone)]
 struct InfoPanel;
 
 fn enter(
     mut commands: Commands,
     library: Res<StepfileLibrary>,
     config: Res<GameConfig>,
-    font: Res<GameFont>,
     target: Option<Res<FileSelectTarget>>,
     mut images: ResMut<Assets<Image>>,
 ) {
@@ -200,88 +200,95 @@ fn enter(
         .unwrap_or(0);
     let bar_image = images.add(rounded_image(512, 64, 16.0, None));
 
-    commands.spawn((
-        DespawnOnExit(GameScene::FileSelect),
-        Sprite {
-            color: BACKDROP_COLOR,
-            custom_size: Some(SCREEN_SIZE),
-            ..default()
+    commands.spawn_scoped(
+        GameScene::FileSelect,
+        bsn! {
+            Sprite {
+                color: {BACKDROP_COLOR},
+                custom_size: {Some(SCREEN_SIZE)},
+            }
         },
-        Transform::from_xyz(0.0, 0.0, 0.0),
-    ));
+    );
 
     for slot in 0..SLOTS {
-        commands
-            .spawn((
-                DespawnOnExit(GameScene::FileSelect),
-                WheelSlot(slot),
-                SlotRoot,
+        let bar = bar_image.clone();
+        commands.spawn_scoped(
+            GameScene::FileSelect,
+            bsn! {
+                WheelSlot(slot)
+                SlotRoot
                 Sprite {
-                    image: bar_image.clone(),
-                    color: STEPFILE_BAR,
-                    custom_size: Some(Vec2::new(BAR_WIDTH, BAR_HEIGHT)),
-                    ..default()
-                },
-                Transform::from_xyz(slot_x(slot, 0.0), slot_y(slot, 0.0), 10.0),
-            ))
-            .with_children(|slot_parent| {
-                slot_parent.spawn((
-                    WheelSlot(slot),
-                    SlotTitle,
-                    Text2d::new(""),
-                    font.sized(26.0),
-                    TextColor(STEPFILE_TEXT),
-                    Anchor::CENTER_LEFT,
-                    Transform::from_xyz(-BAR_WIDTH / 2.0 + 26.0, 9.0, 0.1),
-                ));
-                slot_parent.spawn((
-                    WheelSlot(slot),
-                    SlotArtist,
-                    Text2d::new(""),
-                    font.sized(17.0),
-                    TextColor(ARTIST_TEXT),
-                    Anchor::CENTER_LEFT,
-                    Transform::from_xyz(-BAR_WIDTH / 2.0 + 60.0, -15.0, 0.1),
-                ));
-            });
+                    image: {bar},
+                    color: {STEPFILE_BAR},
+                    custom_size: {Some(Vec2::new(BAR_WIDTH, BAR_HEIGHT))},
+                }
+                at(slot_x(slot, 0.0), slot_y(slot, 0.0), 10.0)
+                Children [
+                    (
+                        WheelSlot(slot)
+                        SlotTitle
+                        game_font(26.0)
+                        Text2d("")
+                        TextColor({STEPFILE_TEXT})
+                        Anchor({Anchor::CENTER_LEFT.0})
+                        at(-BAR_WIDTH / 2.0 + 26.0, 9.0, 0.1)
+                    ),
+                    (
+                        WheelSlot(slot)
+                        SlotArtist
+                        game_font(17.0)
+                        Text2d("")
+                        TextColor({ARTIST_TEXT})
+                        Anchor({Anchor::CENTER_LEFT.0})
+                        at(-BAR_WIDTH / 2.0 + 60.0, -15.0, 0.1)
+                    ),
+                ]
+            },
+        );
     }
 
     // The active-row frame: a fixed overlay over the center slot that rows
     // slide beneath; once the wheel rests it reads as the row's border.
     let overlay_size = Vec2::new(BAR_WIDTH + 10.0, BAR_HEIGHT + 10.0);
-    commands.spawn((
-        DespawnOnExit(GameScene::FileSelect),
-        Sprite {
-            image: images.add(rounded_image(
-                overlay_size.x as u32,
-                overlay_size.y as u32,
-                18.0,
-                Some(5.0),
-            )),
-            color: BORDER_COLOR,
-            custom_size: Some(overlay_size),
-            ..default()
-        },
-        Transform::from_xyz(WHEEL_X, 0.0, 12.0),
+    let overlay_image = images.add(rounded_image(
+        overlay_size.x as u32,
+        overlay_size.y as u32,
+        18.0,
+        Some(5.0),
     ));
+    commands.spawn_scoped(
+        GameScene::FileSelect,
+        bsn! {
+            Sprite {
+                image: {overlay_image},
+                color: {BORDER_COLOR},
+                custom_size: {Some(overlay_size)},
+            }
+            at(WHEEL_X, 0.0, 12.0)
+        },
+    );
 
     if library.is_empty() {
-        commands.spawn((
-            DespawnOnExit(GameScene::FileSelect),
-            Text2d::new("No stepfiles found under assets/stepfiles"),
-            font.sized(30.0),
-            TextColor(Color::srgb(0.9, 0.4, 0.4)),
-            Transform::from_xyz(0.0, 0.0, 20.0),
-        ));
+        commands.spawn_scoped(
+            GameScene::FileSelect,
+            bsn! {
+                game_font(30.0)
+                Text2d("No stepfiles found under assets/stepfiles")
+                TextColor(Color::srgb(0.9, 0.4, 0.4))
+                at(0.0, 0.0, 20.0)
+            },
+        );
     }
 
-    commands.spawn((
-        DespawnOnExit(GameScene::FileSelect),
-        Text2d::new("up/down: change difficulty\nhold select: change options"),
-        font.sized(20.0),
-        TextColor(HELP_TEXT),
-        Transform::from_xyz(-320.0, -214.0, 5.0),
-    ));
+    commands.spawn_scoped(
+        GameScene::FileSelect,
+        bsn! {
+            game_font(20.0)
+            Text2d("up/down: change difficulty\nhold select: change options")
+            TextColor({HELP_TEXT})
+            at(-320.0, -214.0, 5.0)
+        },
+    );
 
     commands.insert_resource(Wheel {
         entries,
@@ -555,7 +562,6 @@ fn refresh_info_panel(
     library: Res<StepfileLibrary>,
     preferred: Res<PreferredDifficulty>,
     asset_server: Res<AssetServer>,
-    font: Res<GameFont>,
     panels: Query<Entity, With<InfoPanel>>,
     mut commands: Commands,
 ) {
@@ -595,66 +601,65 @@ fn refresh_info_panel(
         }
     };
 
-    commands
-        .spawn((
-            DespawnOnExit(GameScene::FileSelect),
-            InfoPanel,
-            Transform::from_xyz(-320.0, 0.0, 5.0),
-            Visibility::default(),
-        ))
-        .with_children(|panel| {
-            match banner_path.as_deref().and_then(asset_server_path) {
-                Some(path) => {
-                    panel.spawn((
-                        Sprite {
-                            image: asset_server.load(path),
-                            custom_size: Some(BANNER_SIZE),
-                            ..default()
-                        },
-                        Transform::from_xyz(0.0, 190.0, 0.0),
-                    ));
-                }
-                None => {
-                    panel.spawn((
-                        Sprite {
-                            image: wheel.bar_image.clone(),
-                            color: BANNER_TINT,
-                            custom_size: Some(BANNER_SIZE),
-                            ..default()
-                        },
-                        Transform::from_xyz(0.0, 190.0, 0.0),
-                    ));
-                    panel.spawn((
-                        Text2d::new(fallback_title),
-                        font.sized(24.0),
-                        TextColor(BANNER_TEXT),
-                        Transform::from_xyz(0.0, 190.0, 0.5),
-                    ));
-                }
+    let (image, tint, title) = match banner_path.as_deref().and_then(asset_server_path) {
+        Some(path) => (asset_server.load(path), Color::WHITE, None),
+        None => (wheel.bar_image.clone(), BANNER_TINT, Some(fallback_title)),
+    };
+    let title: Vec<_> = title
+        .map(|title| {
+            bsn! {
+                game_font(24.0)
+                Text2d({title})
+                TextColor({BANNER_TEXT})
+                at(0.0, 190.0, 0.5)
             }
-            panel.spawn((
-                Text2d::new(headline),
-                font.sized(28.0),
-                TextColor(BPM_TEXT),
-                Transform::from_xyz(0.0, 70.0, 0.0),
-            ));
-            let Some((id, index)) = chart else { return };
+        })
+        .into_iter()
+        .collect();
+    let chart_lines: Vec<_> = chart
+        .map(|(id, index)| {
             let stepfile = &library.stepfile(id).stepfile;
             let chart = &stepfile.charts[index];
             let (name, color) = difficulty_style(&chart.difficulty);
-            panel.spawn((
-                Text2d::new(format!("{name} {}", chart.meter)),
-                font.sized(34.0),
-                TextColor(color),
-                Transform::from_xyz(0.0, 18.0, 0.0),
-            ));
-            panel.spawn((
-                Text2d::new(stats_label(stepfile, index)),
-                font.sized(22.0),
-                TextColor(STATS_TEXT),
-                Transform::from_xyz(0.0, -70.0, 0.0),
-            ));
-        });
+            vec![
+                (format!("{name} {}", chart.meter), 34.0, color, 18.0),
+                (stats_label(stepfile, index), 22.0, STATS_TEXT, -70.0),
+            ]
+        })
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(line, size, color, y)| {
+            bsn! {
+                game_font(size)
+                Text2d({line})
+                TextColor({color})
+                at(0.0, y, 0.0)
+            }
+        })
+        .collect();
+
+    commands.spawn_scoped(
+        GameScene::FileSelect,
+        bsn! {
+            InfoPanel
+            at(-320.0, 0.0, 5.0)
+            Visibility::default()
+            Children [
+                (
+                    Sprite { image: {image}, color: {tint}, custom_size: {Some(BANNER_SIZE)} }
+                    at(0.0, 190.0, 0.0)
+                ),
+                {title},
+                (
+                    game_font(28.0)
+                    Text2d({headline})
+                    TextColor({BPM_TEXT})
+                    at(0.0, 70.0, 0.0)
+                ),
+                {chart_lines},
+            ]
+        },
+    );
 }
 
 fn stats_label(stepfile: &Stepfile, chart_index: usize) -> String {
@@ -709,17 +714,19 @@ fn update_preview(
     let stepfile = &entry.stepfile;
     let start = stepfile.sample_start.0.max(0.0);
     let length = stepfile.sample_length.0;
+    let music = asset_server.load(path);
     let entity = commands
-        .spawn((
-            DespawnOnExit(GameScene::FileSelect),
-            AudioPlayer::new(asset_server.load(path)),
-            PlaybackSettings {
-                mode: PlaybackMode::Loop,
-                start_position: Some(Duration::from_secs_f64(start)),
-                duration: (length > 0.0).then(|| Duration::from_secs_f64(length)),
-                ..default()
+        .spawn_scoped(
+            GameScene::FileSelect,
+            bsn! {
+                AudioPlayer({music})
+                PlaybackSettings {
+                    mode: {PlaybackMode::Loop},
+                    start_position: {Some(Duration::from_secs_f64(start))},
+                    duration: {(length > 0.0).then(|| Duration::from_secs_f64(length))},
+                }
             },
-        ))
+        )
         .id();
     wheel.preview_entity = Some(entity);
 }

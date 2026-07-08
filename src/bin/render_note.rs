@@ -424,11 +424,7 @@ impl FieldRenderer {
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(
             1.0 / fps as f64,
         )));
-        let skin = app.world_mut().resource_scope(
-            |world, mut layouts: Mut<Assets<TextureAtlasLayout>>| {
-                load_note_skin(world.resource::<AssetServer>(), &mut layouts, skin_name)
-            },
-        );
+        let skin = load_note_skin(app.world().resource::<AssetServer>(), skin_name);
         app.insert_resource(skin);
         app.finish();
         app.cleanup();
@@ -439,11 +435,13 @@ impl FieldRenderer {
             Image::new_target_texture(WIDTH, HEIGHT, TextureFormat::Rgba8UnormSrgb, None);
         target.texture_descriptor.usage |= TextureUsages::COPY_SRC;
         let target = world.resource_mut::<Assets<Image>>().add(target);
-        world.spawn((
-            Camera2d,
-            RenderTarget::Image(target.clone().into()),
-            Msaa::Off,
-        ));
+        world
+            .spawn_scene(bsn! {
+                Camera2d
+                Msaa::Off
+            })
+            .expect("static scene resolution cannot fail")
+            .insert(RenderTarget::Image(target.clone().into()));
 
         let (sender, frames) = channel();
         let mut renderer = FieldRenderer {

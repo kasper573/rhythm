@@ -4,14 +4,16 @@ mod grading;
 mod visuals;
 
 use crate::core::assets::{asset_root, asset_server_path};
+use crate::core::at;
 use crate::core::config::{GameConfig, StepOutcome};
-use crate::core::font::GameFont;
+use crate::core::font::game_font;
 use crate::core::input::{Actions, GameAction, shift_held};
 use crate::core::library::{StepfileId, StepfileLibrary};
 use crate::core::note_field::{
     NoteFieldClock, NoteFieldSystems, NoteSpawn, spawn_mine, spawn_note, spawn_receptors,
 };
 use crate::core::note_skin::ActiveNoteSkin;
+use crate::core::scene_flow::SpawnScoped;
 use crate::core::settings::{Settings, TimingSettings};
 use crate::core::sfx::{PlaySfx, Sfx};
 use crate::core::stepfile::NoteKind;
@@ -19,7 +21,7 @@ use crate::core::tick_track::render_tick_track;
 use crate::core::units::{Beat, Millis, Seconds};
 use crate::scenes::file_select::{FileSelectTarget, SelectedStepfile};
 use crate::scenes::{GameScene, SceneFade, scene_accepts_input};
-use bevy::audio::AudioSinkPlayback;
+use bevy::audio::{AudioSinkPlayback, PlaybackMode};
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
@@ -100,7 +102,6 @@ enum PlaySet {
 #[derive(SystemParam)]
 struct StageAssets<'w> {
     skin: Res<'w, ActiveNoteSkin>,
-    font: Res<'w, GameFont>,
     asset_server: Res<'w, AssetServer>,
     audio_sources: ResMut<'w, Assets<AudioSource>>,
 }
@@ -203,24 +204,24 @@ pub(super) struct JudgmentShown {
     pub combo: u32,
 }
 
-#[derive(Component)]
+#[derive(Component, Default, Clone)]
 pub(super) struct MusicTrack;
 
 /// The pre-rendered tick track sink, always playing in sync, muted unless
 /// tick audio is toggled on.
-#[derive(Component)]
+#[derive(Component, Default, Clone)]
 pub(super) struct TickTrack;
 
-#[derive(Component)]
+#[derive(Component, Default, Clone)]
 pub(super) struct JudgmentText;
 
-#[derive(Component)]
+#[derive(Component, Default, Clone)]
 pub(super) struct ComboText;
 
-#[derive(Component)]
+#[derive(Component, Default, Clone)]
 pub(super) struct OffsetOsd;
 
-#[derive(Component)]
+#[derive(Component, Default, Clone)]
 pub(super) struct AutoSyncText;
 
 fn enter(
@@ -340,15 +341,18 @@ fn enter(
     }
 
     if let Some(path) = entry.music_path().as_deref().and_then(asset_server_path) {
-        commands.spawn((
-            DespawnOnExit(GameScene::FilePlayer),
-            MusicTrack,
-            AudioPlayer::new(assets.asset_server.load(path)),
-            PlaybackSettings {
-                paused: true,
-                ..PlaybackSettings::ONCE
+        let music = assets.asset_server.load(path);
+        commands.spawn_scoped(
+            GameScene::FilePlayer,
+            bsn! {
+                MusicTrack
+                AudioPlayer({music})
+                PlaybackSettings {
+                    mode: {PlaybackMode::Once},
+                    paused: true,
+                }
             },
-        ));
+        );
     } else {
         info!(
             "no music file for \"{}\", playing silent",
@@ -366,22 +370,24 @@ fn enter(
             let handle = assets.audio_sources.add(AudioSource {
                 bytes: bytes.into(),
             });
-            commands.spawn((
-                DespawnOnExit(GameScene::FilePlayer),
-                TickTrack,
-                AudioPlayer(handle),
-                PlaybackSettings {
-                    paused: true,
-                    muted: true,
-                    ..PlaybackSettings::ONCE
+            commands.spawn_scoped(
+                GameScene::FilePlayer,
+                bsn! {
+                    TickTrack
+                    AudioPlayer({handle})
+                    PlaybackSettings {
+                        mode: {PlaybackMode::Once},
+                        paused: true,
+                        muted: true,
+                    }
                 },
-            ));
+            );
         }
         Err(error) => warn!("could not render tick track: {error}"),
     }
 
-    background::spawn_background(&mut commands, &assets.asset_server, entry, &timing);
-    spawn_hud(&mut commands, &assets.font);
+    background::spawn_background(&mut commands, entry, &timing);
+    spawn_hud(&mut commands);
 
     commands.insert_resource(NoteFieldClock {
         visible: -LEAD_IN,
@@ -425,51 +431,57 @@ struct PendingNote {
     roll: bool,
 }
 
-fn spawn_hud(commands: &mut Commands, font: &GameFont) {
-    commands.spawn((
-        DespawnOnExit(GameScene::FilePlayer),
-        ComboText,
-        Text2d::new(""),
-        font.sized(44.0),
-        TextColor(Color::WHITE),
-        Transform::from_xyz(0.0, -60.0, 5.0),
-        Visibility::Hidden,
-    ));
-    commands.spawn((
-        DespawnOnExit(GameScene::FilePlayer),
-        JudgmentText,
-        Text2d::new(""),
-        font.sized(50.0),
-        TextColor(Color::srgba(1.0, 1.0, 1.0, 0.0)),
-        Transform::from_xyz(0.0, 10.0, 6.0),
-    ));
-    commands.spawn((
-        DespawnOnExit(GameScene::FilePlayer),
-        OffsetOsd,
-        Text::new(""),
-        font.sized(24.0),
-        TextColor(Color::srgba(1.0, 1.0, 1.0, 0.0)),
-        Node {
-            position_type: PositionType::Absolute,
-            right: Val::Px(24.0),
-            bottom: Val::Px(16.0),
-            ..default()
+fn spawn_hud(commands: &mut Commands) {
+    commands.spawn_scoped(
+        GameScene::FilePlayer,
+        bsn! {
+            ComboText
+            game_font(44.0)
+            Text2d("")
+            TextColor(Color::WHITE)
+            at(0.0, -60.0, 5.0)
+            Visibility::Hidden
         },
-    ));
-    commands.spawn((
-        DespawnOnExit(GameScene::FilePlayer),
-        AutoSyncText,
-        Text::new(""),
-        font.sized(24.0),
-        TextColor(Color::srgb(0.5, 0.9, 1.0)),
-        Node {
-            position_type: PositionType::Absolute,
-            right: Val::Px(24.0),
-            bottom: Val::Px(48.0),
-            ..default()
+    );
+    commands.spawn_scoped(
+        GameScene::FilePlayer,
+        bsn! {
+            JudgmentText
+            game_font(50.0)
+            Text2d("")
+            TextColor(Color::srgba(1.0, 1.0, 1.0, 0.0))
+            at(0.0, 10.0, 6.0)
         },
-        Visibility::Hidden,
-    ));
+    );
+    commands.spawn_scoped(
+        GameScene::FilePlayer,
+        bsn! {
+            OffsetOsd
+            game_font(24.0)
+            Text("")
+            TextColor(Color::srgba(1.0, 1.0, 1.0, 0.0))
+            Node {
+                position_type: PositionType::Absolute,
+                right: px(24),
+                bottom: px(16),
+            }
+        },
+    );
+    commands.spawn_scoped(
+        GameScene::FilePlayer,
+        bsn! {
+            AutoSyncText
+            game_font(24.0)
+            Text("")
+            TextColor(Color::srgb(0.5, 0.9, 1.0))
+            Node {
+                position_type: PositionType::Absolute,
+                right: px(24),
+                bottom: px(48),
+            }
+            Visibility::Hidden
+        },
+    );
 }
 
 fn toggle_autosync(actions: Actions, mut session: ResMut<PlaySession>) {

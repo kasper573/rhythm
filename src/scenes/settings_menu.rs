@@ -1,4 +1,3 @@
-use crate::core::font::GameFont;
 use crate::core::input::{Actions, GameAction};
 use crate::core::menu::{MenuSelected, spawn_menu};
 use crate::core::sfx::{PlaySfx, Sfx};
@@ -18,10 +17,9 @@ impl Plugin for SettingsMenuPlugin {
     }
 }
 
-fn enter(mut commands: Commands, font: Res<GameFont>) {
+fn enter(mut commands: Commands) {
     spawn_menu(
         &mut commands,
-        &font,
         GameScene::SettingsMenu,
         "Settings",
         &["Configure keymap"],

@@ -1,7 +1,8 @@
 use crate::core::config::GameConfig;
-use crate::core::font::GameFont;
+use crate::core::font::game_font;
 use crate::core::input::{Actions, GameAction};
 use crate::core::menu::{INACTIVE_COLOR, Menu, MenuInputLock, MenuItem, MenuSelected, TITLE_COLOR};
+use crate::core::scene_flow::SpawnScoped;
 use crate::core::settings::Settings;
 use crate::core::sfx::{PlaySfx, Sfx};
 use crate::scenes::{GameScene, SceneFade, scene_accepts_input};
@@ -40,72 +41,59 @@ struct Prompt {
     just_opened: bool,
 }
 
-#[derive(Component)]
+#[derive(Component, Default, Clone)]
 struct PromptLabel;
 
-fn enter(
-    mut commands: Commands,
-    settings: Res<Settings>,
-    config: Res<GameConfig>,
-    font: Res<GameFont>,
-) {
+fn enter(mut commands: Commands, settings: Res<Settings>, config: Res<GameConfig>) {
     commands.init_resource::<Prompt>();
-    commands
-        .spawn((
-            DespawnOnExit(GameScene::Keymap),
+    let rows: Vec<_> = GameAction::iter()
+        .enumerate()
+        .map(|(index, action)| {
+            let label = row_label(action, &settings, &config);
+            bsn! {
+                MenuItem(index)
+                game_font(26.0)
+                Text({label})
+                TextColor({INACTIVE_COLOR})
+            }
+        })
+        .collect();
+    commands.spawn_scoped(
+        GameScene::Keymap,
+        bsn! {
             Node {
-                width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
+                width: percent(100),
+                height: percent(100),
                 flex_direction: FlexDirection::Column,
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
-                row_gap: Val::Px(10.0),
-                ..default()
-            },
-        ))
-        .with_children(|parent| {
-            parent.spawn((
-                Text::new("Keymap"),
-                font.sized(52.0),
-                TextColor(TITLE_COLOR),
-                Node {
-                    margin: UiRect::bottom(Val::Px(24.0)),
-                    ..default()
-                },
-            ));
-            parent
-                .spawn((
-                    Menu {
-                        active: 0,
-                        len: GameAction::COUNT,
-                    },
+                row_gap: px(10),
+            }
+            Children [
+                (
+                    game_font(52.0)
+                    Text("Keymap")
+                    TextColor({TITLE_COLOR})
+                    Node { margin: {UiRect::bottom(Val::Px(24.0))} }
+                ),
+                (
+                    Menu { active: 0, len: {GameAction::COUNT} }
                     Node {
                         flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(6.0),
-                        ..default()
-                    },
-                ))
-                .with_children(|list| {
-                    for (index, action) in GameAction::iter().enumerate() {
-                        list.spawn((
-                            MenuItem(index),
-                            Text::new(row_label(action, &settings, &config)),
-                            font.sized(26.0),
-                            TextColor(INACTIVE_COLOR),
-                        ));
+                        row_gap: px(6),
                     }
-                });
-            parent.spawn((
-                PromptLabel,
-                Text::new(""),
-                font.sized(26.0),
-                TextColor(Color::srgb(0.4, 0.9, 0.6)),
-                Node {
-                    margin: UiRect::top(Val::Px(24.0)),
-                    ..default()
-                },
-            ));
-        });
+                    Children [ {rows} ]
+                ),
+                (
+                    PromptLabel
+                    game_font(26.0)
+                    Text("")
+                    TextColor(Color::srgb(0.4, 0.9, 0.6))
+                    Node { margin: {UiRect::top(Val::Px(24.0))} }
+                ),
+            ]
+        },
+    );
 }
 
 fn exit(mut commands: Commands, mut lock: ResMut<MenuInputLock>) {

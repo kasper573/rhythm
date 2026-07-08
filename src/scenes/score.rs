@@ -1,7 +1,8 @@
 use crate::core::config::{GameConfig, Judgment};
-use crate::core::font::GameFont;
+use crate::core::font::game_font;
 use crate::core::input::{Actions, GameAction};
 use crate::core::menu::TITLE_COLOR;
+use crate::core::scene_flow::SpawnScoped;
 use crate::core::sfx::{PlaySfx, Sfx};
 use crate::scenes::file_player::ScoreResults;
 use crate::scenes::file_select::FileSelectTarget;
@@ -29,7 +30,6 @@ fn enter(
     mut commands: Commands,
     results: Option<Res<ScoreResults>>,
     config: Res<GameConfig>,
-    font: Res<GameFont>,
     mut fade: ResMut<SceneFade>,
 ) {
     let Some(results) = results else {
@@ -48,70 +48,74 @@ fn enter(
         }
     }
 
-    commands
-        .spawn((
-            DespawnOnExit(GameScene::Score),
+    // Best to worst (config validates smallest window first), Miss last.
+    let mut tallies: Vec<_> = config
+        .grades
+        .iter()
+        .zip(&grade_counts)
+        .map(|(grade, count)| (format!("{:<12} {count}", grade.name), grade.color))
+        .collect();
+    tallies.push((
+        format!("{:<12} {miss_count}", config.miss_appearance.name),
+        config.miss_appearance.color,
+    ));
+    tallies.push((
+        format!(
+            "{:<12} {}/{}",
+            "Holds", results.holds_ok, results.holds_total
+        ),
+        Color::srgb(0.8, 0.85, 0.8),
+    ));
+    tallies.push((
+        format!(
+            "{:<12} {}/{} avoided",
+            "Mines",
+            results.mines_total - results.mines_hit,
+            results.mines_total
+        ),
+        Color::srgb(0.8, 0.85, 0.8),
+    ));
+    let tallies: Vec<_> = tallies
+        .into_iter()
+        .map(|(line, color)| {
+            bsn! {
+                game_font(30.0)
+                Text({line})
+                TextColor({color})
+            }
+        })
+        .collect();
+
+    let title = results.title.clone();
+    let combo = format!("Max combo: {}", results.max_combo);
+    commands.spawn_scoped(
+        GameScene::Score,
+        bsn! {
             Node {
-                width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
+                width: percent(100),
+                height: percent(100),
                 flex_direction: FlexDirection::Column,
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
-                row_gap: Val::Px(8.0),
-                ..default()
-            },
-        ))
-        .with_children(|parent| {
-            parent.spawn((
-                Text::new(results.title.clone()),
-                font.sized(46.0),
-                TextColor(TITLE_COLOR),
-                Node {
-                    margin: UiRect::bottom(Val::Px(28.0)),
-                    ..default()
-                },
-            ));
-            // Best to worst (config validates smallest window first), Miss last.
-            for (grade, count) in config.grades.iter().zip(&grade_counts) {
-                parent.spawn((
-                    Text::new(format!("{:<12} {count}", grade.name)),
-                    font.sized(30.0),
-                    TextColor(grade.color),
-                ));
+                row_gap: px(8),
             }
-            parent.spawn((
-                Text::new(format!("{:<12} {miss_count}", config.miss_appearance.name)),
-                font.sized(30.0),
-                TextColor(config.miss_appearance.color),
-            ));
-            parent.spawn((
-                Text::new(format!(
-                    "{:<12} {}/{}",
-                    "Holds", results.holds_ok, results.holds_total
-                )),
-                font.sized(30.0),
-                TextColor(Color::srgb(0.8, 0.85, 0.8)),
-            ));
-            parent.spawn((
-                Text::new(format!(
-                    "{:<12} {}/{} avoided",
-                    "Mines",
-                    results.mines_total - results.mines_hit,
-                    results.mines_total
-                )),
-                font.sized(30.0),
-                TextColor(Color::srgb(0.8, 0.85, 0.8)),
-            ));
-            parent.spawn((
-                Text::new(format!("Max combo: {}", results.max_combo)),
-                font.sized(32.0),
-                TextColor(Color::srgb(0.7, 0.85, 1.0)),
-                Node {
-                    margin: UiRect::top(Val::Px(24.0)),
-                    ..default()
-                },
-            ));
-        });
+            Children [
+                (
+                    game_font(46.0)
+                    Text({title})
+                    TextColor({TITLE_COLOR})
+                    Node { margin: {UiRect::bottom(Val::Px(28.0))} }
+                ),
+                {tallies},
+                (
+                    game_font(32.0)
+                    Text({combo})
+                    TextColor(Color::srgb(0.7, 0.85, 1.0))
+                    Node { margin: {UiRect::top(Val::Px(24.0))} }
+                ),
+            ]
+        },
+    );
 }
 
 fn leave(

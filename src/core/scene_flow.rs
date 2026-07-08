@@ -1,6 +1,21 @@
+use bevy::ecs::system::EntityCommands;
 use bevy::prelude::*;
 use bevy::state::state::FreelyMutableState;
 use std::marker::PhantomData;
+
+/// Spawns a scene owned by a state and despawned on its exit; taking the
+/// state up front makes the scope impossible to forget.
+pub trait SpawnScoped {
+    fn spawn_scoped<S: States>(&mut self, state: S, scene: impl Scene) -> EntityCommands<'_>;
+}
+
+impl SpawnScoped for Commands<'_, '_> {
+    fn spawn_scoped<S: States>(&mut self, state: S, scene: impl Scene) -> EntityCommands<'_> {
+        let mut entity = self.spawn_scene(scene);
+        entity.insert(DespawnOnExit(state));
+        entity
+    }
+}
 
 /// Drives the mandatory scene transition for the scene state `S`: fade to
 /// black, swap scene while black, fade back in. All scene switches must go
@@ -42,7 +57,7 @@ impl<S: FreelyMutableState + FromWorld> Plugin for SceneFlowPlugin<S> {
                 phase: FadePhase::FadingIn,
                 alpha: 1.0,
             })
-            .add_systems(Startup, spawn_fade_overlay)
+            .add_systems(Startup, fade_overlay.spawn())
             .add_systems(Update, run_fade::<S>);
     }
 }
@@ -56,21 +71,20 @@ enum FadePhase<S> {
     FadingIn,
 }
 
-#[derive(Component)]
+#[derive(Component, Default, Clone)]
 struct FadeOverlay;
 
-fn spawn_fade_overlay(mut commands: Commands) {
-    commands.spawn((
-        FadeOverlay,
+fn fade_overlay() -> impl Scene {
+    bsn! {
+        FadeOverlay
         Node {
             position_type: PositionType::Absolute,
-            width: Val::Percent(100.0),
-            height: Val::Percent(100.0),
-            ..default()
-        },
-        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 1.0)),
-        GlobalZIndex(1000),
-    ));
+            width: percent(100),
+            height: percent(100),
+        }
+        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 1.0))
+        GlobalZIndex(1000)
+    }
 }
 
 fn run_fade<S: FreelyMutableState>(

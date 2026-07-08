@@ -1,6 +1,7 @@
 use crate::core::note_skin::ActiveNoteSkin;
 use crate::core::stepfile::StepfileTiming;
 use crate::core::units::{Beat, Seconds};
+use crate::core::{at, oriented};
 use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -71,7 +72,7 @@ impl NoteScroll {
     }
 }
 
-#[derive(Component)]
+#[derive(Component, Default, Clone)]
 pub struct Receptor {
     pub column: usize,
     /// The press tween follows this.
@@ -79,29 +80,36 @@ pub struct Receptor {
     press: f32,
 }
 
-#[derive(Component)]
+#[derive(Component, Clone, FromTemplate)]
 pub struct NoteArrow {
     pub time: Seconds,
     pub beat: Beat,
 }
 
-#[derive(Component)]
-pub enum ArrowVisual {
-    Tap { first_frame: usize },
-    HoldHead { skin_row: usize },
+/// An arrow cycling through its quant row's animation frames.
+#[derive(Component, Clone, FromTemplate)]
+pub struct TapAnimation {
+    pub first_frame: usize,
+}
+
+/// An arrow drawn as the skin's hold head, switching with the hold's state.
+#[derive(Component, Clone, FromTemplate)]
+pub struct HoldHeadSprite {
+    pub skin_row: usize,
 }
 
 /// Render state of a hold, on the same entity as its head arrow.
-#[derive(Component)]
+#[derive(Component, Clone, FromTemplate)]
 pub struct HoldVisual {
     pub end: Seconds,
     pub end_beat: Beat,
     pub state: HoldVisualState,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum HoldVisualState {
     /// Not yet stepped: scrolls by whole, inactive textures.
+    #[default]
     Pending,
     /// Stepped and satisfied: head pinned at the receptor, active textures.
     Held,
@@ -123,19 +131,29 @@ impl HoldVisualState {
     }
 }
 
-#[derive(Component)]
+#[derive(Component, Clone, FromTemplate)]
 pub struct HoldPart {
     pub head: Entity,
     pub piece: HoldPiece,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, FromTemplate)]
 pub enum HoldPiece {
+    #[default]
     Body,
     Cap,
 }
 
-#[derive(Component)]
+impl From<HoldPiece> for HoldPieceTemplate {
+    fn from(piece: HoldPiece) -> Self {
+        match piece {
+            HoldPiece::Body => HoldPieceTemplate::Body,
+            HoldPiece::Cap => HoldPieceTemplate::Cap,
+        }
+    }
+}
+
+#[derive(Component, Clone, FromTemplate)]
 pub struct MineNote {
     pub time: Seconds,
     pub beat: Beat,
@@ -196,80 +214,64 @@ impl SpawnedNote {
 pub fn spawn_receptors(commands: &mut Commands, skin: &ActiveNoteSkin) -> [Entity; 4] {
     std::array::from_fn(|column| {
         commands
-            .spawn((
-                Receptor {
-                    column,
-                    held: false,
-                    press: 0.0,
-                },
-                skin_sprite(skin, skin.receptor_frames[1], ARROW_SIZE),
-                Transform::from_xyz(column_x(column), TARGET_Y, 10.0)
-                    .with_rotation(column_rotation(column)),
-            ))
+            .spawn_scene(bsn! {
+                Receptor { column: column }
+                skin_sprite(skin, skin.receptor_frames[1], ARROW_SIZE)
+                oriented(column_x(column), TARGET_Y, 10.0, column_rotation(column))
+            })
             .id()
     })
 }
 
 pub fn spawn_note(commands: &mut Commands, skin: &ActiveNoteSkin, note: &NoteSpawn) -> SpawnedNote {
     let row = skin.quant_row(note.quant);
-    let visual = match note.end {
-        Some(_) => ArrowVisual::HoldHead { skin_row: row },
-        None => ArrowVisual::Tap {
-            first_frame: skin.tap_base(row),
-        },
+    let time = note.time;
+    let beat = note.beat;
+    let translation = Vec3::new(column_x(note.column), OFFSCREEN_Y, 20.0);
+    let rotation = column_rotation(note.column);
+    let head = match note.end {
+        None => {
+            let first_frame = skin.tap_base(row);
+            commands
+                .spawn_scene(bsn! {
+                    NoteArrow { time: time, beat: beat }
+                    TapAnimation { first_frame: first_frame }
+                    skin_sprite(skin, first_frame, ARROW_SIZE)
+                    oriented(translation.x, translation.y, translation.z, rotation)
+                })
+                .id()
+        }
+        Some((end, end_beat)) => commands
+            .spawn_scene(bsn! {
+                NoteArrow { time: time, beat: beat }
+                HoldHeadSprite { skin_row: row }
+                HoldVisual { end: {end}, end_beat: {end_beat} }
+                skin_sprite(skin, skin.hold_head(row, false), ARROW_SIZE)
+                oriented(translation.x, translation.y, translation.z, rotation)
+            })
+            .id(),
     };
-    let sprite_index = match visual {
-        ArrowVisual::Tap { first_frame } => first_frame,
-        ArrowVisual::HoldHead { skin_row } => skin.hold_head(skin_row, false),
-    };
-    let mut head = commands.spawn((
-        NoteArrow {
-            time: note.time,
-            beat: note.beat,
-        },
-        visual,
-        skin_sprite(skin, sprite_index, ARROW_SIZE),
-        Transform::from_xyz(column_x(note.column), OFFSCREEN_Y, 20.0)
-            .with_rotation(column_rotation(note.column)),
-    ));
-    if let Some((end, end_beat)) = note.end {
-        head.insert(HoldVisual {
-            end,
-            end_beat,
-            state: HoldVisualState::Pending,
-        });
-    }
-    let head = head.id();
 
     let mut parts = Vec::new();
     if note.end.is_some() {
         let x = column_x(note.column);
+        let body = skin.hold_body_inactive.clone();
         parts.push(
             commands
-                .spawn((
-                    HoldPart {
-                        head,
-                        piece: HoldPiece::Body,
-                    },
-                    Sprite {
-                        image: skin.hold_body_inactive.clone(),
-                        custom_size: Some(Vec2::ZERO),
-                        ..default()
-                    },
-                    Transform::from_xyz(x, OFFSCREEN_Y, 18.0),
-                ))
+                .spawn_scene(bsn! {
+                    HoldPart { head: {head}, piece: HoldPiece::Body }
+                    Sprite { image: {body}, custom_size: {Some(Vec2::ZERO)} }
+                    at(x, OFFSCREEN_Y, 18.0)
+                })
                 .id(),
         );
         parts.push(
             commands
-                .spawn((
-                    HoldPart {
-                        head,
-                        piece: HoldPiece::Cap,
-                    },
-                    skin_sprite(skin, skin.hold_cap_inactive, ARROW_SIZE),
-                    Transform::from_xyz(x, OFFSCREEN_Y, 18.2),
-                ))
+                .spawn_scene(bsn! {
+                    HoldPart { head: {head}, piece: HoldPiece::Cap }
+                    skin_sprite(skin, skin.hold_cap_inactive, ARROW_SIZE)
+                    at(x, OFFSCREEN_Y, 18.2)
+                })
                 .id(),
         );
     }
@@ -285,11 +287,11 @@ pub fn spawn_mine(
     column: usize,
 ) -> Entity {
     commands
-        .spawn((
-            MineNote { time, beat },
-            skin_sprite(skin, skin.mine, ARROW_SIZE),
-            Transform::from_xyz(column_x(column), OFFSCREEN_Y, 20.0),
-        ))
+        .spawn_scene(bsn! {
+            MineNote { time: time, beat: beat }
+            skin_sprite(skin, skin.mine, ARROW_SIZE)
+            at(column_x(column), OFFSCREEN_Y, 20.0)
+        })
         .id()
 }
 
@@ -299,23 +301,23 @@ pub fn spawn_mine_explosion(
     column: usize,
 ) -> Entity {
     commands
-        .spawn((
-            FadeOut::growing(MINE_EXPLOSION_SECONDS),
-            skin_sprite(skin, skin.mine_explosion, ARROW_SIZE * 1.7),
-            Transform::from_xyz(column_x(column), TARGET_Y, 21.0),
-        ))
+        .spawn_scene(bsn! {
+            skin_sprite(skin, skin.mine_explosion, ARROW_SIZE * 1.7)
+            at(column_x(column), TARGET_Y, 21.0)
+        })
+        .insert(FadeOut::growing(MINE_EXPLOSION_SECONDS))
         .id()
 }
 
-pub fn skin_sprite(skin: &ActiveNoteSkin, index: usize, size: f32) -> Sprite {
-    Sprite {
-        image: skin.sheet.clone(),
-        texture_atlas: Some(TextureAtlas {
-            layout: skin.layout.clone(),
-            index,
-        }),
-        custom_size: Some(Vec2::splat(size)),
-        ..default()
+pub fn skin_sprite(skin: &ActiveNoteSkin, index: usize, size: f32) -> impl Scene {
+    let image = skin.sheet.clone();
+    let rect = Some(skin.frame(index));
+    bsn! {
+        Sprite {
+            image: {image},
+            rect: {rect},
+            custom_size: {Some(Vec2::splat(size))},
+        }
     }
 }
 
@@ -347,7 +349,9 @@ impl Plugin for NoteFieldPlugin {
             Update,
             (
                 scroll_arrows,
-                animate_skin_frames,
+                animate_tap_frames,
+                animate_hold_heads,
+                animate_receptor_frames,
                 animate_receptor_press,
                 animate_hold_parts,
                 animate_mines,
@@ -381,33 +385,40 @@ fn scroll_arrows(
     }
 }
 
-fn animate_skin_frames(
+fn animate_tap_frames(
     clock: Res<NoteFieldClock>,
     skin: Res<ActiveNoteSkin>,
-    mut arrows: Query<(&ArrowVisual, Option<&HoldVisual>, &mut Sprite)>,
-    mut receptors: Query<&mut Sprite, (With<Receptor>, Without<ArrowVisual>)>,
+    mut taps: Query<(&TapAnimation, &mut Sprite)>,
 ) {
-    let beat = clock.beat();
-    let cycle = beat.rem_euclid(skin.tap_beats_per_cycle) / skin.tap_beats_per_cycle;
+    let cycle = clock.beat().rem_euclid(skin.tap_beats_per_cycle) / skin.tap_beats_per_cycle;
     let frame = ((cycle * skin.tap_frames as f64) as usize).min(skin.tap_frames - 1);
-    for (visual, hold, mut sprite) in &mut arrows {
-        let index = match visual {
-            ArrowVisual::Tap { first_frame } => first_frame + frame,
-            ArrowVisual::HoldHead { skin_row } => {
-                let active = hold.is_some_and(|hold| hold.state.active());
-                skin.hold_head(*skin_row, active)
-            }
-        };
-        set_atlas_index(&mut sprite, index);
+    for (tap, mut sprite) in &mut taps {
+        set_rect(&mut sprite, Some(skin.frame(tap.first_frame + frame)));
     }
+}
 
-    let receptor_frame = if beat.rem_euclid(1.0) < skin.receptor_beat_split {
+fn animate_hold_heads(
+    skin: Res<ActiveNoteSkin>,
+    mut heads: Query<(&HoldHeadSprite, &HoldVisual, &mut Sprite)>,
+) {
+    for (head, hold, mut sprite) in &mut heads {
+        let index = skin.hold_head(head.skin_row, hold.state.active());
+        set_rect(&mut sprite, Some(skin.frame(index)));
+    }
+}
+
+fn animate_receptor_frames(
+    clock: Res<NoteFieldClock>,
+    skin: Res<ActiveNoteSkin>,
+    mut receptors: Query<&mut Sprite, With<Receptor>>,
+) {
+    let receptor_frame = if clock.beat().rem_euclid(1.0) < skin.receptor_beat_split {
         skin.receptor_frames[0]
     } else {
         skin.receptor_frames[1]
     };
     for mut sprite in &mut receptors {
-        set_atlas_index(&mut sprite, receptor_frame);
+        set_rect(&mut sprite, Some(skin.frame(receptor_frame)));
     }
 }
 
@@ -527,7 +538,7 @@ fn animate_hold_parts(
                 } else {
                     skin.hold_cap_inactive
                 };
-                set_atlas_index(&mut sprite, index);
+                let frame = skin.frame(index);
                 // Clipped at the head's center; the bottom of the texture
                 // stays, so the tail keeps its tip.
                 let top = body_bottom.min(head_y);
@@ -537,15 +548,13 @@ fn animate_hold_parts(
                     visibility.set_if_neq(Visibility::Hidden);
                     continue;
                 }
-                let rect = (visible < cap_height).then(|| {
-                    Rect::new(
-                        0.0,
-                        skin.hold_cap_size.y - visible / scale,
-                        skin.hold_cap_size.x,
-                        skin.hold_cap_size.y,
-                    )
-                });
-                set_rect(&mut sprite, rect);
+                let rect = Rect::new(
+                    frame.min.x,
+                    frame.min.y + (skin.hold_cap_size.y - visible / scale).max(0.0),
+                    frame.max.x,
+                    frame.max.y,
+                );
+                set_rect(&mut sprite, Some(rect));
                 sprite.custom_size = Some(Vec2::new(ARROW_SIZE, visible));
                 transform.translation.y = bottom + visible / 2.0;
                 visibility.set_if_neq(Visibility::Visible);
@@ -610,17 +619,6 @@ fn fade_out(time: Res<Time>, mut commands: Commands, mut fading: Query<FadingVis
 
 // The setters below assign only on change, so unchanged entities don't get
 // flagged for re-extraction every frame; `set_if_neq` covers `Visibility`.
-
-fn set_atlas_index(sprite: &mut Mut<Sprite>, index: usize) {
-    if sprite
-        .texture_atlas
-        .as_ref()
-        .is_some_and(|atlas| atlas.index != index)
-        && let Some(atlas) = &mut sprite.texture_atlas
-    {
-        atlas.index = index;
-    }
-}
 
 fn set_rect(sprite: &mut Mut<Sprite>, rect: Option<Rect>) {
     if sprite.rect != rect {

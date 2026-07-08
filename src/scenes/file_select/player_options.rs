@@ -1,10 +1,12 @@
 use super::{FileSelectMode, STATS_TEXT, STEPFILE_TEXT};
+use crate::core::at;
 use crate::core::config::GameConfig;
-use crate::core::font::GameFont;
+use crate::core::font::game_font;
 use crate::core::input::{Actions, GameAction, NavPulse};
 use crate::core::menu::{ACTIVE_COLOR, INACTIVE_COLOR, TITLE_COLOR};
 use crate::core::note_field::NoteSpeed;
 use crate::core::note_skin::NoteSkinLibrary;
+use crate::core::scene_flow::SpawnScoped;
 use crate::core::settings::Settings;
 use crate::core::sfx::{PlaySfx, Sfx};
 use crate::scenes::GameScene;
@@ -41,143 +43,112 @@ pub(super) fn plugin(app: &mut App) {
 /// them in from opposite directions.
 fn enter(
     mut commands: Commands,
-    font: Res<GameFont>,
     settings: Res<Settings>,
     config: Res<GameConfig>,
     skins: Res<NoteSkinLibrary>,
 ) {
-    commands
-        .spawn((
-            DespawnOnExit(FileSelectMode::PlayerOptions),
-            ActiveRow(0),
-            ModalTransition { t: 0.0, dir: 1.0 },
-            Node {
-                width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
-                flex_direction: FlexDirection::Column,
-                justify_content: JustifyContent::Center,
-                ..default()
-            },
-        ))
-        .with_children(|screen| {
-            screen
-                .spawn(Node {
-                    width: Val::Percent(100.0),
-                    ..default()
-                })
-                .with_children(|stripe| {
-                    stripe.spawn((
-                        ModalBackground,
+    let rows: Vec<_> = (0..OptionRow::COUNT)
+        .map(|index| {
+            let (values, selected) = row_values(row(index), &settings, &config, &skins);
+            let label: &str = row(index).into();
+            let values = value_scenes(index, values);
+            bsn! {
+                Node { column_gap: px(24), align_items: AlignItems::Center }
+                Children [
+                    (
+                        Node { width: px(240) }
+                        Children [(
+                            RowText(index)
+                            game_font(28.0)
+                            Text({label.to_string()})
+                            TextColor({INACTIVE_COLOR})
+                        )]
+                    ),
+                    (
+                        RowValues(index)
+                        Node { column_gap: px(22), align_items: AlignItems::Center }
+                        Children [ {values} ]
+                    ),
+                    (
+                        Underline { row: index, target: selected }
                         Node {
                             position_type: PositionType::Absolute,
-                            left: Val::Percent(-100.0),
-                            top: Val::Px(0.0),
-                            bottom: Val::Px(0.0),
-                            width: Val::Percent(100.0),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.0)),
-                    ));
-                    stripe
-                        .spawn((
-                            ModalContent,
-                            Node {
-                                width: Val::Percent(100.0),
-                                left: Val::Percent(100.0),
-                                flex_direction: FlexDirection::Column,
-                                align_items: AlignItems::Center,
-                                padding: UiRect::vertical(Val::Px(28.0)),
-                                row_gap: Val::Px(14.0),
-                                ..default()
-                            },
-                        ))
-                        .with_children(|content| {
-                            content.spawn((
-                                Text::new("Player Options"),
-                                font.sized(52.0),
-                                TextColor(TITLE_COLOR),
-                                Node {
-                                    margin: UiRect::bottom(Val::Px(24.0)),
-                                    ..default()
-                                },
-                            ));
-                            for index in 0..OptionRow::COUNT {
-                                let (values, selected) =
-                                    row_values(row(index), &settings, &config, &skins);
-                                content
-                                    .spawn(Node {
-                                        column_gap: Val::Px(24.0),
-                                        align_items: AlignItems::Center,
-                                        ..default()
-                                    })
-                                    .with_children(|option| {
-                                        spawn_option_row(option, &font, index, values, selected);
-                                    });
-                            }
-                        });
-                });
-        });
-}
-
-fn spawn_option_row(
-    option: &mut ChildSpawnerCommands,
-    font: &GameFont,
-    index: usize,
-    values: Vec<String>,
-    selected: usize,
-) {
-    let label: &str = row(index).into();
-    option
-        .spawn(Node {
-            width: Val::Px(240.0),
-            ..default()
+                            left: px(0),
+                            bottom: px(-2),
+                            width: px(0),
+                            height: px(4),
+                            border_radius: {BorderRadius::all(Val::Px(2.0))},
+                        }
+                        BackgroundColor({STEPFILE_TEXT})
+                    ),
+                ]
+            }
         })
-        .with_children(|cell| {
-            cell.spawn((
-                RowText(index),
-                Text::new(label),
-                font.sized(28.0),
-                TextColor(INACTIVE_COLOR),
-            ));
-        });
-    option
-        .spawn((
-            RowValues(index),
+        .collect();
+    commands.spawn_scoped(
+        FileSelectMode::PlayerOptions,
+        bsn! {
+            ActiveRow(0)
+            ModalTransition { t: 0.0, dir: 1.0 }
             Node {
-                column_gap: Val::Px(22.0),
-                align_items: AlignItems::Center,
-                ..default()
-            },
-        ))
-        .with_children(|list| spawn_values(list, font, index, values));
-    option.spawn((
-        Underline {
-            row: index,
-            target: selected,
-            current: None,
+                width: percent(100),
+                height: percent(100),
+                flex_direction: FlexDirection::Column,
+                justify_content: JustifyContent::Center,
+            }
+            Children [(
+                Node { width: percent(100) }
+                Children [
+                    (
+                        ModalBackground
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: percent(-100),
+                            top: px(0),
+                            bottom: px(0),
+                            width: percent(100),
+                        }
+                        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.0))
+                    ),
+                    (
+                        ModalContent
+                        Node {
+                            width: percent(100),
+                            left: percent(100),
+                            flex_direction: FlexDirection::Column,
+                            align_items: AlignItems::Center,
+                            padding: {UiRect::vertical(Val::Px(28.0))},
+                            row_gap: px(14),
+                        }
+                        Children [
+                            (
+                                game_font(52.0)
+                                Text("Player Options")
+                                TextColor({TITLE_COLOR})
+                                Node { margin: {UiRect::bottom(Val::Px(24.0))} }
+                            ),
+                            {rows},
+                        ]
+                    ),
+                ]
+            )]
         },
-        Node {
-            position_type: PositionType::Absolute,
-            left: Val::Px(0.0),
-            bottom: Val::Px(-2.0),
-            width: Val::Px(0.0),
-            height: Val::Px(4.0),
-            border_radius: BorderRadius::all(Val::Px(2.0)),
-            ..default()
-        },
-        BackgroundColor(STEPFILE_TEXT),
-    ));
+    );
 }
 
-fn spawn_values(list: &mut ChildSpawnerCommands, font: &GameFont, row: usize, values: Vec<String>) {
-    for (index, value) in values.into_iter().enumerate() {
-        list.spawn((
-            ValueText { row, index },
-            Text::new(value),
-            font.sized(28.0),
-            TextColor(INACTIVE_COLOR),
-        ));
-    }
+fn value_scenes(row: usize, values: Vec<String>) -> Vec<impl Scene> {
+    values
+        .into_iter()
+        .enumerate()
+        .map(move |(index, value)| {
+            bsn! {
+                ValueText { row: row, index: index }
+                game_font(28.0)
+                Text({value})
+                TextColor({INACTIVE_COLOR})
+            }
+        })
+        .collect()
 }
 
 fn handle_pulses(
@@ -231,31 +202,46 @@ fn handle_close(
     }
 }
 
-/// The value lists depend on the settings (the modifier list follows the
-/// speed type), so they are respawned whenever the settings change.
+/// The type and skin lists never change after enter; only the modifier
+/// list does, and only when the speed type flips. That one respawn happens
+/// in a single command batch — a queued spawn would leave the row empty
+/// for a frame and make the centered layout jump.
 fn rebuild_value_lists(
     settings: Res<Settings>,
     config: Res<GameConfig>,
     skins: Res<NoteSkinLibrary>,
-    font: Res<GameFont>,
     containers: Query<(Entity, &RowValues)>,
     mut underlines: Query<&mut Underline>,
+    mut last_dynamic: Local<Option<bool>>,
     mut commands: Commands,
 ) {
     if !settings.is_changed() {
         return;
     }
-    for (container, marker) in &containers {
-        let (values, selected) = row_values(row(marker.0), &settings, &config, &skins);
+    for (_, marker) in &containers {
+        let (_, selected) = row_values(row(marker.0), &settings, &config, &skins);
         for mut underline in &mut underlines {
             if underline.row == marker.0 {
                 underline.target = selected;
             }
         }
+    }
+
+    let dynamic = matches!(settings.stepfile.note_speed, NoteSpeed::Dynamic(_));
+    let type_changed = last_dynamic.is_some_and(|last| last != dynamic);
+    *last_dynamic = Some(dynamic);
+    if !type_changed {
+        return;
+    }
+    for (container, marker) in &containers {
+        if row(marker.0) != OptionRow::SpeedModifier {
+            continue;
+        }
+        let (values, _) = row_values(row(marker.0), &settings, &config, &skins);
         commands.entity(container).despawn_related::<Children>();
-        commands
-            .entity(container)
-            .with_children(|list| spawn_values(list, &font, marker.0, values));
+        for scene in value_scenes(marker.0, values) {
+            commands.spawn_scene(scene).insert(ChildOf(container));
+        }
     }
 }
 
@@ -368,19 +354,21 @@ fn animate_transition(
 fn refresh_summary(
     settings: Res<Settings>,
     skins: Res<NoteSkinLibrary>,
-    font: Res<GameFont>,
     text: Option<Single<&mut Text2d, With<OptionsSummary>>>,
     mut commands: Commands,
 ) {
     let Some(mut text) = text else {
-        commands.spawn((
-            DespawnOnExit(GameScene::FileSelect),
-            OptionsSummary,
-            Text2d::new(summary(&settings, &skins)),
-            font.sized(22.0),
-            TextColor(STATS_TEXT),
-            Transform::from_xyz(-320.0, -150.0, 5.0),
-        ));
+        let line = summary(&settings, &skins);
+        commands.spawn_scoped(
+            GameScene::FileSelect,
+            bsn! {
+                OptionsSummary
+                game_font(22.0)
+                Text2d({line})
+                TextColor({STATS_TEXT})
+                at(-320.0, -150.0, 5.0)
+            },
+        );
         return;
     };
     if settings.is_changed() {
@@ -425,12 +413,12 @@ fn row(index: usize) -> OptionRow {
     OptionRow::iter().nth(index).expect("row index is wrapped")
 }
 
-#[derive(Component)]
+#[derive(Component, Clone, FromTemplate)]
 struct ActiveRow(usize);
 
 /// `t` runs 0..=1 through the open/close effect; `dir` is +1 while opening
 /// and -1 while closing.
-#[derive(Component)]
+#[derive(Component, Clone, FromTemplate)]
 struct ModalTransition {
     t: f32,
     dir: f32,
@@ -438,33 +426,33 @@ struct ModalTransition {
 
 const TRANSITION_SECONDS: f32 = 0.25;
 
-#[derive(Component)]
+#[derive(Component, Default, Clone)]
 struct ModalBackground;
 
-#[derive(Component)]
+#[derive(Component, Default, Clone)]
 struct ModalContent;
 
-#[derive(Component)]
+#[derive(Component, Clone, FromTemplate)]
 struct RowText(usize);
 
-#[derive(Component)]
+#[derive(Component, Clone, FromTemplate)]
 struct RowValues(usize);
 
-#[derive(Component)]
+#[derive(Component, Clone, FromTemplate)]
 struct ValueText {
     row: usize,
     index: usize,
 }
 
 /// One per option row; [`animate_underline`] tweens it to the selected value.
-#[derive(Component)]
+#[derive(Component, Clone, FromTemplate)]
 struct Underline {
     row: usize,
     target: usize,
     current: Option<Vec2>,
 }
 
-#[derive(Component)]
+#[derive(Component, Default, Clone)]
 struct OptionsSummary;
 
 /// Steps the row's value; the ends do not wrap. Switching the speed type
