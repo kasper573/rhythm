@@ -2,6 +2,7 @@ mod info_panel;
 mod player_options;
 mod preview;
 
+use crate::core::assets::asset_server_path;
 use crate::core::config::GameConfig;
 use crate::core::font::game_font;
 use crate::core::high_scores::{HighScores, highscore_key};
@@ -11,12 +12,12 @@ use crate::core::scene_flow::SpawnScoped;
 use crate::core::sfx::{PlaySfx, Sfx};
 use crate::core::stepfile::{Difficulty, Stepfile, StepsType};
 use crate::core::units::Seconds;
-use crate::core::{SCREEN_SIZE, at};
+use crate::core::{SCREEN_SIZE, ViewportCover, at};
 use crate::scenes::{GameScene, SceneFade, scene_accepts_input};
 use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use bevy::sprite::Anchor;
+use bevy::sprite::{Anchor, SpriteImageMode, SpriteScalingMode};
 
 /// The file player scene's entry param.
 #[derive(Resource, Debug, Clone, Copy)]
@@ -68,10 +69,13 @@ impl Plugin for FileSelectPlugin {
                         cancel,
                     )
                         .run_if(scene_accepts_input.and_then(in_state(FileSelectMode::Browse))),
+                    fit_wheel_rows,
                     animate_wheel,
                     pin_rating_column,
                     // The refreshers all observe `Wheel::dirty`; the info
                     // panel runs last and clears it.
+                    refresh_scene_background,
+                    fade_scene_background,
                     refresh_wheel_rows,
                     refresh_wheel_ratings,
                     info_panel::refresh_info_panel,
@@ -100,8 +104,6 @@ impl Default for PreferredDifficulty {
     }
 }
 
-const SLOTS: usize = 13;
-const CENTER: usize = SLOTS / 2;
 const ROW_HEIGHT: f32 = 56.0;
 const BAR_WIDTH: f32 = 660.0;
 const BAR_HEIGHT: f32 = 50.0;
@@ -109,7 +111,7 @@ const BAR_HEIGHT: f32 = 50.0;
 const WHEEL_X: f32 = 330.0;
 /// Rows shift right as they leave the center, curving the wheel.
 const BULGE_PER_ROW: f32 = 3.0;
-const BANNER_SIZE: Vec2 = Vec2::new(500.0, 156.0);
+const BANNER_SIZE: Vec2 = Vec2::new(DETAILS_BOX_SIZE.x, 168.0);
 /// On-screen height of the wheel's rating images (native art is 120px).
 const RATING_HEIGHT: f32 = 38.0;
 /// Right edge of the rating column in row-local coordinates at zero
@@ -135,6 +137,9 @@ const HELP_TEXT: Color = Color::srgb(0.5, 0.62, 0.5);
 struct Wheel {
     entries: Vec<WheelEntry>,
     active: usize,
+    /// Spawned row slots; enough to fill the window's visible height,
+    /// recomputed by [`fit_wheel_rows`] when that changes.
+    slots: usize,
     /// Rows of visual displacement remaining from recent navigation; eased
     /// back to zero every frame so the active item spins into the center.
     scroll_offset: f32,
@@ -156,6 +161,32 @@ struct WheelSlot(usize);
 #[derive(Component, Default, Clone)]
 struct SlotRoot;
 
+/// One layer of the scene background wash: the active stepfile's
+/// background image over the green backdrop. Changing rows cross-fades:
+/// the incoming layer waits invisible until its image has actually
+/// loaded, then retires every older layer while it eases in — so the old
+/// background always fades under a renderable new one, never against a
+/// gap that the late-loading image would pop into.
+#[derive(Component, Clone, FromTemplate)]
+struct SceneBackground {
+    /// The opacity this layer eases toward; reaching zero retires it.
+    target: f32,
+    /// Spawn order; the newest layer leads and retires the older ones.
+    sequence: u32,
+}
+
+const BACKGROUND_OPACITY: f32 = 0.25;
+/// The contrast box behind the stepfile details column. The banner sits
+/// flush against its top and sides; only the content below is padded.
+const DETAILS_BOX_SIZE: Vec2 = Vec2::new(540.0, 530.0);
+const DETAILS_BOX_CENTER: Vec2 = Vec2::new(-320.0, 12.0);
+/// Composites like a 50% black overlay: blending happens on linear color,
+/// so matching an sRGB-space half-black needs `1 - 0.5^2.2`.
+const DETAILS_BOX_ALPHA: f32 = 0.78;
+/// The wheel's exponential settle rate, shared by the background
+/// cross-fade so both animations move in lockstep.
+const WHEEL_EASE_RATE: f32 = 14.0;
+
 #[derive(Component, Default, Clone)]
 struct SlotTitle;
 
@@ -171,6 +202,7 @@ fn enter(
     library: Res<StepfileLibrary>,
     config: Res<GameConfig>,
     target: Option<Res<FileSelectTarget>>,
+    windows: Query<&Window>,
     mut images: ResMut<Assets<Image>>,
 ) {
     // Only the target row's group starts expanded.
@@ -207,59 +239,34 @@ fn enter(
     commands.spawn_scoped(
         GameScene::FileSelect,
         bsn! {
+            ViewportCover
             Sprite {
                 color: {BACKDROP_COLOR},
                 custom_size: {Some(SCREEN_SIZE)},
             }
         },
     );
+    let details_box = images.add(rounded_image(
+        DETAILS_BOX_SIZE.x as u32,
+        DETAILS_BOX_SIZE.y as u32,
+        5.0,
+        None,
+    ));
+    commands.spawn_scoped(
+        GameScene::FileSelect,
+        bsn! {
+            Sprite {
+                image: {details_box},
+                color: {Color::srgba(0.0, 0.0, 0.0, DETAILS_BOX_ALPHA)},
+                custom_size: {Some(DETAILS_BOX_SIZE)},
+            }
+            at(DETAILS_BOX_CENTER.x, DETAILS_BOX_CENTER.y, 4.5)
+        },
+    );
 
-    for slot in 0..SLOTS {
-        let bar = bar_image.clone();
-        commands.spawn_scoped(
-            GameScene::FileSelect,
-            bsn! {
-                WheelSlot(slot)
-                SlotRoot
-                Sprite {
-                    image: {bar},
-                    color: {STEPFILE_BAR},
-                    custom_size: {Some(Vec2::new(BAR_WIDTH, BAR_HEIGHT))},
-                }
-                at(slot_x(slot, 0.0), slot_y(slot, 0.0), 10.0)
-                Children [
-                    (
-                        WheelSlot(slot)
-                        SlotTitle
-                        game_font(26.0)
-                        Text2d("")
-                        TextColor({STEPFILE_TEXT})
-                        Anchor({Anchor::CENTER_LEFT.0})
-                        at(-BAR_WIDTH / 2.0 + 26.0, 9.0, 0.1)
-                    ),
-                    (
-                        WheelSlot(slot)
-                        SlotArtist
-                        game_font(17.0)
-                        Text2d("")
-                        TextColor({ARTIST_TEXT})
-                        Anchor({Anchor::CENTER_LEFT.0})
-                        at(-BAR_WIDTH / 2.0 + 60.0, -15.0, 0.1)
-                    ),
-                    (
-                        WheelSlot(slot)
-                        SlotRating
-                        Sprite
-                        Anchor({Anchor::CENTER_RIGHT.0})
-                        Visibility::Hidden
-                        Transform {
-                            translation: {Vec3::new(RATING_RIGHT_X, 0.0, 0.1)},
-                            scale: {Vec3::splat(RATING_HEIGHT / 120.0)},
-                        }
-                    ),
-                ]
-            },
-        );
+    let slots = windows.single().map(slots_for).unwrap_or(13);
+    for slot in 0..slots {
+        spawn_slot(&mut commands, slot, slots, bar_image.clone());
     }
 
     // The active-row frame: a fixed overlay over the center slot that rows
@@ -308,6 +315,7 @@ fn enter(
     commands.insert_resource(Wheel {
         entries,
         active,
+        slots,
         scroll_offset: 0.0,
         expanded_group,
         bar_image,
@@ -489,14 +497,14 @@ fn animate_wheel(
     mut roots: Query<(&WheelSlot, &mut Transform), With<SlotRoot>>,
 ) {
     if wheel.scroll_offset != 0.0 {
-        wheel.scroll_offset *= (-14.0 * time.delta_secs()).exp();
+        wheel.scroll_offset *= (-WHEEL_EASE_RATE * time.delta_secs()).exp();
         if wheel.scroll_offset.abs() < 0.01 {
             wheel.scroll_offset = 0.0;
         }
     }
     for (slot, mut transform) in &mut roots {
-        transform.translation.x = slot_x(slot.0, wheel.scroll_offset);
-        transform.translation.y = slot_y(slot.0, wheel.scroll_offset);
+        transform.translation.x = slot_x(slot.0, wheel.slots, wheel.scroll_offset);
+        transform.translation.y = slot_y(slot.0, wheel.slots, wheel.scroll_offset);
     }
 }
 
@@ -505,7 +513,7 @@ fn pin_rating_column(
     mut ratings: Query<(&WheelSlot, &mut Transform), With<SlotRating>>,
 ) {
     for (slot, mut transform) in &mut ratings {
-        let bulge = slot_x(slot.0, wheel.scroll_offset) - WHEEL_X;
+        let bulge = slot_x(slot.0, wheel.slots, wheel.scroll_offset) - WHEEL_X;
         transform.translation.x = RATING_RIGHT_X - bulge;
     }
 }
@@ -536,7 +544,7 @@ fn refresh_wheel_rows(
         };
     }
     for mut title in &mut titles {
-        let is_center = title.slot.0 == CENTER;
+        let is_center = title.slot.0 == wheel.slots / 2;
         match slot_entry(&wheel, title.slot.0) {
             Some(WheelEntry::Group { index }) => {
                 let group = &library.groups[*index];
@@ -572,6 +580,102 @@ fn refresh_wheel_rows(
                 color.0 = ARTIST_TEXT;
             }
             _ => text.0 = String::new(),
+        }
+    }
+}
+
+fn refresh_scene_background(
+    wheel: Res<Wheel>,
+    library: Res<StepfileLibrary>,
+    asset_server: Res<AssetServer>,
+    mut layers: Query<(&mut SceneBackground, &Sprite)>,
+    mut commands: Commands,
+    mut layer_count: Local<u32>,
+) {
+    if !wheel.dirty {
+        return;
+    }
+    let path = match wheel.entries.get(wheel.active) {
+        Some(WheelEntry::Stepfile { id }) => library
+            .stepfile(*id)
+            .background_path()
+            .as_deref()
+            .and_then(asset_server_path),
+        _ => None,
+    };
+    let desired = path.map(|path| asset_server.load::<Image>(path));
+    let Some(handle) = desired else {
+        // Nothing incoming (a group row): fade everything out.
+        for (mut layer, _) in &mut layers {
+            layer.target = 0.0;
+        }
+        return;
+    };
+    let already_shown = layers
+        .iter()
+        .any(|(layer, sprite)| layer.target > 0.0 && sprite.image == handle);
+    if already_shown {
+        return;
+    }
+    // Newer layers draw above the ones fading out; the small cycling bump
+    // stays well below everything else in the scene.
+    *layer_count += 1;
+    let z = 0.5 + (*layer_count % 100) as f32 * 0.002;
+    let sequence = *layer_count;
+    commands.spawn_scoped(
+        GameScene::FileSelect,
+        bsn! {
+            SceneBackground { target: {BACKGROUND_OPACITY}, sequence: {sequence} }
+            ViewportCover
+            Sprite {
+                image: {handle},
+                color: Color::srgba(1.0, 1.0, 1.0, 0.0),
+                custom_size: {Some(SCREEN_SIZE)},
+                image_mode: {SpriteImageMode::Scale(SpriteScalingMode::FillCenter)},
+            }
+            at(0.0, 0.0, z)
+        },
+    );
+}
+
+/// Eases every background layer toward its target opacity at the wheel's
+/// settle rate and retires the fully faded-out ones. Layers whose image is
+/// still loading hold at zero: only a loaded layer may lead, and only the
+/// leader retires the layers beneath it.
+fn fade_scene_background(
+    time: Res<Time>,
+    images: Res<Assets<Image>>,
+    mut layers: Query<(Entity, &mut SceneBackground, &mut Sprite)>,
+    mut commands: Commands,
+) {
+    let leader = layers
+        .iter()
+        .filter(|(_, layer, sprite)| layer.target > 0.0 && images.contains(&sprite.image))
+        .max_by_key(|(_, layer, _)| layer.sequence)
+        .map(|(entity, layer, _)| (entity, layer.sequence));
+    if let Some((leader, leader_sequence)) = leader {
+        for (entity, mut layer, _) in &mut layers {
+            if entity != leader && layer.sequence < leader_sequence && layer.target > 0.0 {
+                layer.target = 0.0;
+            }
+        }
+    }
+
+    let ease = 1.0 - (-WHEEL_EASE_RATE * time.delta_secs()).exp();
+    for (entity, layer, mut sprite) in &mut layers {
+        if layer.target > 0.0 && !images.contains(&sprite.image) {
+            continue;
+        }
+        let alpha = sprite.color.alpha();
+        let mut next = alpha + (layer.target - alpha) * ease;
+        if (next - layer.target).abs() < 0.002 {
+            next = layer.target;
+        }
+        if next != alpha {
+            sprite.color.set_alpha(next);
+        }
+        if layer.target <= 0.0 && next <= 0.0 {
+            commands.entity(entity).despawn();
         }
     }
 }
@@ -626,14 +730,14 @@ fn high_score_rating(
     Some(config.rating(percent, None).image.clone())
 }
 
-fn slot_y(slot: usize, scroll_offset: f32) -> f32 {
-    (CENTER as f32 - slot as f32 + scroll_offset) * ROW_HEIGHT
+fn slot_y(slot: usize, slots: usize, scroll_offset: f32) -> f32 {
+    ((slots / 2) as f32 - slot as f32 + scroll_offset) * ROW_HEIGHT
 }
 
 /// Rows curve away to the right as they leave the center, like the visible
 /// edge of a wheel.
-fn slot_x(slot: usize, scroll_offset: f32) -> f32 {
-    let rows_from_center = CENTER as f32 - slot as f32 + scroll_offset;
+fn slot_x(slot: usize, slots: usize, scroll_offset: f32) -> f32 {
+    let rows_from_center = (slots / 2) as f32 - slot as f32 + scroll_offset;
     WHEEL_X + BULGE_PER_ROW * rows_from_center * rows_from_center
 }
 
@@ -642,8 +746,89 @@ fn slot_entry(wheel: &Wheel, slot: usize) -> Option<&WheelEntry> {
         return None;
     }
     let len = wheel.entries.len() as i64;
-    let index = (wheel.active as i64 + slot as i64 - CENTER as i64).rem_euclid(len);
+    let index = (wheel.active as i64 + slot as i64 - (wheel.slots / 2) as i64).rem_euclid(len);
     wheel.entries.get(index as usize)
+}
+
+/// Slots needed to fill the window's visible world height — the camera
+/// shows more than the canvas when the window is taller than 16:9 — plus
+/// one above and below so scrolling never reveals a gap, forced odd so a
+/// center slot exists.
+fn slots_for(window: &Window) -> usize {
+    let width = window.width().max(1.0);
+    let height = window.height().max(1.0);
+    let visible_height = height * (SCREEN_SIZE.x / width).max(SCREEN_SIZE.y / height);
+    ((visible_height / ROW_HEIGHT).ceil() as usize + 2) | 1
+}
+
+/// Respawns the wheel rows when the window's visible height changes how
+/// many are needed.
+fn fit_wheel_rows(
+    windows: Query<&Window, Changed<Window>>,
+    mut wheel: ResMut<Wheel>,
+    slot_roots: Query<Entity, With<SlotRoot>>,
+    mut commands: Commands,
+) {
+    let Ok(window) = windows.single() else { return };
+    let slots = slots_for(window);
+    if slots == wheel.slots {
+        return;
+    }
+    wheel.slots = slots;
+    wheel.dirty = true;
+    for entity in &slot_roots {
+        commands.entity(entity).despawn();
+    }
+    for slot in 0..slots {
+        spawn_slot(&mut commands, slot, slots, wheel.bar_image.clone());
+    }
+}
+
+fn spawn_slot(commands: &mut Commands, slot: usize, slots: usize, bar: Handle<Image>) {
+    commands.spawn_scoped(
+        GameScene::FileSelect,
+        bsn! {
+            WheelSlot(slot)
+            SlotRoot
+            Sprite {
+                image: {bar},
+                color: {STEPFILE_BAR},
+                custom_size: {Some(Vec2::new(BAR_WIDTH, BAR_HEIGHT))},
+            }
+            at(slot_x(slot, slots, 0.0), slot_y(slot, slots, 0.0), 10.0)
+            Children [
+                (
+                    WheelSlot(slot)
+                    SlotTitle
+                    game_font(26.0)
+                    Text2d("")
+                    TextColor({STEPFILE_TEXT})
+                    Anchor({Anchor::CENTER_LEFT.0})
+                    at(-BAR_WIDTH / 2.0 + 26.0, 9.0, 0.1)
+                ),
+                (
+                    WheelSlot(slot)
+                    SlotArtist
+                    game_font(17.0)
+                    Text2d("")
+                    TextColor({ARTIST_TEXT})
+                    Anchor({Anchor::CENTER_LEFT.0})
+                    at(-BAR_WIDTH / 2.0 + 60.0, -15.0, 0.1)
+                ),
+                (
+                    WheelSlot(slot)
+                    SlotRating
+                    Sprite
+                    Anchor({Anchor::CENTER_RIGHT.0})
+                    Visibility::Hidden
+                    Transform {
+                        translation: {Vec3::new(RATING_RIGHT_X, 0.0, 0.1)},
+                        scale: {Vec3::splat(RATING_HEIGHT / 120.0)},
+                    }
+                ),
+            ]
+        },
+    );
 }
 
 fn build_entries(library: &StepfileLibrary, expanded_group: Option<usize>) -> Vec<WheelEntry> {

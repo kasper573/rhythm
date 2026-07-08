@@ -10,8 +10,10 @@ use crate::core::note_field::NoteFieldPlugin;
 use crate::core::note_skin::NoteSkinPlugin;
 use crate::core::settings::SettingsPlugin;
 use crate::core::sfx::SfxPlugin;
-use crate::core::{CLEAR_COLOR, SCREEN_SIZE};
+use crate::core::{CLEAR_COLOR, SCREEN_SIZE, size_viewport_covers};
+use bevy::camera::ScalingMode;
 use bevy::prelude::*;
+use bevy::ui::UiScale;
 
 pub fn run() {
     let config = GameConfig::load();
@@ -56,10 +58,31 @@ pub fn run() {
             SfxPlugin,
             scenes::ScenesPlugin,
         ))
-        .add_systems(Startup, camera.spawn())
+        .add_systems(Startup, spawn_camera)
+        .add_systems(Update, (scale_ui_to_window, size_viewport_covers))
         .run();
 }
 
-fn camera() -> impl Scene {
-    bsn! { Camera2d }
+/// The game is designed on a fixed 1280x720 canvas and scales uniformly
+/// with the window: the camera keeps the whole canvas visible and the UI
+/// follows the same factor, so world and UI grow together. The axis the
+/// window has spare space on simply sees a little more room.
+fn spawn_camera(mut commands: Commands) {
+    commands
+        .spawn_scene(bsn! { Camera2d })
+        .insert(Projection::Orthographic(OrthographicProjection {
+            scaling_mode: ScalingMode::AutoMin {
+                min_width: SCREEN_SIZE.x,
+                min_height: SCREEN_SIZE.y,
+            },
+            ..OrthographicProjection::default_2d()
+        }));
+}
+
+fn scale_ui_to_window(windows: Query<&Window, Changed<Window>>, mut ui_scale: ResMut<UiScale>) {
+    let Ok(window) = windows.single() else { return };
+    let scale = (window.width() / SCREEN_SIZE.x).min(window.height() / SCREEN_SIZE.y);
+    if scale > 0.0 && ui_scale.0 != scale {
+        ui_scale.0 = scale;
+    }
 }

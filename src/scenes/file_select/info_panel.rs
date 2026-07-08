@@ -1,6 +1,6 @@
 use super::{
-    BANNER_SIZE, BANNER_TEXT, BANNER_TINT, BPM_TEXT, PreferredDifficulty, STATS_TEXT, Wheel,
-    WheelEntry, chart_for_preference,
+    BANNER_SIZE, BANNER_TEXT, BANNER_TINT, BPM_TEXT, DETAILS_BOX_CENTER, DETAILS_BOX_SIZE,
+    PreferredDifficulty, STATS_TEXT, Wheel, WheelEntry, chart_for_preference,
 };
 use crate::core::assets::asset_server_path;
 use crate::core::at;
@@ -11,6 +11,7 @@ use crate::core::stepfile::{Difficulty, DisplayBpm, Stepfile};
 use crate::core::units::Seconds;
 use crate::scenes::GameScene;
 use bevy::prelude::*;
+use bevy::sprite::{SpriteImageMode, SpriteScalingMode};
 
 #[derive(Component, Default, Clone)]
 pub(super) struct InfoPanel;
@@ -61,17 +62,32 @@ pub(super) fn refresh_info_panel(
         }
     };
 
-    let (image, tint, title) = match banner_path.as_deref().and_then(asset_server_path) {
-        Some(path) => (asset_server.load(path), Color::WHITE, None),
-        None => (wheel.bar_image.clone(), BANNER_TINT, Some(fallback_title)),
+    // Real banners cover the fixed rect like a CSS `object-fit: cover`
+    // image — scaled to fill, centered, overflow cropped, never stretched.
+    // The generated placeholder is made to stretch.
+    let (image, mode, tint, title) = match banner_path.as_deref().and_then(asset_server_path) {
+        Some(path) => (
+            asset_server.load(path),
+            SpriteImageMode::Scale(SpriteScalingMode::FillCenter),
+            Color::WHITE,
+            None,
+        ),
+        None => (
+            wheel.bar_image.clone(),
+            SpriteImageMode::Auto,
+            BANNER_TINT,
+            Some(fallback_title),
+        ),
     };
+    // The banner sits flush against the details box's top and sides.
+    let banner_y = DETAILS_BOX_CENTER.y + (DETAILS_BOX_SIZE.y - BANNER_SIZE.y) / 2.0;
     let title: Vec<_> = title
         .map(|title| {
             bsn! {
                 game_font(24.0)
                 Text2d({title})
                 TextColor({BANNER_TEXT})
-                at(0.0, 190.0, 0.5)
+                at(0.0, banner_y, 0.5)
             }
         })
         .into_iter()
@@ -106,8 +122,13 @@ pub(super) fn refresh_info_panel(
             Visibility::default()
             Children [
                 (
-                    Sprite { image: {image}, color: {tint}, custom_size: {Some(BANNER_SIZE)} }
-                    at(0.0, 190.0, 0.0)
+                    Sprite {
+                        image: {image},
+                        color: {tint},
+                        custom_size: {Some(BANNER_SIZE)},
+                        image_mode: {mode},
+                    }
+                    at(0.0, banner_y, 0.0)
                 ),
                 {title},
                 (

@@ -6,9 +6,10 @@ use crate::core::settings::Settings;
 use crate::core::stepfile::StepfileTiming;
 use crate::core::units::Seconds;
 use crate::core::video::VideoStream;
-use crate::core::{SCREEN_SIZE, at};
+use crate::core::{SCREEN_SIZE, ViewportCover, at};
 use crate::scenes::GameScene;
 use bevy::prelude::*;
+use bevy::sprite::{SpriteImageMode, SpriteScalingMode};
 use std::path::{Path, PathBuf};
 
 pub(super) fn plugin(app: &mut App) {
@@ -57,10 +58,12 @@ pub(super) fn spawn_background(
         GameScene::FilePlayer,
         bsn! {
             BackgroundLayer
+            ViewportCover
             Sprite {
                 // Dimmed so arrows and text stay readable in front of it.
                 color: Color::srgb(0.5, 0.5, 0.5),
                 custom_size: {Some(SCREEN_SIZE)},
+                image_mode: {SpriteImageMode::Scale(SpriteScalingMode::FillCenter)},
             }
             Visibility::Hidden
         },
@@ -165,18 +168,17 @@ fn start_video(
     }
     match VideoStream::open(path, start_time, images) {
         Ok(stream) => {
-            let scale =
-                (SCREEN_SIZE.x / stream.width as f32).min(SCREEN_SIZE.y / stream.height as f32);
-            let size = Vec2::new(stream.width as f32, stream.height as f32) * scale;
             let image = stream.image.clone();
             commands
                 .spawn_scoped(
                     GameScene::FilePlayer,
                     bsn! {
+                        ViewportCover
                         Sprite {
                             image: {image},
                             color: Color::srgb(0.6, 0.6, 0.6),
-                            custom_size: {Some(size)},
+                            custom_size: {Some(SCREEN_SIZE)},
+                            image_mode: {SpriteImageMode::Scale(SpriteScalingMode::FillCenter)},
                         }
                         at(0.0, 0.0, 0.5)
                     },
