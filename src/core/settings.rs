@@ -1,7 +1,7 @@
 use crate::core::config::StepfileOptions;
 use crate::core::input::Keymap;
 use crate::core::persist::{load_user_data, save_user_data};
-use crate::core::units::Millis;
+use crate::core::units::{Millis, Seconds};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -37,6 +37,22 @@ pub struct TimingSettings {
 impl TimingSettings {
     pub fn audio_latency(&self) -> Millis {
         self.audio_latency.unwrap_or(Millis(0))
+    }
+
+    /// What the speakers are playing right now, given the mixer's queue
+    /// position.
+    pub fn heard(&self, position: Seconds) -> Seconds {
+        position - self.audio_latency().to_seconds()
+    }
+
+    /// The timeline inputs are graded on.
+    pub fn graded(&self, position: Seconds) -> Seconds {
+        self.heard(position) + self.machine_offset.to_seconds()
+    }
+
+    /// The timeline everything is drawn on.
+    pub fn visible(&self, position: Seconds) -> Seconds {
+        self.graded(position) - self.visual_delay.to_seconds()
     }
 }
 

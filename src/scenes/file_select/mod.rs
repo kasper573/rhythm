@@ -72,6 +72,7 @@ impl Plugin for FileSelectPlugin {
                     fit_wheel_rows,
                     animate_wheel,
                     pin_rating_column,
+                    preview::pulse_active_row,
                     // The refreshers all observe `Wheel::dirty`; the info
                     // panel runs last and clears it.
                     refresh_scene_background,
@@ -160,6 +161,11 @@ struct WheelSlot(usize);
 
 #[derive(Component, Default, Clone)]
 struct SlotRoot;
+
+/// The frame over the center slot; its opacity pulses with the preview
+/// music's beat.
+#[derive(Component, Default, Clone)]
+struct ActiveRowHighlight;
 
 /// One layer of the scene background wash: the active stepfile's
 /// background image over the green backdrop. Changing rows cross-fades:
@@ -281,6 +287,7 @@ fn enter(
     commands.spawn_scoped(
         GameScene::FileSelect,
         bsn! {
+            ActiveRowHighlight
             Sprite {
                 image: {overlay_image},
                 color: {BORDER_COLOR},

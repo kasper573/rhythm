@@ -5,6 +5,7 @@ mod visuals;
 
 use crate::core::assets::{asset_root, asset_server_path};
 use crate::core::at;
+use crate::core::audio_clock::AudioClock;
 use crate::core::config::{GameConfig, RowOutcome};
 use crate::core::font::game_font;
 use crate::core::health_vial::{HealthVialMaterial, spawn_health_vial};
@@ -143,12 +144,12 @@ pub(super) struct PlaySession {
     pub autosync: AutoSync,
 }
 
-/// The audio-clock servo state, advanced by the [`clock`] module.
+/// The session's playback timeline, advanced by the [`clock`] module: the
+/// lead-in phase, the servo'd position, and the state for the first-play
+/// audio latency measurement.
 pub(super) struct PlaybackClock {
     pub phase: PlayPhase,
-    /// Raw playback time as the audio mixer reports it (queue position).
-    pub position: Seconds,
-    pub last_sink_position: Seconds,
+    pub servo: AudioClock,
     /// Wall-clock time since the tracks were started, for measuring how far
     /// the mixer's queue runs ahead of real time (the audio latency).
     pub wall_since_play: Seconds,
@@ -169,19 +170,12 @@ pub(super) struct AutoSync {
 }
 
 impl PlaySession {
-    /// What the speakers are playing right now.
-    pub fn heard_now(&self, timing: &TimingSettings) -> Seconds {
-        self.clock.position - timing.audio_latency().to_seconds()
-    }
-
-    /// The timeline inputs are graded on (shifted by the machine offset).
     pub fn graded_now(&self, timing: &TimingSettings) -> Seconds {
-        self.heard_now(timing) + timing.machine_offset.to_seconds()
+        timing.graded(self.clock.servo.position())
     }
 
-    /// The timeline arrows are drawn on (shifted by the visual delay).
     pub fn visible_now(&self, timing: &TimingSettings) -> Seconds {
-        self.graded_now(timing) - timing.visual_delay.to_seconds()
+        timing.visible(self.clock.servo.position())
     }
 }
 
@@ -334,8 +328,7 @@ fn enter(
         expire_cursor: 0,
         clock: PlaybackClock {
             phase: PlayPhase::LeadIn { remaining: LEAD_IN },
-            position: -LEAD_IN,
-            last_sink_position: Seconds(-1.0),
+            servo: AudioClock::start_at(-LEAD_IN),
             wall_since_play: Seconds::ZERO,
             latency_samples: Vec::new(),
         },
@@ -685,10 +678,10 @@ fn finish_when_complete(
     } else if let Ok(sink) = tick.single() {
         sink.empty()
     } else {
-        session.clock.position.0 > session.last_note_time.0 + 2.0
+        session.clock.servo.position().0 > session.last_note_time.0 + 2.0
     };
     // Trailing mines and hold tails can outlive the audio; let them resolve.
-    let chart_done = session.clock.position.0 >= session.last_note_time.0;
+    let chart_done = session.clock.servo.position().0 >= session.last_note_time.0;
     if !audio_done || !chart_done || !matches!(session.clock.phase, PlayPhase::Playing) {
         return;
     }

@@ -1,22 +1,34 @@
-use super::{Wheel, WheelEntry};
+use super::{ActiveRowHighlight, Wheel, WheelEntry};
 use crate::core::assets::asset_server_path;
+use crate::core::audio_clock::AudioClock;
+use crate::core::config::RhythmCycle;
 use crate::core::library::{StepfileId, StepfileLibrary};
 use crate::core::scene_flow::SpawnScoped;
+use crate::core::settings::Settings;
+use crate::core::stepfile::Stepfile;
 use crate::core::units::Seconds;
 use crate::scenes::{GameScene, SceneFade};
-use bevy::audio::PlaybackMode;
+use bevy::audio::{AudioSinkPlayback, PlaybackMode};
 use bevy::prelude::*;
 use std::time::Duration;
 
 const PREVIEW_DEBOUNCE: Seconds = Seconds(0.35);
 
+/// Once every beat, apex on it, tweening linearly.
+const HIGHLIGHT_PULSE: RhythmCycle = RhythmCycle {
+    speed: 4.0,
+    easing: [0.0, 0.0, 1.0, 1.0],
+};
+
 /// The wheel's music preview: the stepfile it aims at, its debounce
-/// clock, and the playing audio entity.
+/// clock, the playing audio entity, and the smooth music clock the beat
+/// pulse reads.
 #[derive(Resource, Default)]
 pub(super) struct Preview {
     stepfile: Option<StepfileId>,
     wait: Seconds,
     entity: Option<Entity>,
+    clock: Option<AudioClock>,
 }
 
 impl Preview {
@@ -26,6 +38,63 @@ impl Preview {
         if let Some(entity) = self.entity.take() {
             commands.entity(entity).try_despawn();
         }
+        self.clock = None;
+    }
+}
+
+/// Pulses the active-row highlight's opacity between 0.5 and 1 on the
+/// preview music's beat, apex on the beat; a steady 1 while nothing plays.
+pub(super) fn pulse_active_row(
+    time: Res<Time>,
+    settings: Res<Settings>,
+    library: Res<StepfileLibrary>,
+    sinks: Query<&AudioSink>,
+    mut preview: ResMut<Preview>,
+    mut highlight: Single<&mut Sprite, With<ActiveRowHighlight>>,
+) {
+    let delta = Seconds(time.delta_secs_f64());
+    let beat = preview_beat(&mut preview, &library, &sinks, &settings, delta);
+    let alpha = match beat {
+        Some(beat) => 0.5 + 0.5 * HIGHLIGHT_PULSE.pulse(beat),
+        None => 1.0,
+    };
+    if highlight.color.alpha() != alpha {
+        highlight.color.set_alpha(alpha);
+    }
+}
+
+/// The beat the speakers are on, through the same machinery the gameplay
+/// scene grades and draws with: an [`AudioClock`] servo'd onto the sink's
+/// position reports, shifted by the calibrated timing offsets. The raw
+/// position keeps growing while the sample loops, so it is folded back
+/// into the loop window first — the servo's resync snap absorbs the seam,
+/// keeping the pulse locked to what is audibly playing.
+fn preview_beat(
+    preview: &mut Preview,
+    library: &StepfileLibrary,
+    sinks: &Query<&AudioSink>,
+    settings: &Settings,
+    delta: Seconds,
+) -> Option<f64> {
+    let id = preview.stepfile?;
+    let sink = sinks.get(preview.entity?).ok()?;
+    let stepfile = &library.stepfile(id).stepfile;
+    let report = stepfile.sample_start + loop_position(stepfile, sink);
+    let clock = preview
+        .clock
+        .get_or_insert_with(|| AudioClock::start_at(report));
+    clock.advance(delta, Some(report));
+    let visible = settings.timing.visible(clock.position());
+    Some(stepfile.timing.beat_at_seconds(visible).0)
+}
+
+/// Where playback audibly is within the looping sample window.
+fn loop_position(stepfile: &Stepfile, sink: &AudioSink) -> Seconds {
+    let raw = sink.position().as_secs_f64();
+    if stepfile.sample_length.0 > 0.0 {
+        Seconds(raw.rem_euclid(stepfile.sample_length.0))
+    } else {
+        Seconds(raw)
     }
 }
 
