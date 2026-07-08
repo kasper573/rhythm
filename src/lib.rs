@@ -61,7 +61,14 @@ pub fn run() {
             scenes::ScenesPlugin,
         ))
         .add_systems(Startup, spawn_camera)
-        .add_systems(Update, (scale_ui_to_window, size_viewport_covers))
+        .add_systems(
+            Update,
+            (
+                scale_ui_to_window,
+                size_viewport_covers,
+                scenes::stream_default_backgrounds,
+            ),
+        )
         .run();
 }
 

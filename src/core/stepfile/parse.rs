@@ -156,9 +156,9 @@ fn parse_display_bpm(value: &str) -> Option<DisplayBpm> {
 }
 
 /// Fields per entry: `beat=file=rate=crossfade=rewind=loop=effect=...`.
-/// The effect resolves with StepMania's precedence: looping by default,
-/// the no-loop flag beats the rewind flag, and an explicit effect name
-/// beats both (rewind approximates to looping — the movie keeps moving).
+/// The effect resolves as: looping by default, the no-loop flag beats the
+/// rewind flag, and an explicit effect name beats both (rewind
+/// approximates to looping — the movie keeps moving).
 fn parse_bg_changes(value: &str) -> Vec<BgChange> {
     fn flag(field: Option<&&str>) -> bool {
         field.is_some_and(|field| field.parse::<i32>().unwrap_or(0) != 0)

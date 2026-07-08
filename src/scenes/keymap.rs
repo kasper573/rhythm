@@ -5,7 +5,9 @@ use crate::core::menu::{INACTIVE_COLOR, Menu, MenuInputLock, MenuItem, MenuSelec
 use crate::core::scene_flow::SpawnScoped;
 use crate::core::settings::Settings;
 use crate::core::sfx::{PlaySfx, Sfx};
-use crate::scenes::{GameScene, SceneFade, play_default_bgm, scene_accepts_input};
+use crate::scenes::{
+    GameScene, SceneFade, play_default_bgm, scene_accepts_input, spawn_default_background,
+};
 use bevy::input::ButtonState;
 use bevy::input::keyboard::KeyboardInput;
 use bevy::prelude::*;
@@ -15,20 +17,23 @@ pub struct KeymapScenePlugin;
 
 impl Plugin for KeymapScenePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(OnEnter(GameScene::Keymap), (enter, play_default_bgm))
-            .add_systems(OnExit(GameScene::Keymap), exit)
-            .add_systems(
-                Update,
-                (
-                    open_prompt,
-                    capture_prompt_key,
-                    reset_active_binding,
-                    handle_cancel,
-                    refresh_rows,
-                )
-                    .chain()
-                    .run_if(in_state(GameScene::Keymap).and_then(scene_accepts_input)),
-            );
+        app.add_systems(
+            OnEnter(GameScene::Keymap),
+            (enter, play_default_bgm, spawn_default_background),
+        )
+        .add_systems(OnExit(GameScene::Keymap), exit)
+        .add_systems(
+            Update,
+            (
+                open_prompt,
+                capture_prompt_key,
+                reset_active_binding,
+                handle_cancel,
+                refresh_rows,
+            )
+                .chain()
+                .run_if(in_state(GameScene::Keymap).and_then(scene_accepts_input)),
+        );
     }
 }
 
