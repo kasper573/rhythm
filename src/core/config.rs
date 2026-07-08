@@ -26,6 +26,9 @@ pub struct GameConfig {
     pub default_keymap: BTreeMap<GameAction, KeyCode>,
     pub speed_modifiers: SpeedModifiers,
     pub default_stepfile_options: StepfileOptions,
+    /// Combo at which the arrow flash switches to its brighter, snappier
+    /// variant.
+    pub bright_arrow_flash_combo: u32,
 }
 
 /// The player's presentation choices for playing stepfiles.
@@ -75,6 +78,11 @@ pub struct GradeDef {
     pub breaks_combo: bool,
     #[serde(default, deserialize_with = "timing_feedback")]
     pub timing_feedback: TimingFeedback,
+    /// Arrow flash color at the receptors when a step resolves at this
+    /// grade. Grades without one flash nothing, and their arrows stay on
+    /// screen and scroll past instead of vanishing.
+    #[serde(default, deserialize_with = "optional_hex_color")]
+    pub arrow_flash: Option<Color>,
 }
 
 /// In the config: `false`, `true`, or `"ms"`.
@@ -220,6 +228,12 @@ fn hex_color<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Color, D::Err
     Srgba::hex(&text)
         .map(Color::Srgba)
         .map_err(|error| serde::de::Error::custom(format!("bad hex color {text:?}: {error}")))
+}
+
+fn optional_hex_color<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Color>, D::Error> {
+    hex_color(deserializer).map(Some)
 }
 
 fn timing_feedback<'de, D: Deserializer<'de>>(deserializer: D) -> Result<TimingFeedback, D::Error> {

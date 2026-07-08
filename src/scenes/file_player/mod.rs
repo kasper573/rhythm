@@ -16,9 +16,8 @@ use crate::core::note_skin::ActiveNoteSkin;
 use crate::core::scene_flow::SpawnScoped;
 use crate::core::settings::{Settings, TimingSettings};
 use crate::core::sfx::{PlaySfx, Sfx};
-use crate::core::stepfile::NoteKind;
 use crate::core::tick_track::render_tick_track;
-use crate::core::units::{Beat, Millis, Seconds};
+use crate::core::units::{Millis, Seconds};
 use crate::scenes::file_select::{FileSelectTarget, SelectedStepfile};
 use crate::scenes::{GameScene, SceneFade, scene_accepts_input};
 use bevy::audio::{AudioSinkPlayback, PlaybackMode};
@@ -111,7 +110,7 @@ const LEAD_IN: Seconds = Seconds(2.0);
 #[derive(Resource)]
 pub(super) struct PlaySession {
     pub title: String,
-    pub notes: Vec<SessionNote>,
+    pub steps: Vec<SessionStep>,
     pub mines: Vec<SessionMine>,
     pub judged_count: usize,
     pub expire_cursor: usize,
@@ -155,11 +154,28 @@ impl PlaySession {
     }
 }
 
-pub(super) struct SessionNote {
+/// One judgeable row of the chart: every arrow in it must be stepped, and
+/// the whole step resolves into a single outcome (see the grading systems).
+pub(super) struct SessionStep {
     pub time: Seconds,
+    pub outcome: Option<StepOutcome>,
+    /// 1..=4 arrows; two or more make the step a jump.
+    pub arrows: Vec<SessionArrow>,
+}
+
+impl SessionStep {
+    /// Steps resolve once every arrow has a banked press.
+    pub fn complete(&self) -> bool {
+        self.arrows.iter().all(|arrow| arrow.error.is_some())
+    }
+}
+
+pub(super) struct SessionArrow {
     pub column: usize,
     pub entity: Entity,
-    pub outcome: Option<StepOutcome>,
+    /// The banked press: its timing error is locked in silently when the
+    /// panel is stepped and only pays out when the whole step resolves.
+    pub error: Option<Seconds>,
     pub hold: Option<HoldState>,
 }
 
@@ -262,83 +278,80 @@ fn enter(
             .insert(DespawnOnExit(GameScene::FilePlayer));
     }
 
-    let mut pending = Vec::new();
     let mut mines = Vec::new();
     let mut last_note_time = Seconds::ZERO;
-    for note in &chart.notes {
-        if note.column >= 4 {
+    for mine in &chart.mines {
+        if mine.column >= 4 {
             continue;
         }
-        let time = timing.seconds_at_beat(note.beat);
-        last_note_time = last_note_time.max(timing.seconds_at_beat(note.end_beat()));
-
-        if note.kind == NoteKind::Mine {
-            let entity = spawn_mine(&mut commands, &assets.skin, time, note.beat, note.column);
-            commands
-                .entity(entity)
-                .insert(DespawnOnExit(GameScene::FilePlayer));
-            mines.push(SessionMine {
-                time,
-                column: note.column,
-                entity,
-                outcome: None,
-            });
-            continue;
-        }
-        if !note.is_steppable() {
-            continue;
-        }
-
-        let end = match note.kind {
-            NoteKind::Hold { end } | NoteKind::Roll { end } => {
-                Some((timing.seconds_at_beat(end), end))
-            }
-            _ => None,
-        };
-        pending.push(PendingNote {
+        let time = timing.seconds_at_beat(mine.beat);
+        last_note_time = last_note_time.max(time);
+        let entity = spawn_mine(&mut commands, &assets.skin, time, mine.beat, mine.column);
+        commands
+            .entity(entity)
+            .insert(DespawnOnExit(GameScene::FilePlayer));
+        mines.push(SessionMine {
             time,
-            beat: note.beat,
-            column: note.column,
-            quant: config.recognized_quant(note.quant),
-            end,
-            roll: matches!(note.kind, NoteKind::Roll { .. }),
-        });
-    }
-    pending.sort_by(|a, b| a.time.0.total_cmp(&b.time.0));
-
-    let mut notes = Vec::new();
-    for note in pending {
-        let spawned = spawn_note(
-            &mut commands,
-            &assets.skin,
-            &NoteSpawn {
-                time: note.time,
-                beat: note.beat,
-                column: note.column,
-                quant: note.quant,
-                end: note.end,
-            },
-        );
-        for entity in spawned.entities() {
-            commands
-                .entity(entity)
-                .insert(DespawnOnExit(GameScene::FilePlayer));
-        }
-        notes.push(SessionNote {
-            time: note.time,
-            column: note.column,
-            entity: spawned.head,
+            column: mine.column,
+            entity,
             outcome: None,
-            hold: note.end.map(|(end, _)| HoldState {
-                end,
-                roll: note.roll,
-                life: 1.0,
-                engaged: false,
-                held_now: false,
-                result: None,
-            }),
         });
     }
+
+    let mut steps = Vec::new();
+    for row in &chart.rows {
+        let time = timing.seconds_at_beat(row.beat);
+        let quant = config.recognized_quant(row.quant);
+        let mut arrows = Vec::new();
+        for arrow in &row.arrows {
+            if arrow.column >= 4 {
+                continue;
+            }
+            let end = arrow
+                .tail
+                .map(|tail| (timing.seconds_at_beat(tail.end), tail.end));
+            last_note_time = last_note_time.max(end.map(|(end, _)| end).unwrap_or(time));
+            let spawned = spawn_note(
+                &mut commands,
+                &assets.skin,
+                &NoteSpawn {
+                    time,
+                    beat: row.beat,
+                    column: arrow.column,
+                    quant,
+                    end,
+                },
+            );
+            for entity in spawned.entities() {
+                commands
+                    .entity(entity)
+                    .insert(DespawnOnExit(GameScene::FilePlayer));
+            }
+            arrows.push(SessionArrow {
+                column: arrow.column,
+                entity: spawned.head,
+                error: None,
+                hold: arrow.tail.map(|tail| HoldState {
+                    end: timing.seconds_at_beat(tail.end),
+                    roll: tail.roll,
+                    life: 1.0,
+                    engaged: false,
+                    held_now: false,
+                    result: None,
+                }),
+            });
+        }
+        if !arrows.is_empty() {
+            steps.push(SessionStep {
+                time,
+                outcome: None,
+                arrows,
+            });
+        }
+    }
+    // Warps and stops can reorder wall-clock times relative to beats; the
+    // expiry cursor needs time order.
+    steps.sort_by(|a, b| a.time.0.total_cmp(&b.time.0));
 
     if let Some(path) = entry.music_path().as_deref().and_then(asset_server_path) {
         let music = assets.asset_server.load(path);
@@ -360,7 +373,7 @@ fn enter(
         );
     }
 
-    let tick_times: Vec<Seconds> = notes.iter().map(|note| note.time).collect();
+    let tick_times: Vec<Seconds> = steps.iter().map(|step| step.time).collect();
     match render_tick_track(
         &asset_root().join(Sfx::Tick.asset_path()),
         &tick_times,
@@ -396,7 +409,7 @@ fn enter(
     });
     commands.insert_resource(PlaySession {
         title: entry.display_title(),
-        notes,
+        steps,
         mines,
         judged_count: 0,
         expire_cursor: 0,
@@ -418,17 +431,6 @@ fn exit(mut commands: Commands) {
     commands.remove_resource::<PlaySession>();
     commands.remove_resource::<NoteFieldClock>();
     commands.remove_resource::<SelectedStepfile>();
-}
-
-/// A chart note resolved to spawn-ready values, so notes can be sorted by
-/// time before the field entities and session records are created together.
-struct PendingNote {
-    time: Seconds,
-    beat: Beat,
-    column: usize,
-    quant: u32,
-    end: Option<(Seconds, Beat)>,
-    roll: bool,
 }
 
 fn spawn_hud(commands: &mut Commands) {
@@ -612,7 +614,7 @@ fn finish_when_complete(
     mut commands: Commands,
     mut fade: ResMut<SceneFade>,
 ) {
-    if session.finished || session.judged_count < session.notes.len() {
+    if session.finished || session.judged_count < session.steps.len() {
         return;
     }
     let audio_done = if let Ok(sink) = music.single() {
@@ -629,17 +631,18 @@ fn finish_when_complete(
     }
     session.finished = true;
     let holds: Vec<&HoldState> = session
-        .notes
+        .steps
         .iter()
-        .filter_map(|note| note.hold.as_ref())
+        .flat_map(|step| &step.arrows)
+        .filter_map(|arrow| arrow.hold.as_ref())
         .collect();
     commands.insert_resource(ScoreResults {
         id: selected.id,
         title: session.title.clone(),
         outcomes: session
-            .notes
+            .steps
             .iter()
-            .filter_map(|note| note.outcome)
+            .filter_map(|step| step.outcome)
             .collect(),
         max_combo: session.max_combo,
         holds_ok: holds

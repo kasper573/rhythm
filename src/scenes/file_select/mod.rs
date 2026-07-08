@@ -804,7 +804,7 @@ fn playable_chart_indices(stepfile: &Stepfile) -> Vec<usize> {
         .charts
         .iter()
         .enumerate()
-        .filter(|(_, chart)| chart.steps_type == StepsType::DanceSingle && !chart.notes.is_empty())
+        .filter(|(_, chart)| chart.steps_type == StepsType::DanceSingle && !chart.rows.is_empty())
         .map(|(index, _)| index)
         .collect();
     charts.sort_by_key(|&index| {

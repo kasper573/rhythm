@@ -1,5 +1,6 @@
 use super::{
-    BgChange, Chart, DisplayBpm, Note, NoteKind, Stepfile, StepfileError, StepfileTiming, StepsType,
+    Arrow, BgChange, Chart, DisplayBpm, Mine, Row, Stepfile, StepfileError, StepfileTiming,
+    StepsType, Tail,
 };
 use crate::core::units::{Beat, Seconds};
 use std::collections::BTreeMap;
@@ -191,7 +192,7 @@ fn parse_chart(value: &str) -> Option<Chart> {
         .trim()
         .parse()
         .expect("parsing with a default variant is infallible");
-    let (columns, notes) = parse_note_data(note_data, steps_type.columns())?;
+    let (columns, rows, mines) = parse_note_data(note_data, steps_type.columns())?;
 
     Some(Chart {
         steps_type,
@@ -206,13 +207,18 @@ fn parse_chart(value: &str) -> Option<Chart> {
             .filter_map(|radar_value| radar_value.trim().parse().ok())
             .collect(),
         columns,
-        notes,
+        rows,
+        mines,
     })
 }
 
 /// Parses measure-based note data. Returns the column count (inferred from
-/// the first row when the steps type doesn't dictate one) and the notes.
-fn parse_note_data(data: &str, known_columns: Option<usize>) -> Option<(usize, Vec<Note>)> {
+/// the first row when the steps type doesn't dictate one), the steppable
+/// rows, and the mines. Lifts and fakes are consumed but produce nothing.
+fn parse_note_data(
+    data: &str,
+    known_columns: Option<usize>,
+) -> Option<(usize, Vec<Row>, Vec<Mine>)> {
     let measures: Vec<Vec<&str>> = data
         .split(',')
         .map(|measure| {
@@ -232,56 +238,29 @@ fn parse_note_data(data: &str, known_columns: Option<usize>) -> Option<(usize, V
             .map(|first_row| first_row.len())
     })?;
 
-    let mut notes = Vec::new();
+    // (beat, quant, column, tail) per steppable arrow; grouped into rows
+    // after the hold tails have resolved.
+    let mut arrows: Vec<(Beat, u32, usize, Option<Tail>)> = Vec::new();
+    let mut mines = Vec::new();
     let mut open_holds: Vec<Option<(Beat, u32, bool)>> = vec![None; columns];
 
-    for (measure_index, rows) in measures.iter().enumerate() {
-        let row_count = rows.len();
-        for (row_index, row) in rows.iter().enumerate() {
-            let beat = Beat(measure_index as f64 * 4.0 + row_index as f64 * 4.0 / row_count as f64);
-            let quant = quantization(row_index, row_count);
-            for (column, char) in row.bytes().enumerate().take(columns) {
+    for (measure_index, lines) in measures.iter().enumerate() {
+        let line_count = lines.len();
+        for (line_index, line) in lines.iter().enumerate() {
+            let beat =
+                Beat(measure_index as f64 * 4.0 + line_index as f64 * 4.0 / line_count as f64);
+            let quant = quantization(line_index, line_count);
+            for (column, char) in line.bytes().enumerate().take(columns) {
                 match char {
-                    b'1' => notes.push(Note {
-                        beat,
-                        column,
-                        quant,
-                        kind: NoteKind::Tap,
-                    }),
+                    b'1' => arrows.push((beat, quant, column, None)),
                     b'2' => open_holds[column] = Some((beat, quant, false)),
                     b'4' => open_holds[column] = Some((beat, quant, true)),
                     b'3' => {
-                        if let Some((head, head_quant, is_roll)) = open_holds[column].take() {
-                            notes.push(Note {
-                                beat: head,
-                                column,
-                                quant: head_quant,
-                                kind: if is_roll {
-                                    NoteKind::Roll { end: beat }
-                                } else {
-                                    NoteKind::Hold { end: beat }
-                                },
-                            });
+                        if let Some((head, head_quant, roll)) = open_holds[column].take() {
+                            arrows.push((head, head_quant, column, Some(Tail { end: beat, roll })));
                         }
                     }
-                    b'M' | b'm' => notes.push(Note {
-                        beat,
-                        column,
-                        quant,
-                        kind: NoteKind::Mine,
-                    }),
-                    b'L' | b'l' => notes.push(Note {
-                        beat,
-                        column,
-                        quant,
-                        kind: NoteKind::Lift,
-                    }),
-                    b'F' | b'f' => notes.push(Note {
-                        beat,
-                        column,
-                        quant,
-                        kind: NoteKind::Fake,
-                    }),
+                    b'M' | b'm' => mines.push(Mine { beat, column }),
                     _ => {}
                 }
             }
@@ -291,17 +270,24 @@ fn parse_note_data(data: &str, known_columns: Option<usize>) -> Option<(usize, V
     // A hold head whose tail never appears still demands a step.
     for (column, open) in open_holds.into_iter().enumerate() {
         if let Some((beat, quant, _)) = open {
-            notes.push(Note {
-                beat,
-                column,
-                quant,
-                kind: NoteKind::Tap,
-            });
+            arrows.push((beat, quant, column, None));
         }
     }
 
-    notes.sort_by(|a, b| a.beat.0.total_cmp(&b.beat.0).then(a.column.cmp(&b.column)));
-    Some((columns, notes))
+    arrows.sort_by(|a, b| a.0.0.total_cmp(&b.0.0).then(a.2.cmp(&b.2)));
+    let mut rows: Vec<Row> = Vec::new();
+    for (beat, quant, column, tail) in arrows {
+        match rows.last_mut() {
+            Some(row) if row.beat == beat => row.arrows.push(Arrow { column, tail }),
+            _ => rows.push(Row {
+                beat,
+                quant,
+                arrows: vec![Arrow { column, tail }],
+            }),
+        }
+    }
+    mines.sort_by(|a, b| a.beat.0.total_cmp(&b.beat.0).then(a.column.cmp(&b.column)));
+    Some((columns, rows, mines))
 }
 
 /// The standard note values, quarters through 64ths, as notes-per-measure.

@@ -180,10 +180,10 @@ impl FadeOut {
         }
     }
 
-    /// Grows slightly while fading, for popup effects.
-    pub fn growing(seconds: f32) -> FadeOut {
+    /// Grows to `1 + growth` times its spawn size while fading.
+    pub fn growing(seconds: f32, growth: f32) -> FadeOut {
         FadeOut {
-            growth: 0.25,
+            growth,
             ..FadeOut::over(seconds)
         }
     }
@@ -295,6 +295,32 @@ pub fn spawn_mine(
         .id()
 }
 
+/// The arrow flash at a receptor when a step's arrows vanish, growing
+/// while it fades. The bright variant plays at high combo: larger art,
+/// snappier, starting smaller.
+pub fn spawn_arrow_flash(
+    commands: &mut Commands,
+    skin: &ActiveNoteSkin,
+    column: usize,
+    color: Color,
+    bright: bool,
+) -> Entity {
+    let (flash, seconds, base_zoom, growth) = if bright {
+        (skin.arrow_flash_bright, 0.13, 0.8, 0.5)
+    } else {
+        (skin.arrow_flash_dim, 0.18, 1.0, 0.4)
+    };
+    let size = flash.size * (ARROW_SIZE / 64.0) * base_zoom;
+    commands
+        .spawn_scene(bsn! {
+            skin_sprite(skin, flash.frame, size)
+            Sprite { color: {color} }
+            oriented(column_x(column), TARGET_Y, 22.0, column_rotation(column))
+        })
+        .insert(FadeOut::growing(seconds, growth))
+        .id()
+}
+
 pub fn spawn_mine_explosion(
     commands: &mut Commands,
     skin: &ActiveNoteSkin,
@@ -305,7 +331,7 @@ pub fn spawn_mine_explosion(
             skin_sprite(skin, skin.mine_explosion, ARROW_SIZE * 1.7)
             at(column_x(column), TARGET_Y, 21.0)
         })
-        .insert(FadeOut::growing(MINE_EXPLOSION_SECONDS))
+        .insert(FadeOut::growing(MINE_EXPLOSION_SECONDS, 0.25))
         .id()
 }
 

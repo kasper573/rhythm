@@ -85,54 +85,88 @@ pub struct Chart {
     pub meter: u32,
     pub radar: Vec<f32>,
     pub columns: usize,
-    /// Sorted by beat, then column.
-    pub notes: Vec<Note>,
+    /// Sorted by beat. The row is the game's judgeable unit: every arrow in
+    /// it must be stepped for the row to count, and rows with two or more
+    /// arrows are the jumps shown on the file select.
+    pub rows: Vec<Row>,
+    /// Sorted by beat.
+    pub mines: Vec<Mine>,
 }
 
 impl Chart {
     pub fn last_note_beat(&self) -> Option<Beat> {
-        self.notes
+        self.rows
             .iter()
-            .map(|note| note.end_beat())
+            .flat_map(|row| row.arrows.iter().map(|arrow| arrow.end_beat(row.beat)))
+            .chain(self.mines.iter().map(|mine| mine.beat))
             .reduce(|a, b| if a.0 >= b.0 { a } else { b })
     }
 
-    /// Walks the beat-sorted notes in runs of equal beat, so simultaneous
-    /// arrows count as one jump.
     pub fn stats(&self) -> ChartStats {
-        let mut stats = ChartStats::default();
-        let mut run_start = 0;
-        while run_start < self.notes.len() {
-            let beat = self.notes[run_start].beat;
-            let mut run_end = run_start;
-            let mut steppable = 0;
-            while run_end < self.notes.len() && self.notes[run_end].beat == beat {
-                let note = &self.notes[run_end];
-                match note.kind {
-                    NoteKind::Hold { .. } | NoteKind::Roll { .. } => stats.holds += 1,
-                    NoteKind::Mine => stats.mines += 1,
-                    _ => {}
-                }
-                if note.is_steppable() {
-                    steppable += 1;
-                }
-                run_end += 1;
-            }
-            stats.steps += steppable;
-            if steppable >= 2 {
-                stats.jumps += 1;
-            }
-            run_start = run_end;
+        ChartStats {
+            steps: self.rows.iter().map(|row| row.arrows.len()).sum(),
+            jumps: self.rows.iter().filter(|row| row.is_jump()).count(),
+            holds: self
+                .rows
+                .iter()
+                .flat_map(|row| &row.arrows)
+                .filter(|arrow| arrow.tail.is_some())
+                .count(),
+            mines: self.mines.len(),
         }
-        stats
     }
+}
+
+/// Simultaneous arrows on one beat, stepped and judged as a single unit.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Row {
+    pub beat: Beat,
+    /// The row's note value in music theory as notes-per-measure: 4 for
+    /// quarter notes (on the beat), 8 for eighths, 12 for triplets, and so
+    /// on. Never below 4: rows on coarser grids still land on the beat.
+    pub quant: u32,
+    /// Sorted by column; never empty.
+    pub arrows: Vec<Arrow>,
+}
+
+impl Row {
+    pub fn is_jump(&self) -> bool {
+        self.arrows.len() >= 2
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Arrow {
+    pub column: usize,
+    /// Holds and rolls sustain to a tail; plain taps have none.
+    pub tail: Option<Tail>,
+}
+
+impl Arrow {
+    /// The beat where this arrow is over: the tail beat for holds and
+    /// rolls, the row's own beat otherwise.
+    pub fn end_beat(&self, row_beat: Beat) -> Beat {
+        self.tail.map(|tail| tail.end).unwrap_or(row_beat)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Tail {
+    pub end: Beat,
+    pub roll: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Mine {
+    pub beat: Beat,
+    pub column: usize,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ChartStats {
     /// Every arrow the player must step on (hold heads included).
     pub steps: usize,
-    /// Instants where two or more arrows must be stepped together.
+    /// Rows where two or more arrows must be stepped together.
     pub jumps: usize,
     /// A hold's start and end pair counts as one hold (rolls included).
     pub holds: usize,
@@ -214,45 +248,6 @@ impl Difficulty {
             Difficulty::Other(_) => 6,
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Note {
-    pub beat: Beat,
-    pub column: usize,
-    /// The note value in music theory as notes-per-measure: 4 for quarter
-    /// notes (on the beat), 8 for eighths, 12 for triplets, and so on. Never
-    /// below 4: notes on coarser grids still land on the beat.
-    pub quant: u32,
-    pub kind: NoteKind,
-}
-
-impl Note {
-    /// The beat where this note is over: the tail beat for holds and rolls,
-    /// the note's own beat otherwise.
-    pub fn end_beat(&self) -> Beat {
-        match self.kind {
-            NoteKind::Hold { end } | NoteKind::Roll { end } => end,
-            _ => self.beat,
-        }
-    }
-
-    pub fn is_steppable(&self) -> bool {
-        matches!(
-            self.kind,
-            NoteKind::Tap | NoteKind::Hold { .. } | NoteKind::Roll { .. }
-        )
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum NoteKind {
-    Tap,
-    Hold { end: Beat },
-    Roll { end: Beat },
-    Mine,
-    Lift,
-    Fake,
 }
 
 /// One `#BGCHANGES` entry: switch the background to `file` at `beat`.

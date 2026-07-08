@@ -153,19 +153,9 @@
     ],
     "spin_beats": 2
   },
-  "tap_explosion": {
-    "pos": [
-      2,
-      682
-    ],
-    "size": [
-      96,
-      96
-    ]
-  },
   "mine_explosion": {
     "pos": [
-      102,
+      170,
       682
     ],
     "size": [
@@ -181,5 +171,27 @@
       128
     ],
     "stop_above_tail": 32
+  },
+  "arrow_flash": {
+    "bright": {
+      "pos": [
+        2,
+        682
+      ],
+      "size": [
+        96,
+        96
+      ]
+    },
+    "dim": {
+      "pos": [
+        102,
+        682
+      ],
+      "size": [
+        64,
+        64
+      ]
+    }
   }
 }

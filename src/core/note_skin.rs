@@ -26,6 +26,8 @@ pub struct ActiveNoteSkin {
     pub mine: usize,
     pub mine_spin_beats: f64,
     pub mine_explosion: usize,
+    pub arrow_flash_bright: ArrowFlashSprite,
+    pub arrow_flash_dim: ArrowFlashSprite,
     pub hold_body_inactive: Handle<Image>,
     pub hold_body_active: Handle<Image>,
     pub hold_body_size: Vec2,
@@ -64,6 +66,14 @@ impl ActiveNoteSkin {
         };
         heads[row.min(heads.len() - 1)]
     }
+}
+
+/// One arrow flash sprite: its sheet frame and native square size in
+/// texture pixels (display size scales from the 64px arrow cell).
+#[derive(Clone, Copy)]
+pub struct ArrowFlashSprite {
+    pub frame: usize,
+    pub size: f32,
 }
 
 /// Every note skin found under `assets/note_skins`.
@@ -181,6 +191,12 @@ pub fn load_note_skin(asset_server: &AssetServer, name: &str) -> ActiveNoteSkin 
     let hold_cap_active = rect(manifest.hold_cap.active, manifest.hold_cap.size);
     let mine = rect(manifest.mine.pos, manifest.mine.size);
     let mine_explosion = rect(manifest.mine_explosion.pos, manifest.mine_explosion.size);
+    let mut flash = |region: &RegionManifest| ArrowFlashSprite {
+        frame: rect(region.pos, region.size),
+        size: region.size[0] as f32,
+    };
+    let arrow_flash_bright = flash(&manifest.arrow_flash.bright);
+    let arrow_flash_dim = flash(&manifest.arrow_flash.dim);
 
     ActiveNoteSkin {
         name: name.to_string(),
@@ -198,6 +214,8 @@ pub fn load_note_skin(asset_server: &AssetServer, name: &str) -> ActiveNoteSkin 
         mine,
         mine_spin_beats: manifest.mine.spin_beats,
         mine_explosion,
+        arrow_flash_bright,
+        arrow_flash_dim,
         hold_body_inactive,
         hold_body_active,
         hold_body_size: Vec2::new(
@@ -263,6 +281,7 @@ struct Manifest {
     hold_cap: StatePairManifest,
     mine: MineManifest,
     mine_explosion: RegionManifest,
+    arrow_flash: ArrowFlashManifest,
     hold_body: HoldBodyManifest,
     dropped_brightness: f32,
 }
@@ -309,6 +328,12 @@ struct MineManifest {
 struct RegionManifest {
     pos: [u32; 2],
     size: [u32; 2],
+}
+
+#[derive(Deserialize)]
+struct ArrowFlashManifest {
+    bright: RegionManifest,
+    dim: RegionManifest,
 }
 
 #[derive(Deserialize)]

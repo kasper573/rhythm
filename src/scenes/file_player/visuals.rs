@@ -44,8 +44,8 @@ fn sync_note_field(
         }
     }
 
-    for note in &session.notes {
-        let Some(hold) = &note.hold else { continue };
+    for arrow in session.steps.iter().flat_map(|step| &step.arrows) {
+        let Some(hold) = &arrow.hold else { continue };
         let state = match (hold.engaged, hold.result) {
             (_, Some(HoldOutcome::Ok)) => HoldVisualState::Ok,
             (_, Some(HoldOutcome::Ng)) => HoldVisualState::Dropped,
@@ -53,7 +53,7 @@ fn sync_note_field(
             (true, None) if hold.held_now => HoldVisualState::Held,
             (true, None) => HoldVisualState::Released,
         };
-        if let Ok(mut visual) = holds.get_mut(note.entity)
+        if let Ok(mut visual) = holds.get_mut(arrow.entity)
             && visual.state != state
         {
             visual.state = state;
