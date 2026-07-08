@@ -268,9 +268,11 @@ impl Difficulty {
 pub struct BgChange {
     pub beat: Beat,
     pub file: String,
-    pub rate: f64,
-    /// Remaining `=`-separated parameters, kept verbatim.
-    pub params: Vec<String>,
+    /// Fade into this background instead of cutting to it.
+    pub crossfade: bool,
+    /// Whether a movie loops; otherwise it plays once and holds its last
+    /// frame.
+    pub loops: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

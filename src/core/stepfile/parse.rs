@@ -155,25 +155,34 @@ fn parse_display_bpm(value: &str) -> Option<DisplayBpm> {
     }
 }
 
+/// Fields per entry: `beat=file=rate=crossfade=rewind=loop=effect=...`.
+/// The effect resolves with StepMania's precedence: looping by default,
+/// the no-loop flag beats the rewind flag, and an explicit effect name
+/// beats both (rewind approximates to looping — the movie keeps moving).
 fn parse_bg_changes(value: &str) -> Vec<BgChange> {
+    fn flag(field: Option<&&str>) -> bool {
+        field.is_some_and(|field| field.parse::<i32>().unwrap_or(0) != 0)
+    }
     value
         .split(',')
         .filter_map(|entry| {
-            let mut fields = entry.trim().split('=');
-            let beat = Beat(fields.next()?.trim().parse().ok()?);
-            let file = fields.next()?.trim().to_string();
+            let fields: Vec<&str> = entry.trim().split('=').map(str::trim).collect();
+            let beat = Beat(fields.first()?.parse().ok()?);
+            let file = (*fields.get(1)?).to_string();
             if file.is_empty() {
                 return None;
             }
-            let rate = fields
-                .next()
-                .and_then(|rate| rate.trim().parse().ok())
-                .unwrap_or(1.0);
+            let mut loops = fields.get(5).is_none_or(|field| *field != "0");
+            match fields.get(6).copied() {
+                Some("StretchNoLoop") => loops = false,
+                Some(effect) if !effect.is_empty() => loops = true,
+                _ => {}
+            }
             Some(BgChange {
                 beat,
                 file,
-                rate,
-                params: fields.map(|field| field.trim().to_string()).collect(),
+                crossfade: flag(fields.get(3)),
+                loops,
             })
         })
         .collect()

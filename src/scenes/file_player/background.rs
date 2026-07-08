@@ -10,7 +10,7 @@ use crate::core::{SCREEN_SIZE, ViewportCover, at};
 use crate::scenes::GameScene;
 use bevy::prelude::*;
 use bevy::sprite::{SpriteImageMode, SpriteScalingMode};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub(super) fn plugin(app: &mut App) {
     app.add_message::<BackgroundCue>()
@@ -20,6 +20,7 @@ pub(super) fn plugin(app: &mut App) {
             (
                 cue_background_changes,
                 apply_background_cues,
+                fade_background_layers,
                 stream_video_frames,
             )
                 .chain()
@@ -30,6 +31,12 @@ pub(super) fn plugin(app: &mut App) {
 fn exit(mut commands: Commands) {
     commands.remove_resource::<BackgroundTimeline>();
 }
+
+/// How long a `CrossFade` transition blends between backgrounds.
+const CROSSFADE_SECONDS: f32 = 0.5;
+
+/// Dimmed so arrows and text stay readable in front of the background.
+const DIM: f32 = 0.5;
 
 /// Background switches from the stepfile's `#BGCHANGES`, resolved to files
 /// that actually exist, ordered by time.
@@ -44,32 +51,23 @@ struct BackgroundTimeline {
 struct BackgroundChange {
     time: Seconds,
     path: PathBuf,
+    crossfade: bool,
+    loops: bool,
 }
 
-#[derive(Component, Default, Clone)]
-pub(super) struct BackgroundLayer;
+/// One background on screen — image or video — easing toward its target
+/// opacity; fully faded-out layers retire.
+#[derive(Component)]
+struct BackgroundLayer {
+    target: f32,
+}
 
 pub(super) fn spawn_background(
     commands: &mut Commands,
     entry: &StepfileEntry,
     timing: &StepfileTiming,
 ) {
-    commands.spawn_scoped(
-        GameScene::FilePlayer,
-        bsn! {
-            BackgroundLayer
-            ViewportCover
-            Sprite {
-                // Dimmed so arrows and text stay readable in front of it.
-                color: Color::srgb(0.5, 0.5, 0.5),
-                custom_size: {Some(SCREEN_SIZE)},
-                image_mode: {SpriteImageMode::Scale(SpriteScalingMode::FillCenter)},
-            }
-            Visibility::Hidden
-        },
-    );
-
-    let changes = entry
+    let mut changes: Vec<BackgroundChange> = entry
         .stepfile
         .bg_changes
         .iter()
@@ -78,9 +76,12 @@ pub(super) fn spawn_background(
             Some(BackgroundChange {
                 time: timing.seconds_at_beat(change.beat),
                 path,
+                crossfade: change.crossfade,
+                loops: change.loops,
             })
         })
         .collect();
+    changes.sort_by(|a, b| a.time.0.total_cmp(&b.time.0));
     commands.insert_resource(BackgroundTimeline {
         initial: entry.background_path(),
         changes,
@@ -94,6 +95,8 @@ pub(super) fn spawn_background(
 struct BackgroundCue {
     time: Seconds,
     path: PathBuf,
+    crossfade: bool,
+    loops: bool,
 }
 
 fn cue_background_changes(
@@ -106,14 +109,19 @@ fn cue_background_changes(
         cues.write(BackgroundCue {
             time: Seconds::ZERO,
             path,
+            crossfade: false,
+            loops: false,
         });
     }
     let now = session.visible_now(&settings.timing);
     while timeline.next < timeline.changes.len() && timeline.changes[timeline.next].time.0 <= now.0
     {
+        let change = &timeline.changes[timeline.next];
         cues.write(BackgroundCue {
-            time: timeline.changes[timeline.next].time,
-            path: timeline.changes[timeline.next].path.clone(),
+            time: change.time,
+            path: change.path.clone(),
+            crossfade: change.crossfade,
+            loops: change.loops,
         });
         timeline.next += 1;
     }
@@ -124,23 +132,84 @@ fn apply_background_cues(
     asset_server: Res<AssetServer>,
     mut images: ResMut<Assets<Image>>,
     mut commands: Commands,
-    videos: Query<Entity, With<VideoStream>>,
-    mut layer: Single<(&mut Sprite, &mut Visibility), With<BackgroundLayer>>,
+    mut layers: Query<(Entity, &mut BackgroundLayer)>,
+    mut layer_count: Local<u32>,
 ) {
     for cue in cues.read() {
-        if is_video_file(&cue.path.to_string_lossy()) {
-            start_video(&mut commands, &mut images, &videos, &cue.path, cue.time);
-            continue;
-        }
-        let Some(path) = asset_server_path(&cue.path) else {
-            continue;
+        // The incoming background: a video stream, or a loaded image.
+        let (image, stream) = if is_video_file(&cue.path.to_string_lossy()) {
+            match VideoStream::open(&cue.path, cue.time, cue.loops, &mut images) {
+                Ok(stream) => (stream.image.clone(), Some(stream)),
+                Err(error) => {
+                    warn!(
+                        "video background unavailable for {}: {error}",
+                        cue.path.display()
+                    );
+                    continue;
+                }
+            }
+        } else {
+            let Some(path) = asset_server_path(&cue.path) else {
+                continue;
+            };
+            (asset_server.load(path), None)
         };
-        for video in &videos {
-            commands.entity(video).despawn();
+
+        for (entity, mut layer) in &mut layers {
+            if cue.crossfade {
+                layer.target = 0.0;
+            } else {
+                commands.entity(entity).despawn();
+            }
         }
-        let (sprite, visibility) = &mut *layer;
-        sprite.image = asset_server.load(path);
-        **visibility = Visibility::Visible;
+
+        // Newer layers draw above the ones fading out; the small cycling
+        // bump stays below the note field.
+        *layer_count += 1;
+        let z = 0.3 + (*layer_count % 100) as f32 * 0.002;
+        let alpha = if cue.crossfade { 0.0 } else { 1.0 };
+        let mut layer = commands.spawn_scoped(
+            GameScene::FilePlayer,
+            bsn! {
+                ViewportCover
+                Sprite {
+                    image: {image},
+                    color: {Color::srgba(DIM, DIM, DIM, alpha)},
+                    custom_size: {Some(SCREEN_SIZE)},
+                    image_mode: {SpriteImageMode::Scale(SpriteScalingMode::FillCenter)},
+                }
+                at(0.0, 0.0, z)
+            },
+        );
+        layer.insert(BackgroundLayer { target: 1.0 });
+        // The stream owns a live decoder, so it cannot be a cloneable
+        // template value.
+        if let Some(stream) = stream {
+            layer.insert(stream);
+        }
+    }
+}
+
+/// Runs every layer's timed linear blend and retires the faded-out ones.
+fn fade_background_layers(
+    time: Res<Time>,
+    mut layers: Query<(Entity, &BackgroundLayer, &mut Sprite)>,
+    mut commands: Commands,
+) {
+    let step = time.delta_secs() / CROSSFADE_SECONDS;
+    for (entity, layer, mut sprite) in &mut layers {
+        let alpha = sprite.color.alpha();
+        let next = if layer.target > alpha {
+            (alpha + step).min(layer.target)
+        } else {
+            (alpha - step).max(layer.target)
+        };
+        if next != alpha {
+            sprite.color.set_alpha(next);
+        }
+        if layer.target <= 0.0 && next <= 0.0 {
+            commands.entity(entity).despawn();
+        }
     }
 }
 
@@ -153,43 +222,5 @@ fn stream_video_frames(
     let now = session.visible_now(&settings.timing);
     for mut video in &mut videos {
         video.update(now, &mut images);
-    }
-}
-
-fn start_video(
-    commands: &mut Commands,
-    images: &mut Assets<Image>,
-    videos: &Query<Entity, With<VideoStream>>,
-    path: &Path,
-    start_time: Seconds,
-) {
-    for video in videos {
-        commands.entity(video).despawn();
-    }
-    match VideoStream::open(path, start_time, false, images) {
-        Ok(stream) => {
-            let image = stream.image.clone();
-            commands
-                .spawn_scoped(
-                    GameScene::FilePlayer,
-                    bsn! {
-                        ViewportCover
-                        Sprite {
-                            image: {image},
-                            color: Color::srgb(0.6, 0.6, 0.6),
-                            custom_size: {Some(SCREEN_SIZE)},
-                            image_mode: {SpriteImageMode::Scale(SpriteScalingMode::FillCenter)},
-                        }
-                        at(0.0, 0.0, 0.5)
-                    },
-                )
-                // The stream owns a live decoder process, so it cannot be a
-                // cloneable template value.
-                .insert(stream);
-        }
-        Err(error) => warn!(
-            "video background unavailable for {}: {error}",
-            path.display()
-        ),
     }
 }
