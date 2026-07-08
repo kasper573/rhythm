@@ -5,7 +5,6 @@ mod visuals;
 
 use crate::core::assets::{asset_root, asset_server_path};
 use crate::core::at;
-use crate::core::audio_clock::AudioClock;
 use crate::core::config::{GameConfig, RowOutcome};
 use crate::core::font::game_font;
 use crate::core::health_vial::{HealthVialMaterial, spawn_health_vial};
@@ -18,7 +17,7 @@ use crate::core::note_skin::ActiveNoteSkin;
 use crate::core::scene_flow::SpawnScoped;
 use crate::core::settings::{Settings, TimingSettings};
 use crate::core::sfx::{PlaySfx, Sfx};
-use crate::core::stepfile::{Chart, Difficulty, StepfileTiming};
+use crate::core::stepfile::{Chart, Difficulty, StepfileClock, StepfileTiming};
 use crate::core::tick_track::render_tick_track;
 use crate::core::units::{Millis, Seconds};
 use crate::scenes::file_select::{FileSelectTarget, SelectedStepfile};
@@ -145,11 +144,11 @@ pub(super) struct PlaySession {
 }
 
 /// The session's playback timeline, advanced by the [`clock`] module: the
-/// lead-in phase, the servo'd position, and the state for the first-play
-/// audio latency measurement.
+/// lead-in phase, the shared stepfile music clock, and the state for the
+/// first-play audio latency measurement.
 pub(super) struct PlaybackClock {
     pub phase: PlayPhase,
-    pub servo: AudioClock,
+    pub music: StepfileClock,
     /// Wall-clock time since the tracks were started, for measuring how far
     /// the mixer's queue runs ahead of real time (the audio latency).
     pub wall_since_play: Seconds,
@@ -171,11 +170,11 @@ pub(super) struct AutoSync {
 
 impl PlaySession {
     pub fn graded_now(&self, timing: &TimingSettings) -> Seconds {
-        timing.graded(self.clock.servo.position())
+        self.clock.music.graded_now(timing)
     }
 
     pub fn visible_now(&self, timing: &TimingSettings) -> Seconds {
-        timing.visible(self.clock.servo.position())
+        self.clock.music.visible_now(timing)
     }
 }
 
@@ -315,7 +314,7 @@ fn enter(
 
     commands.insert_resource(NoteFieldClock {
         visible: -LEAD_IN,
-        timing,
+        timing: timing.clone(),
         speed: settings.stepfile.note_speed,
         target_y: TARGET_Y,
     });
@@ -328,7 +327,7 @@ fn enter(
         expire_cursor: 0,
         clock: PlaybackClock {
             phase: PlayPhase::LeadIn { remaining: LEAD_IN },
-            servo: AudioClock::start_at(-LEAD_IN),
+            music: StepfileClock::start_at(timing, -LEAD_IN),
             wall_since_play: Seconds::ZERO,
             latency_samples: Vec::new(),
         },
@@ -678,10 +677,10 @@ fn finish_when_complete(
     } else if let Ok(sink) = tick.single() {
         sink.empty()
     } else {
-        session.clock.servo.position().0 > session.last_note_time.0 + 2.0
+        session.clock.music.position().0 > session.last_note_time.0 + 2.0
     };
     // Trailing mines and hold tails can outlive the audio; let them resolve.
-    let chart_done = session.clock.servo.position().0 >= session.last_note_time.0;
+    let chart_done = session.clock.music.position().0 >= session.last_note_time.0;
     if !audio_done || !chart_done || !matches!(session.clock.phase, PlayPhase::Playing) {
         return;
     }

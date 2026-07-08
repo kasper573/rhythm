@@ -24,7 +24,7 @@ fn advance_clock(
     match clock.phase {
         PlayPhase::LeadIn { remaining } => {
             let remaining = remaining - delta;
-            clock.servo.set_position(-remaining.max(Seconds::ZERO));
+            clock.music.set_position(-remaining.max(Seconds::ZERO));
             if remaining.0 > 0.0 {
                 clock.phase = PlayPhase::LeadIn { remaining };
                 return;
@@ -54,7 +54,7 @@ fn advance_clock(
                 .or(tick.single())
                 .ok()
                 .map(|sink| Seconds(sink.position().as_secs_f64()));
-            let fresh = clock.servo.advance(delta, report);
+            let fresh = clock.music.advance(delta, report);
 
             // Reading through the ResMut must not touch it mutably:
             // change detection would flag Settings every frame and the

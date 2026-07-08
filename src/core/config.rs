@@ -151,6 +151,9 @@ pub struct HealthBarConfig {
     pub colors: Vec<HealthGradient>,
 }
 
+/// Fraction of a [`RhythmCycle::strike`] cycle spent rising into the apex.
+const STRIKE_ATTACK: f32 = 0.06;
+
 /// An animation cycle locked to the music. `speed` counts cycles per
 /// measure — 4 cycles once every beat, 1 once every measure — and
 /// `easing` is a CSS-style cubic bezier `[x1, y1, x2, y2]` shaping the
@@ -173,6 +176,19 @@ impl RhythmCycle {
     /// rises into the beat and falls away from it, shaped by the easing.
     pub fn pulse(&self, beat: f64) -> f32 {
         self.ease((2.0 * self.phase(beat) - 1.0).abs())
+    }
+
+    /// Like [`pulse`](RhythmCycle::pulse), but striking: the rise into the
+    /// apex takes only the last sliver of the cycle — practically instant
+    /// — and everything before it eases out from the previous apex.
+    pub fn strike(&self, beat: f64) -> f32 {
+        let phase = self.phase(beat);
+        let decay = 1.0 - STRIKE_ATTACK;
+        if phase >= decay {
+            self.ease((phase - decay) / STRIKE_ATTACK)
+        } else {
+            self.ease(1.0 - phase / decay)
+        }
     }
 
     /// Cycle phase `0..1`; .sm measures are four beats.

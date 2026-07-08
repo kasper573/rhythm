@@ -1,6 +1,8 @@
+mod clock;
 mod parse;
 mod timing;
 
+pub use clock::StepfileClock;
 pub use timing::StepfileTiming;
 
 use crate::core::units::{Beat, Seconds};
@@ -46,6 +48,17 @@ impl Stepfile {
             source,
         })?;
         Stepfile::parse(&String::from_utf8_lossy(&bytes))
+    }
+
+    /// Where playback audibly is when looping the preview sample window,
+    /// given the mixer's monotonic position: the raw position keeps
+    /// growing across loops while the audio wraps every `sample_length`.
+    pub fn sample_position(&self, raw: Seconds) -> Seconds {
+        if self.sample_length.0 > 0.0 {
+            self.sample_start + Seconds(raw.0.rem_euclid(self.sample_length.0))
+        } else {
+            self.sample_start + raw
+        }
     }
 
     /// The chart played in single-player mode: the median-meter dance-single
