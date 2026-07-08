@@ -11,7 +11,7 @@ use crate::core::health_vial::{HealthVialMaterial, spawn_health_vial};
 use crate::core::input::{Actions, GameAction, shift_held};
 use crate::core::library::{StepfileEntry, StepfileId, StepfileLibrary};
 use crate::core::note_field::{
-    NoteFieldClock, NoteFieldSystems, NoteSpawn, spawn_mine, spawn_note, spawn_receptors,
+    NoteFieldClock, NoteFieldSystems, NoteSpawn, TARGET_Y, spawn_mine, spawn_note, spawn_receptors,
 };
 use crate::core::note_skin::ActiveNoteSkin;
 use crate::core::scene_flow::SpawnScoped;
@@ -323,6 +323,7 @@ fn enter(
         visible: -LEAD_IN,
         timing,
         speed: settings.stepfile.note_speed,
+        target_y: TARGET_Y,
     });
     commands.insert_resource(PlaySession {
         title: entry.display_title(),

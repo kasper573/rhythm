@@ -1,11 +1,14 @@
 use crate::core::note_skin::ActiveNoteSkin;
 use crate::core::stepfile::StepfileTiming;
 use crate::core::units::{Beat, Seconds};
-use crate::core::{at, oriented};
+use crate::core::{SCREEN_SIZE, at, oriented};
 use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
+/// The receptor row's y on the design canvas; [`anchor_to_window_top`]
+/// keeps the row this far below the window's top edge whatever extra
+/// world a non-16:9 window reveals.
 pub const TARGET_Y: f32 = 260.0;
 pub const COLUMN_SPACING: f32 = 100.0;
 pub const ARROW_SIZE: f32 = 88.0;
@@ -38,6 +41,9 @@ pub struct NoteFieldClock {
     pub visible: Seconds,
     pub timing: StepfileTiming,
     pub speed: NoteSpeed,
+    /// World y of the receptor row; [`TARGET_Y`] on a 16:9 window,
+    /// re-anchored to the window top otherwise.
+    pub target_y: f32,
 }
 
 impl NoteFieldClock {
@@ -50,6 +56,7 @@ impl NoteFieldClock {
             now: self.visible,
             now_beat: self.beat(),
             speed: self.speed,
+            target_y: self.target_y,
         }
     }
 }
@@ -60,6 +67,7 @@ pub struct NoteScroll {
     now: Seconds,
     now_beat: f64,
     speed: NoteSpeed,
+    target_y: f32,
 }
 
 impl NoteScroll {
@@ -68,7 +76,12 @@ impl NoteScroll {
             NoteSpeed::Constant(scroll_bpm) => (time - self.now).0 * scroll_bpm as f64 / 60.0,
             NoteSpeed::Dynamic(multiplier) => (beat.0 - self.now_beat) * multiplier as f64,
         };
-        TARGET_Y - (arrows_until * ARROW_SIZE as f64) as f32
+        self.target_y - (arrows_until * ARROW_SIZE as f64) as f32
+    }
+
+    /// Where arrows stop scrolling: pinned hold heads stick here.
+    pub fn target_y(&self) -> f32 {
+        self.target_y
     }
 }
 
@@ -302,6 +315,7 @@ pub fn spawn_arrow_flash(
     commands: &mut Commands,
     skin: &ActiveNoteSkin,
     column: usize,
+    target_y: f32,
     color: Color,
     bright: bool,
 ) -> Entity {
@@ -315,7 +329,7 @@ pub fn spawn_arrow_flash(
         .spawn_scene(bsn! {
             skin_sprite(skin, flash.frame, size)
             Sprite { color: {color} }
-            oriented(column_x(column), TARGET_Y, 22.0, column_rotation(column))
+            oriented(column_x(column), target_y, 22.0, column_rotation(column))
         })
         .insert(FadeOut::growing(seconds, growth))
         .id()
@@ -325,11 +339,12 @@ pub fn spawn_mine_explosion(
     commands: &mut Commands,
     skin: &ActiveNoteSkin,
     column: usize,
+    target_y: f32,
 ) -> Entity {
     commands
         .spawn_scene(bsn! {
             skin_sprite(skin, skin.mine_explosion, ARROW_SIZE * 1.7)
-            at(column_x(column), TARGET_Y, 21.0)
+            at(column_x(column), target_y, 21.0)
         })
         .insert(FadeOut::growing(MINE_EXPLOSION_SECONDS, 0.25))
         .id()
@@ -374,6 +389,8 @@ impl Plugin for NoteFieldPlugin {
         app.add_systems(
             Update,
             (
+                anchor_to_window_top,
+                position_receptors,
                 scroll_arrows,
                 animate_tap_frames,
                 animate_hold_heads,
@@ -394,6 +411,32 @@ impl Plugin for NoteFieldPlugin {
 /// first frame.
 const OFFSCREEN_Y: f32 = -10_000.0;
 
+/// Keeps the receptor row a fixed distance below the window's top edge:
+/// the camera reveals extra world on non-16:9 windows, and the row must
+/// not drift down with it. Headless renderers have no window and keep the
+/// design-canvas default.
+fn anchor_to_window_top(windows: Query<&Window>, mut clock: ResMut<NoteFieldClock>) {
+    let Ok(window) = windows.single() else { return };
+    let width = window.width().max(1.0);
+    let height = window.height().max(1.0);
+    let visible_top = height * (SCREEN_SIZE.x / width).max(SCREEN_SIZE.y / height) / 2.0;
+    let target_y = visible_top - (SCREEN_SIZE.y / 2.0 - TARGET_Y);
+    if clock.target_y != target_y {
+        clock.target_y = target_y;
+    }
+}
+
+fn position_receptors(
+    clock: Res<NoteFieldClock>,
+    mut receptors: Query<&mut Transform, With<Receptor>>,
+) {
+    for mut transform in &mut receptors {
+        if transform.translation.y != clock.target_y {
+            transform.translation.y = clock.target_y;
+        }
+    }
+}
+
 /// Arrows scroll up from the bottom and meet their receptor exactly on time —
 /// position is derived from the clock, never accumulated. The head of a
 /// pinned hold sticks at the receptors until the hold resolves.
@@ -405,7 +448,7 @@ fn scroll_arrows(
     for (arrow, hold, mut transform) in &mut arrows {
         let mut y = scroll.y_at(arrow.time, arrow.beat);
         if hold.is_some_and(|hold| hold.state.pinned()) {
-            y = y.min(TARGET_Y);
+            y = y.min(scroll.target_y());
         }
         transform.translation.y = y;
     }
@@ -510,7 +553,7 @@ fn animate_hold_parts(
 
         let mut head_y = scroll.y_at(arrow.time, arrow.beat);
         if hold.state.pinned() {
-            head_y = head_y.min(TARGET_Y);
+            head_y = head_y.min(scroll.target_y());
         }
         let end_y = scroll.y_at(hold.end, hold.end_beat);
         let body_bottom = end_y + skin.hold_body_stop_above_tail * scale;

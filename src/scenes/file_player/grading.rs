@@ -4,12 +4,14 @@ use crate::core::config::{FixedGradeDef, GameConfig, Grade, RowOutcome};
 use crate::core::font::game_font;
 use crate::core::input::Actions;
 use crate::core::note_field::{
-    FadeOut, HOLD_OK_FADE_SECONDS, TARGET_Y, column_x, spawn_arrow_flash, spawn_mine_explosion,
+    FadeOut, HOLD_OK_FADE_SECONDS, NoteFieldClock, column_x, spawn_arrow_flash,
+    spawn_mine_explosion,
 };
 use crate::core::note_skin::ActiveNoteSkin;
 use crate::core::scene_flow::SpawnScoped;
 use crate::core::settings::Settings;
 use crate::scenes::{GameScene, scene_accepts_input};
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
 /// Hold let-go grace: life drains from full to dropped over this long once
@@ -37,18 +39,31 @@ pub(super) fn plugin(app: &mut App) {
     );
 }
 
+/// The read-only stage state every grading system judges against.
+#[derive(SystemParam)]
+struct GradingContext<'w> {
+    settings: Res<'w, Settings>,
+    config: Res<'w, GameConfig>,
+    skin: Res<'w, ActiveNoteSkin>,
+    clock: Res<'w, NoteFieldClock>,
+}
+
 /// Banks ¤Left¤/¤Down¤/¤Up¤/¤Right¤ presses into the nearest unresolved
 /// row with an unbanked arrow in that column, and resolves rows whose
 /// last arrow just arrived. Inputs that hit no grading window are no-ops.
 fn bank_row_inputs(
     actions: Actions,
-    settings: Res<Settings>,
-    config: Res<GameConfig>,
-    skin: Res<ActiveNoteSkin>,
+    ctx: GradingContext,
     mut session: ResMut<PlaySession>,
     mut graded: MessageWriter<RowGraded>,
     mut commands: Commands,
 ) {
+    let GradingContext {
+        settings,
+        config,
+        skin,
+        clock,
+    } = &ctx;
     let widest = config.widest_window();
     let input_time = session.graded_now(&settings.timing);
 
@@ -95,8 +110,9 @@ fn bank_row_inputs(
         if session.rows[index].complete() {
             resolve_row(
                 &mut session,
-                &config,
-                &skin,
+                config,
+                skin,
+                clock.target_y,
                 index,
                 &mut graded,
                 &mut commands,
@@ -112,6 +128,7 @@ fn resolve_row(
     session: &mut PlaySession,
     config: &GameConfig,
     skin: &ActiveNoteSkin,
+    target_y: f32,
     index: usize,
     graded: &mut MessageWriter<RowGraded>,
     commands: &mut Commands,
@@ -135,7 +152,7 @@ fn resolve_row(
     };
     let bright = session.combo >= config.bright_arrow_flash_combo;
     for arrow in &session.rows[index].arrows {
-        let flash = spawn_arrow_flash(commands, skin, arrow.column, color, bright);
+        let flash = spawn_arrow_flash(commands, skin, arrow.column, target_y, color, bright);
         commands
             .entity(flash)
             .insert(DespawnOnExit(GameScene::FilePlayer));
@@ -151,12 +168,17 @@ fn resolve_row(
 /// was never stepped can never be caught, so it drops immediately; a hold
 /// whose head was banked fights on even though its row missed.
 fn expire_missed_rows(
-    settings: Res<Settings>,
-    config: Res<GameConfig>,
+    ctx: GradingContext,
     mut session: ResMut<PlaySession>,
     mut graded: MessageWriter<RowGraded>,
     mut commands: Commands,
 ) {
+    let GradingContext {
+        settings,
+        config,
+        clock,
+        ..
+    } = &ctx;
     let expire_before = session.graded_now(&settings.timing) - config.widest_window();
     while session.expire_cursor < session.rows.len() {
         let cursor = session.expire_cursor;
@@ -165,7 +187,7 @@ fn expire_missed_rows(
             break;
         }
         if row.outcome.is_none() {
-            apply_outcome(&mut session, &config, cursor, RowOutcome::Miss, &mut graded);
+            apply_outcome(&mut session, config, cursor, RowOutcome::Miss, &mut graded);
             let session = &mut *session;
             for arrow in &mut session.rows[cursor].arrows {
                 let Some(hold) = &mut arrow.hold else {
@@ -173,8 +195,14 @@ fn expire_missed_rows(
                 };
                 if arrow.error.is_none() {
                     hold.result = Some(HoldOutcome::Ng);
-                    apply_hold_health(&mut session.health, &config, HoldOutcome::Ng);
-                    spawn_hold_popup(&mut commands, &config, arrow.column, HoldOutcome::Ng);
+                    apply_hold_health(&mut session.health, config, HoldOutcome::Ng);
+                    spawn_hold_popup(
+                        &mut commands,
+                        config,
+                        arrow.column,
+                        clock.target_y,
+                        HoldOutcome::Ng,
+                    );
                 }
             }
         }
@@ -189,11 +217,16 @@ fn expire_missed_rows(
 fn update_holds(
     actions: Actions,
     time: Res<Time>,
-    settings: Res<Settings>,
-    config: Res<GameConfig>,
+    ctx: GradingContext,
     mut session: ResMut<PlaySession>,
     mut commands: Commands,
 ) {
+    let GradingContext {
+        settings,
+        config,
+        clock,
+        ..
+    } = &ctx;
     let now = session.graded_now(&settings.timing);
     let delta = time.delta_secs();
     let session = &mut *session;
@@ -227,15 +260,27 @@ fn update_holds(
 
         if now.0 >= hold.end.0 && hold.life > 0.0 {
             hold.result = Some(HoldOutcome::Ok);
-            apply_hold_health(&mut session.health, &config, HoldOutcome::Ok);
+            apply_hold_health(&mut session.health, config, HoldOutcome::Ok);
             commands
                 .entity(arrow.entity)
                 .insert(FadeOut::over(HOLD_OK_FADE_SECONDS));
-            spawn_hold_popup(&mut commands, &config, arrow.column, HoldOutcome::Ok);
+            spawn_hold_popup(
+                &mut commands,
+                config,
+                arrow.column,
+                clock.target_y,
+                HoldOutcome::Ok,
+            );
         } else if hold.life <= 0.0 {
             hold.result = Some(HoldOutcome::Ng);
-            apply_hold_health(&mut session.health, &config, HoldOutcome::Ng);
-            spawn_hold_popup(&mut commands, &config, arrow.column, HoldOutcome::Ng);
+            apply_hold_health(&mut session.health, config, HoldOutcome::Ng);
+            spawn_hold_popup(
+                &mut commands,
+                config,
+                arrow.column,
+                clock.target_y,
+                HoldOutcome::Ng,
+            );
         }
     }
 }
@@ -244,11 +289,16 @@ fn update_holds(
 /// receptors; otherwise it passes by harmlessly.
 fn update_mines(
     actions: Actions,
-    settings: Res<Settings>,
-    skin: Res<ActiveNoteSkin>,
+    ctx: GradingContext,
     mut session: ResMut<PlaySession>,
     mut commands: Commands,
 ) {
+    let GradingContext {
+        settings,
+        skin,
+        clock,
+        ..
+    } = &ctx;
     let now = session.graded_now(&settings.timing);
     for mine in &mut session.mines {
         if mine.outcome.is_some() || mine.time.0 > now.0 {
@@ -260,7 +310,7 @@ fn update_mines(
         }
         mine.outcome = Some(MineOutcome::Exploded);
         commands.entity(mine.entity).despawn();
-        let explosion = spawn_mine_explosion(&mut commands, &skin, mine.column);
+        let explosion = spawn_mine_explosion(&mut commands, skin, mine.column, clock.target_y);
         commands
             .entity(explosion)
             .insert(DespawnOnExit(GameScene::FilePlayer));
@@ -312,6 +362,7 @@ fn spawn_hold_popup(
     commands: &mut Commands,
     config: &GameConfig,
     column: usize,
+    target_y: f32,
     outcome: HoldOutcome,
 ) {
     let def = hold_def(config, outcome);
@@ -324,7 +375,7 @@ fn spawn_hold_popup(
                 game_font(30.0)
                 Text2d({label})
                 TextColor({color})
-                at(column_x(column), TARGET_Y - 54.0, 21.0)
+                at(column_x(column), target_y - 54.0, 21.0)
             },
         )
         .insert(FadeOut::growing(HOLD_POPUP_SECONDS, 0.25));

@@ -13,7 +13,7 @@ pub struct HealthVialPlugin;
 impl Plugin for HealthVialPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(UiMaterialPlugin::<HealthVialMaterial>::default())
-            .add_systems(Update, animate_vials);
+            .add_systems(Update, (clamp_vial_width, animate_vials));
     }
 }
 
@@ -24,6 +24,26 @@ impl Plugin for HealthVialPlugin {
 pub struct HealthVial {
     /// `0..=1` of the vial's capacity.
     pub fill: f32,
+}
+
+/// The vial's layout rect (the shader node hangs off it by the glow
+/// margin); its width is clamped in real screen pixels.
+#[derive(Component, Clone, Default)]
+struct HealthVialFrame;
+
+/// UI values scale with the window, but the vial must stay a readable
+/// sliver: its on-screen width is clamped by counter-scaling the node.
+fn clamp_vial_width(ui_scale: Res<UiScale>, mut frames: Query<&mut Node, With<HealthVialFrame>>) {
+    if ui_scale.0 <= 0.0 {
+        return;
+    }
+    let on_screen = (VIAL_WIDTH * ui_scale.0).clamp(VIAL_MIN_WIDTH, VIAL_MAX_WIDTH);
+    let width = Val::Px(on_screen / ui_scale.0);
+    for mut node in &mut frames {
+        if node.width != width {
+            node.width = width;
+        }
+    }
 }
 
 pub fn spawn_health_vial(
@@ -41,11 +61,12 @@ pub fn spawn_health_vial(
     // vial itself.
     let vial = commands
         .spawn_scene(bsn! {
+            HealthVialFrame
             Node {
                 position_type: PositionType::Absolute,
                 left: px(50),
                 top: percent(10),
-                width: px(50),
+                width: px(VIAL_WIDTH),
                 height: percent(80),
             }
         })
@@ -76,7 +97,8 @@ pub struct HealthVialMaterial {
     /// `(liquid level, turbulence, glow pulse, gradient scroll)`.
     #[uniform(0)]
     params: Vec4,
-    /// `(glow margin in node pixels, 0, 0, 0)`.
+    /// `(glow margin in physical pixels, 0, 0, 0)`; kept in the node's
+    /// own units by [`animate_vials`] whatever the UI scale.
     #[uniform(1)]
     geometry: Vec4,
     /// The active gradient sampled bottom-to-top at fixed positions.
@@ -91,8 +113,13 @@ impl UiMaterial for HealthVialMaterial {
 }
 
 const GRADIENT_SAMPLES: usize = 16;
-/// Node pixels reserved around the vial for the pulsing glow.
-const GLOW_MARGIN: f32 = 20.0;
+/// Node pixels reserved around the vial for the pulsing glow; the shader
+/// tapers the glow to exactly zero at this boundary.
+const GLOW_MARGIN: f32 = 32.0;
+const VIAL_WIDTH: f32 = 50.0;
+/// On-screen bounds of the vial's width, whatever the UI scale.
+const VIAL_MIN_WIDTH: f32 = 20.0;
+const VIAL_MAX_WIDTH: f32 = 50.0;
 /// The liquid level's time constant toward the target fill.
 const LEVEL_TAU: f32 = 0.25;
 /// How long stirred-up waves take to settle back to a flat surface.
@@ -119,6 +146,7 @@ fn animate_vials(
         &HealthVial,
         &mut VialMotion,
         &MaterialNode<HealthVialMaterial>,
+        &ComputedNode,
     )>,
 ) {
     let delta = time.delta_secs();
@@ -127,7 +155,7 @@ fn animate_vials(
     let glow = config.healthbar.glow.pulse(beat);
     // One full trip through the mirrored gradient (two units) per cycle.
     let scroll = (config.healthbar.liquid.progress(beat) * 2.0).rem_euclid(2.0);
-    for (vial, mut motion, node) in &mut vials {
+    for (vial, mut motion, node, computed) in &mut vials {
         let stops = &config
             .healthbar
             .gradient_at(Percent(vial.fill * 100.0))
@@ -164,6 +192,9 @@ fn animate_vials(
 
         if let Some(mut material) = materials.get_mut(&node.0) {
             material.params = Vec4::new(motion.level, motion.turbulence, glow, scroll);
+            // The shader works in the node's physical pixels; the margin is
+            // authored in logical ui pixels.
+            material.geometry.x = GLOW_MARGIN / computed.inverse_scale_factor;
             material.colors = motion.colors;
         }
     }

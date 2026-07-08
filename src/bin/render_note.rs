@@ -24,7 +24,7 @@ use rhythm::core::config::GameConfig;
 use rhythm::core::note_field::{
     ARROW_SIZE, FadeOut, HOLD_OK_FADE_SECONDS, HoldPart, HoldVisual, HoldVisualState, MineNote,
     NoteArrow, NoteFieldClock, NoteFieldPlugin, NoteSpawn, NoteSpeed, Receptor, SpawnedNote,
-    spawn_arrow_flash, spawn_mine, spawn_mine_explosion, spawn_note, spawn_receptors,
+    TARGET_Y, spawn_arrow_flash, spawn_mine, spawn_mine_explosion, spawn_note, spawn_receptors,
 };
 use rhythm::core::note_skin::{ActiveNoteSkin, load_note_skin};
 use rhythm::core::stepfile::StepfileTiming;
@@ -513,6 +513,7 @@ impl FieldRenderer {
             visible: start,
             timing: timing.clone(),
             speed: self.speed,
+            target_y: TARGET_Y,
         });
         let mut notes: Vec<(SpawnedNote, usize)> = Vec::new();
         let mut mines: Vec<(Entity, usize)> = Vec::new();
@@ -689,7 +690,7 @@ fn apply_action(
             let column = *column;
             world.resource_scope(|world, skin: Mut<ActiveNoteSkin>| {
                 let mut commands = world.commands();
-                spawn_arrow_flash(&mut commands, &skin, column, flash_color, false);
+                spawn_arrow_flash(&mut commands, &skin, column, TARGET_Y, flash_color, false);
             });
             world.flush();
         }
@@ -706,7 +707,7 @@ fn apply_action(
             world.despawn(entity);
             world.resource_scope(|world, skin: Mut<ActiveNoteSkin>| {
                 let mut commands = world.commands();
-                spawn_mine_explosion(&mut commands, &skin, column);
+                spawn_mine_explosion(&mut commands, &skin, column, TARGET_Y);
             });
             world.flush();
         }

@@ -55,8 +55,11 @@ fn fragment(in: UiVertexOutput) -> @location(0) vec4<f32> {
     let inner = smoothstep(aa, -aa, d + WALL);
 
     // The glass glow: a soft halo hugging the silhouette, breathing with
-    // the beat.
-    let halo = exp(-max(d, 0.0) / 0.16) * glow_pulse;
+    // the beat. Tapered to exactly zero at the node boundary so the quad
+    // edge can never clip a visible remainder into a rectangle.
+    let margin_units = margin / max(vial_size.x, 1.0);
+    let edge = clamp(1.0 - max(d, 0.0) / max(margin_units, 1e-4), 0.0, 1.0);
+    let halo = exp(-max(d, 0.0) / 0.16) * glow_pulse * edge;
     if outer <= 0.0 {
         return vec4<f32>(GLASS_TINT * halo, halo * 0.45);
     }
