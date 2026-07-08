@@ -7,6 +7,7 @@ use crate::core::assets::{asset_root, asset_server_path};
 use crate::core::at;
 use crate::core::config::{GameConfig, StepOutcome};
 use crate::core::font::game_font;
+use crate::core::health_vial::{HealthVialMaterial, spawn_health_vial};
 use crate::core::input::{Actions, GameAction, shift_held};
 use crate::core::library::{StepfileId, StepfileLibrary};
 use crate::core::note_field::{
@@ -29,12 +30,21 @@ use bevy::prelude::*;
 pub struct ScoreResults {
     pub id: StepfileId,
     pub title: String,
+    pub result: PlayResult,
     pub outcomes: Vec<StepOutcome>,
     pub max_combo: u32,
     pub holds_ok: u32,
     pub holds_total: u32,
     pub mines_hit: u32,
     pub mines_total: u32,
+}
+
+/// How a play session ended: cleared the chart, or drained to zero health
+/// partway through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlayResult {
+    Cleared,
+    Failed,
 }
 
 pub struct FilePlayerPlugin;
@@ -77,9 +87,11 @@ impl Plugin for FilePlayerPlugin {
             .add_systems(
                 Update,
                 (
+                    fail_when_drained,
                     finish_when_complete,
                     handle_cancel.run_if(scene_accepts_input),
                 )
+                    .chain()
                     .in_set(PlaySet::Present),
             );
     }
@@ -103,6 +115,7 @@ struct StageAssets<'w> {
     skin: Res<'w, ActiveNoteSkin>,
     asset_server: Res<'w, AssetServer>,
     audio_sources: ResMut<'w, Assets<AudioSource>>,
+    vial_materials: ResMut<'w, Assets<HealthVialMaterial>>,
 }
 
 const LEAD_IN: Seconds = Seconds(2.0);
@@ -124,6 +137,7 @@ pub(super) struct PlaySession {
     pub latency_samples: Vec<Seconds>,
     pub combo: u32,
     pub max_combo: u32,
+    pub health: u32,
     pub last_note_time: Seconds,
     pub finished: bool,
     /// While enabled, hit errors accumulate and the median of every batch is
@@ -277,6 +291,10 @@ fn enter(
             .entity(entity)
             .insert(DespawnOnExit(GameScene::FilePlayer));
     }
+    let vial = spawn_health_vial(&mut commands, &mut assets.vial_materials, 1.0);
+    commands
+        .entity(vial)
+        .insert(DespawnOnExit(GameScene::FilePlayer));
 
     let mut mines = Vec::new();
     let mut last_note_time = Seconds::ZERO;
@@ -420,6 +438,7 @@ fn enter(
         latency_samples: Vec::new(),
         combo: 0,
         max_combo: 0,
+        health: config.player_max_health,
         last_note_time,
         finished: false,
         autosync: false,
@@ -630,15 +649,44 @@ fn finish_when_complete(
         return;
     }
     session.finished = true;
+    commands.insert_resource(collect_results(&session, &selected, PlayResult::Cleared));
+    fade.begin(GameScene::Score);
+}
+
+/// Zero health ends the session on the spot: the fail sting fires here so
+/// it plays through the transition, and the judgments given so far become
+/// the final result.
+fn fail_when_drained(
+    mut session: ResMut<PlaySession>,
+    selected: Res<SelectedStepfile>,
+    mut sfx: MessageWriter<PlaySfx>,
+    mut commands: Commands,
+    mut fade: ResMut<SceneFade>,
+) {
+    if session.finished || session.health > 0 {
+        return;
+    }
+    session.finished = true;
+    sfx.write(PlaySfx(Sfx::Fail));
+    commands.insert_resource(collect_results(&session, &selected, PlayResult::Failed));
+    fade.begin(GameScene::Score);
+}
+
+fn collect_results(
+    session: &PlaySession,
+    selected: &SelectedStepfile,
+    result: PlayResult,
+) -> ScoreResults {
     let holds: Vec<&HoldState> = session
         .steps
         .iter()
         .flat_map(|step| &step.arrows)
         .filter_map(|arrow| arrow.hold.as_ref())
         .collect();
-    commands.insert_resource(ScoreResults {
+    ScoreResults {
         id: selected.id,
         title: session.title.clone(),
+        result,
         outcomes: session
             .steps
             .iter()
@@ -656,8 +704,7 @@ fn finish_when_complete(
             .filter(|mine| mine.outcome == Some(MineOutcome::Hit))
             .count() as u32,
         mines_total: session.mines.len() as u32,
-    });
-    fade.begin(GameScene::Score);
+    }
 }
 
 fn handle_cancel(

@@ -15,7 +15,7 @@ pub struct GameConfig {
     pub wheel_default: (String, String),
     /// Grading windows ordered best to worst (smallest window first).
     pub grades: Vec<GradeDef>,
-    pub miss_appearance: MissAppearance,
+    pub miss: MissDef,
     /// Tick track volume: `0..=1` attenuates, `1..=2` boosts. Capped at 2 so
     /// a config typo can never blow anyone's eardrums out.
     pub tick_volume: f32,
@@ -29,6 +29,10 @@ pub struct GameConfig {
     /// Combo at which the arrow flash switches to its brighter, snappier
     /// variant.
     pub bright_arrow_flash_combo: u32,
+    /// Every play session starts at full health; judgments then apply
+    /// their `health_offset`, and draining to zero fails the session.
+    pub player_max_health: u32,
+    pub healthbar: HealthBarConfig,
 }
 
 /// The player's presentation choices for playing stepfiles.
@@ -62,10 +66,82 @@ pub struct SpeedModifierSet {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct MissAppearance {
+pub struct MissDef {
     pub name: String,
     #[serde(deserialize_with = "hex_color")]
     pub color: Color,
+    pub health_offset: i32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct HealthBarConfig {
+    /// Gradient presets keyed by the health percentage they take effect
+    /// at; the active preset is the last one at or below current health.
+    /// Sorted ascending.
+    pub colors: Vec<HealthGradient>,
+}
+
+impl HealthBarConfig {
+    pub fn gradient_at(&self, health_percent: f32) -> &HealthGradient {
+        self.colors
+            .iter()
+            .rev()
+            .find(|gradient| gradient.min_health <= health_percent)
+            .unwrap_or(&self.colors[0])
+    }
+}
+
+/// One `[health, [percent, "#RRGGBB"], ...]` healthbar config entry: the
+/// bottom-to-top color stops used from `min_health` percent upward.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(try_from = "RawHealthGradient")]
+pub struct HealthGradient {
+    pub min_health: f32,
+    /// Sorted ascending; the spectrum outside the outermost stops extends
+    /// flat, like CSS gradients.
+    pub stops: Vec<HealthColorStop>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct HealthColorStop {
+    /// `0..=100` position along the gradient axis, bottom to top.
+    pub percent: f32,
+    pub color: Color,
+}
+
+#[derive(Deserialize)]
+struct RawHealthGradient(Vec<RawGradientPart>);
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum RawGradientPart {
+    MinHealth(f32),
+    Stop(f32, String),
+}
+
+impl TryFrom<RawHealthGradient> for HealthGradient {
+    type Error = String;
+
+    fn try_from(raw: RawHealthGradient) -> Result<HealthGradient, String> {
+        let mut parts = raw.0.into_iter();
+        let Some(RawGradientPart::MinHealth(min_health)) = parts.next() else {
+            return Err("healthbar entry must start with its health threshold".into());
+        };
+        let stops = parts
+            .map(|part| match part {
+                RawGradientPart::Stop(percent, hex) => Srgba::hex(&hex)
+                    .map(|color| HealthColorStop {
+                        percent,
+                        color: Color::Srgba(color),
+                    })
+                    .map_err(|error| format!("bad hex color {hex:?}: {error}")),
+                RawGradientPart::MinHealth(value) => {
+                    Err(format!("expected a [percent, color] stop, got {value}"))
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(HealthGradient { min_health, stops })
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -83,6 +159,8 @@ pub struct GradeDef {
     /// screen and scroll past instead of vanishing.
     #[serde(default, deserialize_with = "optional_hex_color")]
     pub arrow_flash: Option<Color>,
+    /// Applied to the player's health when this grade is given.
+    pub health_offset: i32,
 }
 
 /// In the config: `false`, `true`, or `"ms"`.
@@ -130,6 +208,13 @@ impl GameConfig {
             .unwrap_or_else(|error| panic!("invalid {}: {error}", path.display()));
         config.validate(&path.display().to_string());
         config
+    }
+
+    pub fn health_offset(&self, judgment: Judgment) -> i32 {
+        match judgment {
+            Judgment::Grade(grade) => self.grades[grade.0].health_offset,
+            Judgment::Miss => self.miss.health_offset,
+        }
     }
 
     pub fn window(&self, grade: GradeIndex) -> Seconds {
@@ -210,6 +295,32 @@ impl GameConfig {
             !self.note_quants.is_empty(),
             "{source}: note_quants must not be empty"
         );
+        assert!(
+            self.player_max_health > 0,
+            "{source}: player_max_health must be positive"
+        );
+        assert!(
+            !self.healthbar.colors.is_empty(),
+            "{source}: healthbar colors must not be empty"
+        );
+        for pair in self.healthbar.colors.windows(2) {
+            assert!(
+                pair[0].min_health < pair[1].min_health,
+                "{source}: healthbar entries must be sorted by health threshold"
+            );
+        }
+        for gradient in &self.healthbar.colors {
+            assert!(
+                !gradient.stops.is_empty(),
+                "{source}: healthbar entries need at least one color stop"
+            );
+            for pair in gradient.stops.windows(2) {
+                assert!(
+                    pair[0].percent < pair[1].percent,
+                    "{source}: healthbar color stops must be sorted ascending"
+                );
+            }
+        }
         assert!(
             self.note_quants.iter().all(|quant| *quant > 0),
             "{source}: note_quants must be positive"

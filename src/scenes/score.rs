@@ -4,7 +4,7 @@ use crate::core::input::{Actions, GameAction};
 use crate::core::menu::TITLE_COLOR;
 use crate::core::scene_flow::SpawnScoped;
 use crate::core::sfx::{PlaySfx, Sfx};
-use crate::scenes::file_player::ScoreResults;
+use crate::scenes::file_player::{PlayResult, ScoreResults};
 use crate::scenes::file_select::FileSelectTarget;
 use crate::scenes::{GameScene, SceneFade, scene_accepts_input};
 use bevy::prelude::*;
@@ -56,8 +56,8 @@ fn enter(
         .map(|(grade, count)| (format!("{:<12} {count}", grade.name), grade.color))
         .collect();
     tallies.push((
-        format!("{:<12} {miss_count}", config.miss_appearance.name),
-        config.miss_appearance.color,
+        format!("{:<12} {miss_count}", config.miss.name),
+        config.miss.color,
     ));
     tallies.push((
         format!(
@@ -87,6 +87,16 @@ fn enter(
         .collect();
 
     let title = results.title.clone();
+    let (verdict_label, verdict_color) = match results.result {
+        PlayResult::Cleared => ("CLEARED", Color::srgb(0.5, 0.95, 0.6)),
+        PlayResult::Failed => ("FAILED", Color::srgb(0.95, 0.25, 0.25)),
+    };
+    let verdict = bsn! {
+        game_font(34.0)
+        Text({verdict_label.to_string()})
+        TextColor({verdict_color})
+        Node { margin: {UiRect::bottom(Val::Px(20.0))} }
+    };
     let combo = format!("Max combo: {}", results.max_combo);
     commands.spawn_scoped(
         GameScene::Score,
@@ -104,8 +114,9 @@ fn enter(
                     game_font(46.0)
                     Text({title})
                     TextColor({TITLE_COLOR})
-                    Node { margin: {UiRect::bottom(Val::Px(28.0))} }
+                    Node { margin: {UiRect::bottom(Val::Px(4.0))} }
                 ),
+                {verdict},
                 {tallies},
                 (
                     game_font(32.0)

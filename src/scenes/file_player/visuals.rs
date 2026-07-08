@@ -3,6 +3,7 @@ use super::{
     direction_action,
 };
 use crate::core::config::{GameConfig, Judgment, StepOutcome, TimingFeedback};
+use crate::core::health_vial::HealthVial;
 use crate::core::input::Actions;
 use crate::core::note_field::{HoldVisual, HoldVisualState, NoteFieldClock, Receptor};
 use crate::core::settings::Settings;
@@ -11,7 +12,10 @@ use bevy::prelude::*;
 
 pub(super) fn plugin(app: &mut App) {
     app.add_message::<OffsetOsdLine>()
-        .add_systems(Update, sync_note_field.in_set(PlaySet::Sync))
+        .add_systems(
+            Update,
+            (sync_note_field, sync_health_vial).in_set(PlaySet::Sync),
+        )
         .add_systems(
             Update,
             (update_judgment_text, update_combo_text, run_offset_osd)
@@ -27,6 +31,16 @@ pub(super) struct OffsetOsdLine(pub(super) String);
 /// Pushes the session's state into the note field: the drawn timeline, the
 /// receptors' pressed panels, and every hold's render state. Runs after
 /// grading and before the field's animation systems.
+fn sync_health_vial(
+    session: Res<PlaySession>,
+    config: Res<GameConfig>,
+    mut vials: Query<&mut HealthVial>,
+) {
+    for mut vial in &mut vials {
+        vial.fill = session.health as f32 / config.player_max_health as f32;
+    }
+}
+
 fn sync_note_field(
     actions: Actions,
     session: Res<PlaySession>,
@@ -86,10 +100,7 @@ fn update_judgment_text(
 /// feedback leads the name, late feedback trails it.
 fn judgment_display(config: &GameConfig, outcome: StepOutcome) -> (String, Color) {
     let StepOutcome::Hit { error } = outcome else {
-        return (
-            config.miss_appearance.name.clone(),
-            config.miss_appearance.color,
-        );
+        return (config.miss.name.clone(), config.miss.color);
     };
     let Judgment::Grade(grade) = config.judge(outcome) else {
         unreachable!("hits always judge to a grade");

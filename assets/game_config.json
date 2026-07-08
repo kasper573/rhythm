@@ -6,34 +6,39 @@
       "name": "Marvelous",
       "window_ms": 16.667,
       "color": "#FFFFFF",
-      "arrow_flash": "#FFFFFF"
+      "arrow_flash": "#FFFFFF",
+      "health_offset": 2
     },
     {
       "name": "Perfect",
       "window_ms": 33.333,
       "color": "#FAD94D",
       "timing_feedback": true,
-      "arrow_flash": "#FFFF40"
+      "arrow_flash": "#FFFF40",
+      "health_offset": 2
     },
     {
       "name": "Great",
       "window_ms": 91.667,
       "color": "#59E673",
       "timing_feedback": true,
-      "arrow_flash": "#00F2F2"
+      "arrow_flash": "#00F2F2",
+      "health_offset": 1
     },
     {
       "name": "Good",
       "window_ms": 141.667,
       "color": "#59A6F2",
-      "timing_feedback": true
+      "timing_feedback": true,
+      "health_offset": 0
     },
     {
       "name": "Bad",
       "window_ms": 225.0,
       "color": "#BF73E6",
       "timing_feedback": true,
-      "breaks_combo": true
+      "breaks_combo": true,
+      "health_offset": -4
     }
   ],
   // StepMania default timings
@@ -65,8 +70,16 @@
   //     "breaks_combo": true
   //   }
   // ],
-  "miss_appearance": { "name": "Miss", "color": "#F23F3F" },
+  "miss": { "name": "Miss", "color": "#F23F3F", "health_offset": -8 },
   "bright_arrow_flash_combo": 100,
+  "player_max_health": 100,
+  "healthbar": {
+    "colors": [
+      [0, [33, "#2A7B9B"], [100, "#53D6ED"]],
+      [50, [33, "#FD1D1D"], [100, "#FCB045"]],
+      [100, [0, "#2A7B9B"], [50, "#57C785"], [100, "#EDDD53"]]
+    ]
+  },
   "tick_volume": 1.3,
   "note_quants": [4, 8, 12, 16, 24, 32, 48, 64],
   "default_keymap": {

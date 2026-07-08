@@ -14,6 +14,7 @@ pub enum Sfx {
     GroupToggle,
     StartFile,
     Tick,
+    Fail,
 }
 
 impl Sfx {

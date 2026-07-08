@@ -2,6 +2,7 @@ pub mod core;
 pub mod scenes;
 
 use crate::core::config::GameConfig;
+use crate::core::health_vial::HealthVialPlugin;
 use crate::core::input::InputPlugin;
 use crate::core::library::StepfileLibrary;
 use crate::core::note_field::NoteFieldPlugin;
@@ -48,6 +49,7 @@ pub fn run() {
             settings_plugin,
             NoteSkinPlugin,
             NoteFieldPlugin,
+            HealthVialPlugin,
             InputPlugin,
             SfxPlugin,
             scenes::ScenesPlugin,

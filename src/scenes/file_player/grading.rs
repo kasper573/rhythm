@@ -286,6 +286,10 @@ fn apply_outcome(
 ) {
     session.steps[step_index].outcome = Some(outcome);
     session.judged_count += 1;
+    session.health = session
+        .health
+        .saturating_add_signed(config.health_offset(config.judge(outcome)))
+        .min(config.player_max_health);
     if config.breaks_combo(config.judge(outcome)) {
         session.combo = 0;
     } else {
