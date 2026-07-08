@@ -1,4 +1,4 @@
-use super::FileSelectMode;
+use super::{FileSelectMode, STEPFILE_TEXT};
 use crate::core::config::GameConfig;
 use crate::core::font::GameFont;
 use crate::core::input::{Actions, GameAction, NavPulse};
@@ -32,12 +32,15 @@ pub(super) fn summary(settings: &Settings, skins: &NoteSkinLibrary) -> String {
 
 /// Edits the stepfile options in place: they live in the settings, so
 /// changes persist immediately. An edge-to-edge stripe over the vertical
-/// center of the file select, which stays mounted underneath.
+/// center of the file select, which stays mounted underneath. The
+/// background and the content are siblings so the transition can slide
+/// them in from opposite directions.
 pub(super) fn enter(mut commands: Commands, font: Res<GameFont>) {
     commands
         .spawn((
             DespawnOnExit(FileSelectMode::PlayerOptions),
             ActiveRow(0),
+            ModalTransition { t: 0.0, dir: 1.0 },
             Node {
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
@@ -48,47 +51,92 @@ pub(super) fn enter(mut commands: Commands, font: Res<GameFont>) {
         ))
         .with_children(|screen| {
             screen
-                .spawn((
-                    Node {
-                        width: Val::Percent(100.0),
-                        flex_direction: FlexDirection::Column,
-                        align_items: AlignItems::Center,
-                        padding: UiRect::vertical(Val::Px(28.0)),
-                        row_gap: Val::Px(14.0),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgb(0.0, 0.0, 0.0)),
-                ))
+                .spawn(Node {
+                    width: Val::Percent(100.0),
+                    ..default()
+                })
                 .with_children(|stripe| {
                     stripe.spawn((
-                        Text::new("Player Options"),
-                        font.sized(52.0),
-                        TextColor(TITLE_COLOR),
+                        ModalBackground,
                         Node {
-                            margin: UiRect::bottom(Val::Px(24.0)),
+                            position_type: PositionType::Absolute,
+                            left: Val::Percent(-100.0),
+                            top: Val::Px(0.0),
+                            bottom: Val::Px(0.0),
+                            width: Val::Percent(100.0),
                             ..default()
                         },
+                        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.0)),
                     ));
-                    for index in 0..OptionRow::COUNT {
-                        stripe.spawn((
-                            RowText(index),
-                            Text::new(""),
-                            font.sized(28.0),
-                            TextColor(INACTIVE_COLOR),
-                        ));
-                    }
+                    stripe
+                        .spawn((
+                            ModalContent,
+                            Node {
+                                width: Val::Percent(100.0),
+                                left: Val::Percent(100.0),
+                                flex_direction: FlexDirection::Column,
+                                align_items: AlignItems::Center,
+                                padding: UiRect::vertical(Val::Px(28.0)),
+                                row_gap: Val::Px(14.0),
+                                ..default()
+                            },
+                        ))
+                        .with_children(|content| {
+                            content.spawn((
+                                Text::new("Player Options"),
+                                font.sized(52.0),
+                                TextColor(TITLE_COLOR),
+                                Node {
+                                    margin: UiRect::bottom(Val::Px(24.0)),
+                                    ..default()
+                                },
+                            ));
+                            for index in 0..OptionRow::COUNT {
+                                content
+                                    .spawn(Node {
+                                        column_gap: Val::Px(24.0),
+                                        align_items: AlignItems::Center,
+                                        ..default()
+                                    })
+                                    .with_children(|option| {
+                                        let label: &str = row(index).into();
+                                        option.spawn((
+                                            RowText(index),
+                                            Text::new(label),
+                                            font.sized(28.0),
+                                            TextColor(INACTIVE_COLOR),
+                                            Node {
+                                                width: Val::Px(240.0),
+                                                ..default()
+                                            },
+                                        ));
+                                        option.spawn((
+                                            RowValues(index),
+                                            Node {
+                                                column_gap: Val::Px(22.0),
+                                                align_items: AlignItems::Center,
+                                                ..default()
+                                            },
+                                        ));
+                                    });
+                            }
+                        });
                 });
         });
 }
 
 pub(super) fn handle_pulses(
     mut pulses: MessageReader<NavPulse>,
+    modal: Single<&ModalTransition>,
     mut active: Single<&mut ActiveRow>,
     mut settings: ResMut<Settings>,
     config: Res<GameConfig>,
     skins: Res<NoteSkinLibrary>,
     mut sfx: MessageWriter<PlaySfx>,
 ) {
+    if modal.dir < 0.0 {
+        return;
+    }
     for pulse in pulses.read() {
         match pulse.action {
             GameAction::Previous => {
@@ -114,47 +162,106 @@ pub(super) fn handle_pulses(
     }
 }
 
-pub(super) fn handle_cancel(
+pub(super) fn handle_close(
     actions: Actions,
-    mut mode: ResMut<NextState<FileSelectMode>>,
+    mut modal: Single<&mut ModalTransition>,
     mut sfx: MessageWriter<PlaySfx>,
 ) {
-    if actions.just_pressed(GameAction::Cancel) {
+    if modal.dir < 0.0 {
+        return;
+    }
+    if actions.just_pressed(GameAction::Cancel) || actions.just_pressed(GameAction::Select) {
         sfx.write(PlaySfx(Sfx::Cancel));
-        mode.set(FileSelectMode::Browse);
+        modal.dir = -1.0;
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn refresh_rows(
     active: Single<Ref<ActiveRow>>,
     settings: Res<Settings>,
     config: Res<GameConfig>,
     skins: Res<NoteSkinLibrary>,
-    mut rows: Query<(&RowText, &mut Text, &mut TextColor)>,
+    font: Res<GameFont>,
+    mut labels: Query<(&RowText, &mut TextColor)>,
+    containers: Query<(Entity, &RowValues)>,
+    mut commands: Commands,
 ) {
     if !active.is_changed() && !settings.is_changed() {
         return;
     }
-    for (row_text, mut text, mut color) in &mut rows {
-        let (values, selected) = row_values(row(row_text.0), &settings, &config, &skins);
-        let values: Vec<String> = values
-            .into_iter()
-            .enumerate()
-            .map(|(index, value)| {
-                if index == selected {
-                    format!("[{value}]")
-                } else {
-                    value
-                }
-            })
-            .collect();
-        let label: &str = row(row_text.0).into();
-        text.0 = format!("{label:<18} {}", values.join("   "));
-        color.0 = if row_text.0 == active.0 {
-            ACTIVE_COLOR
-        } else {
-            INACTIVE_COLOR
-        };
+    for (label, mut color) in &mut labels {
+        color.0 = row_color(label.0 == active.0);
+    }
+    for (container, marker) in &containers {
+        let color = row_color(marker.0 == active.0);
+        let (values, selected) = row_values(row(marker.0), &settings, &config, &skins);
+        commands.entity(container).despawn_related::<Children>();
+        commands.entity(container).with_children(|list| {
+            for (index, value) in values.into_iter().enumerate() {
+                list.spawn(Node {
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    row_gap: Val::Px(3.0),
+                    ..default()
+                })
+                .with_children(|item| {
+                    item.spawn((Text::new(value), font.sized(28.0), TextColor(color)));
+                    item.spawn((
+                        Underline,
+                        Node {
+                            width: Val::Percent(100.0),
+                            height: Val::Px(4.0),
+                            border_radius: BorderRadius::all(Val::Px(2.0)),
+                            ..default()
+                        },
+                        BackgroundColor(STEPFILE_TEXT),
+                        if index == selected {
+                            Visibility::Inherited
+                        } else {
+                            Visibility::Hidden
+                        },
+                    ));
+                });
+            }
+        });
+    }
+}
+
+fn row_color(active: bool) -> Color {
+    if active { ACTIVE_COLOR } else { INACTIVE_COLOR }
+}
+
+/// The background slides in from the left and the content from the right,
+/// both fading in; closing plays the same effect in reverse and only then
+/// leaves the modal state.
+#[allow(clippy::type_complexity)]
+pub(super) fn animate_transition(
+    time: Res<Time>,
+    mut mode: ResMut<NextState<FileSelectMode>>,
+    mut modal: Single<&mut ModalTransition>,
+    mut background: Single<(&mut Node, &mut BackgroundColor), With<ModalBackground>>,
+    mut content: Single<&mut Node, (With<ModalContent>, Without<ModalBackground>)>,
+    mut texts: Query<&mut TextColor, With<Node>>,
+    mut underlines: Query<&mut BackgroundColor, (With<Underline>, Without<ModalBackground>)>,
+) {
+    if modal.t >= 1.0 && modal.dir > 0.0 {
+        return;
+    }
+    modal.t = (modal.t + modal.dir * time.delta_secs() / TRANSITION_SECONDS).clamp(0.0, 1.0);
+    if modal.t <= 0.0 && modal.dir < 0.0 {
+        mode.set(FileSelectMode::Browse);
+    }
+    let eased = EaseFunction::CubicOut.sample_clamped(modal.t);
+    let (background_node, background_color) = &mut *background;
+    background_node.left = Val::Percent(-100.0 * (1.0 - eased));
+    background_color.0 = Color::srgba(0.0, 0.0, 0.0, eased);
+    content.left = Val::Percent(100.0 * (1.0 - eased));
+    for mut color in &mut texts {
+        color.0.set_alpha(eased);
+    }
+    for mut color in &mut underlines {
+        color.0.set_alpha(eased);
     }
 }
 
@@ -175,8 +282,30 @@ fn row(index: usize) -> OptionRow {
 #[derive(Component)]
 pub(super) struct ActiveRow(usize);
 
+/// `t` runs 0..=1 through the open/close effect; `dir` is +1 while opening
+/// and -1 while closing.
+#[derive(Component)]
+pub(super) struct ModalTransition {
+    t: f32,
+    dir: f32,
+}
+
+const TRANSITION_SECONDS: f32 = 0.25;
+
+#[derive(Component)]
+pub(super) struct ModalBackground;
+
+#[derive(Component)]
+pub(super) struct ModalContent;
+
 #[derive(Component)]
 pub(super) struct RowText(usize);
+
+#[derive(Component)]
+pub(super) struct RowValues(usize);
+
+#[derive(Component)]
+pub(super) struct Underline;
 
 /// Steps the row's value; the ends do not wrap. Switching the speed type
 /// resets the modifier to the new type's default — they are one value in

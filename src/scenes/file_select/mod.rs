@@ -65,8 +65,9 @@ impl Plugin for FileSelectPlugin {
                         .run_if(scene_accepts_input.and_then(in_state(FileSelectMode::Browse))),
                     (
                         player_options::handle_pulses,
-                        player_options::handle_cancel,
+                        player_options::handle_close,
                         player_options::refresh_rows,
+                        player_options::animate_transition,
                     )
                         .run_if(in_state(FileSelectMode::PlayerOptions)),
                     animate_wheel,
@@ -361,12 +362,14 @@ fn change_difficulty(
 const OPTIONS_HOLD: Seconds = Seconds(0.5);
 
 /// Tapping ¤Select¤ acts on the active row; holding it opens the player
-/// options modal instead.
+/// options modal. Only presses that began in browse are armed — ¤Select¤
+/// also closes the modal, and that press must not tap when browse resumes.
 #[allow(clippy::too_many_arguments)]
 fn select(
     actions: Actions,
     time: Res<Time>,
     mut held: Local<Seconds>,
+    mut armed: Local<bool>,
     mut wheel: ResMut<Wheel>,
     library: Res<StepfileLibrary>,
     preferred: Res<PreferredDifficulty>,
@@ -378,23 +381,26 @@ fn select(
     if wheel.entries.is_empty() {
         return;
     }
+    if actions.just_pressed(GameAction::Select) {
+        *armed = true;
+        *held = Seconds::ZERO;
+    }
+    if !*armed {
+        return;
+    }
     if actions.pressed(GameAction::Select) {
-        let before = *held;
         *held += Seconds(time.delta_secs_f64());
-        if before < OPTIONS_HOLD && *held >= OPTIONS_HOLD {
-            // This system does not run in the modal, so the release that
-            // would normally reset the hold clock never reaches it.
-            *held = Seconds::ZERO;
+        if *held >= OPTIONS_HOLD {
+            *armed = false;
             sfx.write(PlaySfx(Sfx::Select));
             mode.set(FileSelectMode::PlayerOptions);
         }
         return;
     }
-    let tapped = actions.just_released(GameAction::Select) && *held < OPTIONS_HOLD;
-    *held = Seconds::ZERO;
-    if !tapped {
+    if !actions.just_released(GameAction::Select) {
         return;
     }
+    *armed = false;
 
     sfx.write(PlaySfx(Sfx::WheelSelect));
     match wheel.entries[wheel.active] {
