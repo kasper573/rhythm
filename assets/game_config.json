@@ -1,7 +1,6 @@
 {
   "wheel_default": ["EXTREME", "Dance Dance Revolution"],
   "grading": {
-    // DDR Extreme timings
     "dynamic": [
       {
         "name": "Marvelous",
@@ -47,39 +46,25 @@
         "points": 0
       }
     ],
-    // StepMania default timings
-    // "grades": [
-    //   { "name": "Fantastic", "window_ms": 22.5, "color": "#FFFFFF" },
-    //   {
-    //     "name": "Excellent",
-    //     "window_ms": 45.0,
-    //     "color": "#FAD94D",
-    //     "timing_feedback": true
-    //   },
-    //   {
-    //     "name": "Great",
-    //     "window_ms": 90.0,
-    //     "color": "#59E673",
-    //     "timing_feedback": true
-    //   },
-    //   {
-    //     "name": "Decent",
-    //     "window_ms": 135.0,
-    //     "color": "#59A6F2",
-    //     "timing_feedback": true
-    //   },
-    //   {
-    //     "name": "Way Off",
-    //     "window_ms": 180.0,
-    //     "color": "#BF73E6",
-    //     "timing_feedback": true,
-    //     "breaks_combo": true
-    //   }
-    // ],
     "fixed": {
-      "miss": { "name": "Miss", "color": "#F23F3F", "health_offset": -8, "points": 0 },
-      "ok": { "name": "OK", "color": "#73F280", "health_offset": 2, "points": 6 },
-      "ng": { "name": "NG", "color": "#F25959", "health_offset": -4, "points": 0 }
+      "miss": {
+        "name": "Miss",
+        "color": "#F23F3F",
+        "health_offset": -8,
+        "points": 0
+      },
+      "ok": {
+        "name": "OK",
+        "color": "#73F280",
+        "health_offset": 2,
+        "points": 6
+      },
+      "ng": {
+        "name": "NG",
+        "color": "#F25959",
+        "health_offset": -4,
+        "points": 0
+      }
     }
   },
   "bright_arrow_flash_combo": 100,
