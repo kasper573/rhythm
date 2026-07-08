@@ -1,9 +1,13 @@
+mod player_options;
+
 use crate::core::SCREEN_SIZE;
 use crate::core::assets::asset_server_path;
 use crate::core::config::GameConfig;
 use crate::core::font::GameFont;
 use crate::core::input::{Actions, GameAction, NavPulse};
 use crate::core::library::{StepfileId, StepfileLibrary};
+use crate::core::note_skin::NoteSkinLibrary;
+use crate::core::settings::Settings;
 use crate::core::sfx::{PlaySfx, Sfx};
 use crate::core::stepfile::{Difficulty, DisplayBpm, Stepfile, StepsType};
 use crate::core::units::Seconds;
@@ -31,17 +35,40 @@ pub enum FileSelectTarget {
     Stepfile(StepfileId),
 }
 
+/// Whether the player is browsing the wheel or editing options in the modal
+/// on top of it; input routes to exactly one of the two.
+#[derive(SubStates, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[source(GameScene = GameScene::FileSelect)]
+pub enum FileSelectMode {
+    #[default]
+    Browse,
+    PlayerOptions,
+}
+
 pub struct FileSelectPlugin;
 
 impl Plugin for FileSelectPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<PreferredDifficulty>()
+        app.add_sub_state::<FileSelectMode>()
+            .init_resource::<PreferredDifficulty>()
             .add_systems(OnEnter(GameScene::FileSelect), enter)
             .add_systems(OnExit(GameScene::FileSelect), exit)
+            .add_systems(OnEnter(FileSelectMode::Browse), clear_nav_pulses)
+            .add_systems(
+                OnEnter(FileSelectMode::PlayerOptions),
+                (clear_nav_pulses, player_options::enter),
+            )
             .add_systems(
                 Update,
                 (
-                    (navigate, change_difficulty, select, cancel).run_if(scene_accepts_input),
+                    (navigate, change_difficulty, select, cancel)
+                        .run_if(scene_accepts_input.and_then(in_state(FileSelectMode::Browse))),
+                    (
+                        player_options::handle_pulses,
+                        player_options::handle_cancel,
+                        player_options::refresh_rows,
+                    )
+                        .run_if(in_state(FileSelectMode::PlayerOptions)),
                     animate_wheel,
                     // Both refreshers observe `Wheel::dirty`; the info panel
                     // runs last and clears it.
@@ -53,6 +80,12 @@ impl Plugin for FileSelectPlugin {
                     .run_if(in_state(GameScene::FileSelect).and_then(resource_exists::<Wheel>)),
             );
     }
+}
+
+/// Message readers only advance while their mode is active, so switching
+/// modes would replay the pulses buffered in between to the other reader.
+fn clear_nav_pulses(mut pulses: ResMut<Messages<NavPulse>>) {
+    pulses.clear();
 }
 
 /// The difficulty rank the player is aiming for, kept across stepfiles and
@@ -89,6 +122,8 @@ const ARTIST_TEXT: Color = Color::srgb(0.25, 0.75, 0.35);
 const BPM_TEXT: Color = Color::srgb(0.85, 0.95, 0.55);
 const BANNER_TINT: Color = Color::srgb(0.10, 0.18, 0.07);
 const BANNER_TEXT: Color = Color::srgb(0.9, 1.0, 0.85);
+const STATS_TEXT: Color = Color::srgb(0.75, 0.9, 0.7);
+const HELP_TEXT: Color = Color::srgb(0.5, 0.62, 0.5);
 
 #[derive(Resource)]
 struct Wheel {
@@ -326,7 +361,7 @@ fn change_difficulty(
 const OPTIONS_HOLD: Seconds = Seconds(0.5);
 
 /// Tapping ¤Select¤ acts on the active row; holding it opens the player
-/// options instead, passing the active row along so coming back lands here.
+/// options modal instead.
 #[allow(clippy::too_many_arguments)]
 fn select(
     actions: Actions,
@@ -338,6 +373,7 @@ fn select(
     mut commands: Commands,
     mut sfx: MessageWriter<PlaySfx>,
     mut fade: ResMut<SceneFade>,
+    mut mode: ResMut<NextState<FileSelectMode>>,
 ) {
     if wheel.entries.is_empty() {
         return;
@@ -346,13 +382,11 @@ fn select(
         let before = *held;
         *held += Seconds(time.delta_secs_f64());
         if before < OPTIONS_HOLD && *held >= OPTIONS_HOLD {
-            let row = match &wheel.entries[wheel.active] {
-                WheelEntry::Group { index } => FileSelectTarget::Group(*index),
-                WheelEntry::Stepfile { id } => FileSelectTarget::Stepfile(*id),
-            };
-            commands.insert_resource(row);
+            // This system does not run in the modal, so the release that
+            // would normally reset the hold clock never reaches it.
+            *held = Seconds::ZERO;
             sfx.write(PlaySfx(Sfx::Select));
-            fade.begin(GameScene::PlayerOptions);
+            mode.set(FileSelectMode::PlayerOptions);
         }
         return;
     }
@@ -477,16 +511,21 @@ fn refresh_wheel_rows(
 
 /// Rebuilt from scratch: despawn-and-respawn beats mutating a panel of
 /// text entities in place.
+#[allow(clippy::too_many_arguments)]
 fn refresh_info_panel(
     mut wheel: ResMut<Wheel>,
     library: Res<StepfileLibrary>,
     preferred: Res<PreferredDifficulty>,
+    settings: Res<Settings>,
+    skins: Res<NoteSkinLibrary>,
     asset_server: Res<AssetServer>,
     font: Res<GameFont>,
     panels: Query<Entity, With<InfoPanel>>,
     mut commands: Commands,
 ) {
-    if !wheel.dirty {
+    // Settings changes re-render the options summary live while the player
+    // options modal edits them.
+    if !wheel.dirty && !settings.is_changed() {
         return;
     }
     wheel.dirty = false;
@@ -565,6 +604,18 @@ fn refresh_info_panel(
                 TextColor(BPM_TEXT),
                 Transform::from_xyz(0.0, 70.0, 0.0),
             ));
+            panel.spawn((
+                Text2d::new(player_options::summary(&settings, &skins)),
+                font.sized(22.0),
+                TextColor(STATS_TEXT),
+                Transform::from_xyz(0.0, -150.0, 0.0),
+            ));
+            panel.spawn((
+                Text2d::new("up/down: change difficulty\nhold select: change options"),
+                font.sized(20.0),
+                TextColor(HELP_TEXT),
+                Transform::from_xyz(0.0, -214.0, 0.0),
+            ));
             let Some((id, index)) = chart else { return };
             let stepfile = &library.stepfile(id).stepfile;
             let chart = &stepfile.charts[index];
@@ -578,7 +629,7 @@ fn refresh_info_panel(
             panel.spawn((
                 Text2d::new(stats_label(stepfile, index)),
                 font.sized(22.0),
-                TextColor(Color::srgb(0.75, 0.9, 0.7)),
+                TextColor(STATS_TEXT),
                 Transform::from_xyz(0.0, -70.0, 0.0),
             ));
         });

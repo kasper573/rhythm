@@ -1,3 +1,4 @@
+use super::FileSelectMode;
 use crate::core::config::GameConfig;
 use crate::core::font::GameFont;
 use crate::core::input::{Actions, GameAction, NavPulse};
@@ -6,95 +7,83 @@ use crate::core::note_field::NoteSpeed;
 use crate::core::note_skin::NoteSkinLibrary;
 use crate::core::settings::Settings;
 use crate::core::sfx::{PlaySfx, Sfx};
-use crate::scenes::{GameScene, SceneFade, scene_accepts_input};
 use bevy::prelude::*;
 use strum::{EnumCount, EnumIter, IntoEnumIterator, IntoStaticStr};
 
+/// One line summarizing the current options, e.g. `Dynamic 2x · DDREx Note`.
+pub(super) fn summary(settings: &Settings, skins: &NoteSkinLibrary) -> String {
+    let options = &settings.stepfile;
+    let speed = match options.note_speed {
+        NoteSpeed::Constant(value) => {
+            format!("Constant {}", format_modifier(value, options.note_speed))
+        }
+        NoteSpeed::Dynamic(value) => {
+            format!("Dynamic {}", format_modifier(value, options.note_speed))
+        }
+    };
+    let skin = skins
+        .skins
+        .iter()
+        .find(|skin| skin.name == options.note_skin)
+        .map(|skin| skin.display_name.clone())
+        .unwrap_or_else(|| options.note_skin.clone());
+    format!("{speed} · {skin}")
+}
+
 /// Edits the stepfile options in place: they live in the settings, so
-/// changes persist immediately. Reached by holding ¤Select¤ on the wheel;
-/// the wheel row to return to stays parked in
-/// [`FileSelectTarget`](crate::scenes::file_select::FileSelectTarget) until
-/// ¤Cancel¤ leads back.
-pub struct PlayerOptionsPlugin;
-
-impl Plugin for PlayerOptionsPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_systems(OnEnter(GameScene::PlayerOptions), enter)
-            .add_systems(OnExit(GameScene::PlayerOptions), exit)
-            .add_systems(
-                Update,
-                (handle_pulses, handle_cancel, refresh_rows).chain().run_if(
-                    in_state(GameScene::PlayerOptions)
-                        .and_then(scene_accepts_input)
-                        .and_then(resource_exists::<ActiveRow>),
-                ),
-            );
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, EnumCount, EnumIter, IntoStaticStr)]
-enum OptionRow {
-    #[strum(serialize = "Speed Type")]
-    SpeedType,
-    #[strum(serialize = "Speed Modifier")]
-    SpeedModifier,
-    #[strum(serialize = "Note Skin")]
-    NoteSkin,
-}
-
-fn row(index: usize) -> OptionRow {
-    OptionRow::iter().nth(index).expect("row index is wrapped")
-}
-
-#[derive(Resource)]
-struct ActiveRow(usize);
-
-#[derive(Component)]
-struct RowText(usize);
-
-fn enter(mut commands: Commands, font: Res<GameFont>) {
-    commands.insert_resource(ActiveRow(0));
+/// changes persist immediately. An edge-to-edge stripe over the vertical
+/// center of the file select, which stays mounted underneath.
+pub(super) fn enter(mut commands: Commands, font: Res<GameFont>) {
     commands
         .spawn((
-            DespawnOnExit(GameScene::PlayerOptions),
+            DespawnOnExit(FileSelectMode::PlayerOptions),
+            ActiveRow(0),
             Node {
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
                 flex_direction: FlexDirection::Column,
                 justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                row_gap: Val::Px(14.0),
                 ..default()
             },
         ))
-        .with_children(|parent| {
-            parent.spawn((
-                Text::new("Player Options"),
-                font.sized(52.0),
-                TextColor(TITLE_COLOR),
-                Node {
-                    margin: UiRect::bottom(Val::Px(24.0)),
-                    ..default()
-                },
-            ));
-            for index in 0..OptionRow::COUNT {
-                parent.spawn((
-                    RowText(index),
-                    Text::new(""),
-                    font.sized(28.0),
-                    TextColor(INACTIVE_COLOR),
-                ));
-            }
+        .with_children(|screen| {
+            screen
+                .spawn((
+                    Node {
+                        width: Val::Percent(100.0),
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Center,
+                        padding: UiRect::vertical(Val::Px(28.0)),
+                        row_gap: Val::Px(14.0),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(0.0, 0.0, 0.0)),
+                ))
+                .with_children(|stripe| {
+                    stripe.spawn((
+                        Text::new("Player Options"),
+                        font.sized(52.0),
+                        TextColor(TITLE_COLOR),
+                        Node {
+                            margin: UiRect::bottom(Val::Px(24.0)),
+                            ..default()
+                        },
+                    ));
+                    for index in 0..OptionRow::COUNT {
+                        stripe.spawn((
+                            RowText(index),
+                            Text::new(""),
+                            font.sized(28.0),
+                            TextColor(INACTIVE_COLOR),
+                        ));
+                    }
+                });
         });
 }
 
-fn exit(mut commands: Commands) {
-    commands.remove_resource::<ActiveRow>();
-}
-
-fn handle_pulses(
+pub(super) fn handle_pulses(
     mut pulses: MessageReader<NavPulse>,
-    mut active: ResMut<ActiveRow>,
+    mut active: Single<&mut ActiveRow>,
     mut settings: ResMut<Settings>,
     config: Res<GameConfig>,
     skins: Res<NoteSkinLibrary>,
@@ -124,6 +113,70 @@ fn handle_pulses(
         }
     }
 }
+
+pub(super) fn handle_cancel(
+    actions: Actions,
+    mut mode: ResMut<NextState<FileSelectMode>>,
+    mut sfx: MessageWriter<PlaySfx>,
+) {
+    if actions.just_pressed(GameAction::Cancel) {
+        sfx.write(PlaySfx(Sfx::Cancel));
+        mode.set(FileSelectMode::Browse);
+    }
+}
+
+pub(super) fn refresh_rows(
+    active: Single<Ref<ActiveRow>>,
+    settings: Res<Settings>,
+    config: Res<GameConfig>,
+    skins: Res<NoteSkinLibrary>,
+    mut rows: Query<(&RowText, &mut Text, &mut TextColor)>,
+) {
+    if !active.is_changed() && !settings.is_changed() {
+        return;
+    }
+    for (row_text, mut text, mut color) in &mut rows {
+        let (values, selected) = row_values(row(row_text.0), &settings, &config, &skins);
+        let values: Vec<String> = values
+            .into_iter()
+            .enumerate()
+            .map(|(index, value)| {
+                if index == selected {
+                    format!("[{value}]")
+                } else {
+                    value
+                }
+            })
+            .collect();
+        let label: &str = row(row_text.0).into();
+        text.0 = format!("{label:<18} {}", values.join("   "));
+        color.0 = if row_text.0 == active.0 {
+            ACTIVE_COLOR
+        } else {
+            INACTIVE_COLOR
+        };
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, EnumCount, EnumIter, IntoStaticStr)]
+enum OptionRow {
+    #[strum(serialize = "Speed Type")]
+    SpeedType,
+    #[strum(serialize = "Speed Modifier")]
+    SpeedModifier,
+    #[strum(serialize = "Note Skin")]
+    NoteSkin,
+}
+
+fn row(index: usize) -> OptionRow {
+    OptionRow::iter().nth(index).expect("row index is wrapped")
+}
+
+#[derive(Component)]
+pub(super) struct ActiveRow(usize);
+
+#[derive(Component)]
+pub(super) struct RowText(usize);
 
 /// Steps the row's value; the ends do not wrap. Switching the speed type
 /// resets the modifier to the new type's default — they are one value in
@@ -185,46 +238,6 @@ fn change_value(
     }
 }
 
-fn handle_cancel(actions: Actions, mut fade: ResMut<SceneFade>, mut sfx: MessageWriter<PlaySfx>) {
-    if actions.just_pressed(GameAction::Cancel) {
-        sfx.write(PlaySfx(Sfx::Cancel));
-        fade.begin(GameScene::FileSelect);
-    }
-}
-
-fn refresh_rows(
-    active: Res<ActiveRow>,
-    settings: Res<Settings>,
-    config: Res<GameConfig>,
-    skins: Res<NoteSkinLibrary>,
-    mut rows: Query<(&RowText, &mut Text, &mut TextColor)>,
-) {
-    if !active.is_changed() && !settings.is_changed() {
-        return;
-    }
-    for (row_text, mut text, mut color) in &mut rows {
-        let (values, selected) = row_values(row(row_text.0), &settings, &config, &skins);
-        let values: Vec<String> = values
-            .into_iter()
-            .enumerate()
-            .map(|(index, value)| {
-                if index == selected {
-                    format!("[{value}]")
-                } else {
-                    value
-                }
-            })
-            .collect();
-        let label: &str = row(row_text.0).into();
-        text.0 = format!("{label:<18} {}", values.join("   "));
-        color.0 = if row_text.0 == active.0 {
-            ACTIVE_COLOR
-        } else {
-            INACTIVE_COLOR
-        };
-    }
-}
-
 /// The row's value labels and which one is selected.
 fn row_values(
     row: OptionRow,
@@ -249,7 +262,7 @@ fn row_values(
             (
                 set.options
                     .iter()
-                    .map(|value| format_value(*value))
+                    .map(|value| format_modifier(*value, options.note_speed))
                     .collect(),
                 selected_index(&set.options, options.note_speed.value()),
             )
@@ -281,6 +294,14 @@ fn selected_index(options: &[f32], value: f32) -> usize {
         .min_by(|(_, a), (_, b)| (*a - value).abs().total_cmp(&(*b - value).abs()))
         .map(|(index, _)| index)
         .unwrap_or(0)
+}
+
+/// Dynamic multipliers always render with an `x` suffix.
+fn format_modifier(value: f32, speed: NoteSpeed) -> String {
+    match speed {
+        NoteSpeed::Constant(_) => format_value(value),
+        NoteSpeed::Dynamic(_) => format!("{}x", format_value(value)),
+    }
 }
 
 fn format_value(value: f32) -> String {

@@ -2,7 +2,6 @@ pub mod file_player;
 pub mod file_select;
 pub mod keymap;
 pub mod main_menu;
-pub mod player_options;
 pub mod score;
 pub mod settings_menu;
 
@@ -17,7 +16,6 @@ pub enum GameScene {
     SettingsMenu,
     Keymap,
     FileSelect,
-    PlayerOptions,
     FilePlayer,
     Score,
 }
@@ -39,7 +37,6 @@ impl Plugin for ScenesPlugin {
             settings_menu::SettingsMenuPlugin,
             keymap::KeymapScenePlugin,
             file_select::FileSelectPlugin,
-            player_options::PlayerOptionsPlugin,
             file_player::FilePlayerPlugin,
             score::ScoreScenePlugin,
         ));
