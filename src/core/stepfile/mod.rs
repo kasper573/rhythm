@@ -85,7 +85,7 @@ pub struct Chart {
     pub meter: u32,
     pub radar: Vec<f32>,
     pub columns: usize,
-    /// Sorted by beat. The row is the game's judgeable unit: every arrow in
+    /// Sorted by beat. The row is the unit the game grades: every arrow in
     /// it must be stepped for the row to count, and rows with two or more
     /// arrows are the jumps shown on the file select.
     pub rows: Vec<Row>,
@@ -117,7 +117,7 @@ impl Chart {
     }
 }
 
-/// Simultaneous arrows on one beat, stepped and judged as a single unit.
+/// Simultaneous arrows on one beat, stepped and graded as a single unit.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Row {
     pub beat: Beat,

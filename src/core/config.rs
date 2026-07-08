@@ -29,8 +29,8 @@ pub struct GameConfig {
     /// Combo at which the arrow flash switches to its brighter, snappier
     /// variant.
     pub bright_arrow_flash_combo: u32,
-    /// Every play session starts at full health; judgments then apply
-    /// their `health_offset`, and draining to zero fails the session.
+    /// Every play session starts at full health; grades then apply their
+    /// `health_offset`, and draining to zero fails the session.
     pub player_max_health: u32,
     pub healthbar: HealthBarConfig,
 }
@@ -177,20 +177,20 @@ pub enum TimingFeedback {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GradeIndex(pub usize);
 
-/// The outcome of one note: either a configured grade, or the special
-/// always-existing Miss for notes that expired without input.
+/// An outcome classified under the config: one of the timed grades, or the
+/// built-in Miss.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Judgment {
-    Grade(GradeIndex),
+pub enum Grade {
+    Hit(GradeIndex),
     Miss,
 }
 
-/// What actually happened to one note: the input's signed timing error, or
+/// What actually happened to one row: the input's signed timing error, or
 /// expiry without any input. The raw error is the single source of truth;
-/// the grade it represents is derived on demand via [`GameConfig::judge`].
+/// the grade it represents is derived on demand via [`GameConfig::grade`].
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum StepOutcome {
-    /// The note was hit `error` away from its moment; positive = early.
+pub enum RowOutcome {
+    /// The row was hit `error` away from its moment; positive = early.
     Hit {
         error: Seconds,
     },
@@ -210,15 +210,11 @@ impl GameConfig {
         config
     }
 
-    pub fn health_offset(&self, judgment: Judgment) -> i32 {
-        match judgment {
-            Judgment::Grade(grade) => self.grades[grade.0].health_offset,
-            Judgment::Miss => self.miss.health_offset,
+    pub fn health_offset(&self, grade: Grade) -> i32 {
+        match grade {
+            Grade::Hit(grade) => self.grades[grade.0].health_offset,
+            Grade::Miss => self.miss.health_offset,
         }
-    }
-
-    pub fn window(&self, grade: GradeIndex) -> Seconds {
-        Seconds::from_millis(self.grades[grade.0].window_ms)
     }
 
     /// The widest grading window, which doubles as the miss/expiry window:
@@ -232,9 +228,9 @@ impl GameConfig {
         )
     }
 
-    /// The grade earned by an input this far from the note, or `None` if the
+    /// The grade earned by an input this far from the row, or `None` if the
     /// input misses every window (a harmless no-op input).
-    pub fn grade_for_error(&self, error: Seconds) -> Option<GradeIndex> {
+    fn grade_for_error(&self, error: Seconds) -> Option<GradeIndex> {
         let magnitude = error.abs();
         self.grades
             .iter()
@@ -242,20 +238,20 @@ impl GameConfig {
             .map(GradeIndex)
     }
 
-    pub fn breaks_combo(&self, judgment: Judgment) -> bool {
-        match judgment {
-            Judgment::Grade(grade) => self.grades[grade.0].breaks_combo,
-            Judgment::Miss => true,
+    pub fn breaks_combo(&self, grade: Grade) -> bool {
+        match grade {
+            Grade::Hit(grade) => self.grades[grade.0].breaks_combo,
+            Grade::Miss => true,
         }
     }
 
-    pub fn judge(&self, outcome: StepOutcome) -> Judgment {
+    pub fn grade(&self, outcome: RowOutcome) -> Grade {
         match outcome {
-            StepOutcome::Hit { error } => Judgment::Grade(
+            RowOutcome::Hit { error } => Grade::Hit(
                 self.grade_for_error(error)
                     .expect("hits are only recorded inside the widest grading window"),
             ),
-            StepOutcome::Miss => Judgment::Miss,
+            RowOutcome::Miss => Grade::Miss,
         }
     }
 

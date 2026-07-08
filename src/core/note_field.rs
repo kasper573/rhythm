@@ -159,7 +159,7 @@ pub struct MineNote {
     pub beat: Beat,
 }
 
-pub const GRADED_FADE_SECONDS: f32 = 0.05;
+pub const HOLD_OK_FADE_SECONDS: f32 = 0.05;
 const MINE_EXPLOSION_SECONDS: f32 = 0.4;
 
 /// Fades the entity out where it stands, then despawns it; fading arrows

@@ -17,13 +17,13 @@ pub struct Settings {
 ///
 /// ```text
 /// heard   = audio position - audio_latency   (what the speakers play now)
-/// judged  = heard + machine_offset           (timeline inputs are graded on)
-/// visible = judged - visual_delay            (timeline arrows are drawn on)
+/// graded  = heard + machine_offset           (timeline inputs are graded on)
+/// visible = graded - visual_delay            (timeline arrows are drawn on)
 /// ```
 ///
 /// The audio backend only reports the mixer's queue position, so the
 /// latency between queue and speakers is measured on first play and stored
-/// here. `machine_offset` shifts the judged timeline to compensate for the
+/// here. `machine_offset` shifts the graded timeline to compensate for the
 /// rig as a whole; `visual_delay` shifts only what is drawn.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]

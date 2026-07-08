@@ -12,9 +12,9 @@ use bevy::prelude::*;
 /// position is a staircase: exact at the moment it changes, stale in
 /// between. The clock therefore snaps once to the first report and then
 /// applies small, slew-limited corrections toward each fresh report edge —
-/// never jumping, never running backwards — so judgments see a smooth,
+/// never jumping, never running backwards — so grading sees a smooth,
 /// accurate timeline. Snapping to the staircase directly would make the
-/// judged timeline oscillate by tens of milliseconds whenever the audio
+/// graded timeline oscillate by tens of milliseconds whenever the audio
 /// quantum exceeds the snap threshold.
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(Update, advance_clock.in_set(PlaySet::Clock));

@@ -1,10 +1,10 @@
-use super::{HoldOutcome, JudgmentShown, MineOutcome, PlaySession, PlaySet, direction_action};
+use super::{HoldOutcome, MineOutcome, PlaySession, PlaySet, RowGraded, direction_action};
 use crate::core::at;
-use crate::core::config::{GameConfig, Judgment, StepOutcome};
+use crate::core::config::{GameConfig, Grade, RowOutcome};
 use crate::core::font::game_font;
 use crate::core::input::Actions;
 use crate::core::note_field::{
-    FadeOut, GRADED_FADE_SECONDS, TARGET_Y, column_x, spawn_arrow_flash, spawn_mine_explosion,
+    FadeOut, HOLD_OK_FADE_SECONDS, TARGET_Y, column_x, spawn_arrow_flash, spawn_mine_explosion,
 };
 use crate::core::note_skin::ActiveNoteSkin;
 use crate::core::scene_flow::SpawnScoped;
@@ -19,51 +19,51 @@ const HOLD_GRACE_SECONDS: f32 = 0.25;
 const ROLL_GRACE_SECONDS: f32 = 0.5;
 const HOLD_POPUP_SECONDS: f32 = 0.6;
 
-/// A step (row) is the judgeable unit. Presses bank
-/// silently into their arrows; the step resolves into one judgment when its
-/// last arrow is banked — graded by that completing press — or expires into
-/// a single Miss if any arrow times out, voiding the banked presses.
+/// The row is the unit the game grades. Presses bank silently into their
+/// arrows; the row resolves into one grade when its last arrow is banked —
+/// decided by that completing press — or expires into a single Miss if any
+/// arrow times out, voiding the banked presses.
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(
         Update,
         (
-            bank_step_inputs.run_if(scene_accepts_input),
-            expire_missed_steps,
+            bank_row_inputs.run_if(scene_accepts_input),
+            expire_missed_rows,
             update_holds,
             update_mines,
         )
             .chain()
-            .in_set(PlaySet::Judge),
+            .in_set(PlaySet::Grade),
     );
 }
 
 /// Banks ¤Left¤/¤Down¤/¤Up¤/¤Right¤ presses into the nearest unresolved
-/// step with an unbanked arrow in that column, and resolves steps whose
+/// row with an unbanked arrow in that column, and resolves rows whose
 /// last arrow just arrived. Inputs that hit no grading window are no-ops.
-fn bank_step_inputs(
+fn bank_row_inputs(
     actions: Actions,
     settings: Res<Settings>,
     config: Res<GameConfig>,
     skin: Res<ActiveNoteSkin>,
     mut session: ResMut<PlaySession>,
-    mut judgments: MessageWriter<JudgmentShown>,
+    mut graded: MessageWriter<RowGraded>,
     mut commands: Commands,
 ) {
     let widest = config.widest_window();
-    let input_time = session.judged_now(&settings.timing);
+    let input_time = session.graded_now(&settings.timing);
 
     for column in 0..4 {
         if !actions.just_pressed(direction_action(column)) {
             continue;
         }
         let candidate = session
-            .steps
+            .rows
             .iter()
             .enumerate()
-            .filter(|(_, step)| {
-                step.outcome.is_none()
-                    && (step.time - input_time).abs().0 <= widest.0
-                    && step
+            .filter(|(_, row)| {
+                row.outcome.is_none()
+                    && (row.time - input_time).abs().0 <= widest.0
+                    && row
                         .arrows
                         .iter()
                         .any(|arrow| arrow.column == column && arrow.error.is_none())
@@ -77,71 +77,65 @@ fn bank_step_inputs(
             .map(|(index, _)| index);
         let Some(index) = candidate else { continue };
 
-        let error = session.steps[index].time - input_time;
+        let error = session.rows[index].time - input_time;
         if session.autosync {
             session.autosync_samples.push(error);
         }
-        let arrow = session.steps[index]
+        let arrow = session.rows[index]
             .arrows
             .iter_mut()
             .find(|arrow| arrow.column == column && arrow.error.is_none())
-            .expect("candidate steps have an unbanked arrow in this column");
+            .expect("candidate rows have an unbanked arrow in this column");
         arrow.error = Some(error);
         if let Some(hold) = &mut arrow.hold {
             hold.engaged = true;
             hold.life = 1.0;
         }
 
-        if session.steps[index].complete() {
-            resolve_step(
+        if session.rows[index].complete() {
+            resolve_row(
                 &mut session,
                 &config,
                 &skin,
                 index,
-                &mut judgments,
+                &mut graded,
                 &mut commands,
             );
         }
     }
 }
 
-/// The step's single payout once every arrow is banked. The completing
-/// press decides the grade: the chronologically last one, which is the
+/// Resolves the row into its single grade once every arrow is banked. The
+/// completing press decides: the chronologically last one, which is the
 /// smallest signed error since late presses go negative.
-fn resolve_step(
+fn resolve_row(
     session: &mut PlaySession,
     config: &GameConfig,
     skin: &ActiveNoteSkin,
     index: usize,
-    judgments: &mut MessageWriter<JudgmentShown>,
+    graded: &mut MessageWriter<RowGraded>,
     commands: &mut Commands,
 ) {
-    let error = session.steps[index]
+    let error = session.rows[index]
         .arrows
         .iter()
         .filter_map(|arrow| arrow.error)
         .reduce(|a, b| if a.0 <= b.0 { a } else { b })
-        .expect("resolved steps have every arrow banked");
-    apply_outcome(
-        session,
-        config,
-        index,
-        StepOutcome::Hit { error },
-        judgments,
-    );
+        .expect("resolved rows have every arrow banked");
+    apply_outcome(session, config, index, RowOutcome::Hit { error }, graded);
 
     // The vanish: grades with an arrow flash play it at every arrow of
-    // the step and the tap arrows disappear on the spot. Lesser grades
-    // leave the arrows scrolling on, judged but visible.
-    let Judgment::Grade(grade) = config.judge(StepOutcome::Hit { error }) else {
+    // the row and the tap arrows disappear on the spot. Lesser grades
+    // leave the arrows scrolling on, graded but visible.
+    let Grade::Hit(grade) = config.grade(RowOutcome::Hit { error }) else {
         return;
     };
     let Some(color) = config.grades[grade.0].arrow_flash else {
         return;
     };
     let bright = session.combo >= config.bright_arrow_flash_combo;
-    for arrow_index in 0..session.steps[index].arrows.len() {
-        let arrow = &session.steps[index].arrows[arrow_index];
+    for arrow_index in 0..session.rows[index].arrows.len() {
+        let arrow = &session.rows[index].arrows[arrow_index];
         let column = arrow.column;
         let entity = arrow.entity;
         let is_hold = arrow.hold.is_some();
@@ -155,34 +149,28 @@ fn resolve_step(
     }
 }
 
-/// Steps expire into a single Miss once they scroll further past the
+/// Rows expire into a single Miss once they scroll further past the
 /// player than the widest grading window with any arrow still unbanked —
 /// banked presses on the other arrows are voided. A hold whose own head
 /// was never stepped can never be caught, so it drops immediately; a hold
-/// whose head was banked fights on even though its step missed.
-fn expire_missed_steps(
+/// whose head was banked fights on even though its row missed.
+fn expire_missed_rows(
     settings: Res<Settings>,
     config: Res<GameConfig>,
     mut session: ResMut<PlaySession>,
-    mut judgments: MessageWriter<JudgmentShown>,
+    mut graded: MessageWriter<RowGraded>,
     mut commands: Commands,
 ) {
-    let expire_before = session.judged_now(&settings.timing) - config.widest_window();
-    while session.expire_cursor < session.steps.len() {
+    let expire_before = session.graded_now(&settings.timing) - config.widest_window();
+    while session.expire_cursor < session.rows.len() {
         let cursor = session.expire_cursor;
-        let step = &session.steps[cursor];
-        if step.time.0 >= expire_before.0 {
+        let row = &session.rows[cursor];
+        if row.time.0 >= expire_before.0 {
             break;
         }
-        if step.outcome.is_none() {
-            apply_outcome(
-                &mut session,
-                &config,
-                cursor,
-                StepOutcome::Miss,
-                &mut judgments,
-            );
-            for arrow in &mut session.steps[cursor].arrows {
+        if row.outcome.is_none() {
+            apply_outcome(&mut session, &config, cursor, RowOutcome::Miss, &mut graded);
+            for arrow in &mut session.rows[cursor].arrows {
                 let Some(hold) = &mut arrow.hold else {
                     continue;
                 };
@@ -207,12 +195,12 @@ fn update_holds(
     mut session: ResMut<PlaySession>,
     mut commands: Commands,
 ) {
-    let now = session.judged_now(&settings.timing);
+    let now = session.graded_now(&settings.timing);
     let delta = time.delta_secs();
     for arrow in session
-        .steps
+        .rows
         .iter_mut()
-        .flat_map(|step| step.arrows.iter_mut())
+        .flat_map(|row| row.arrows.iter_mut())
     {
         let Some(hold) = &mut arrow.hold else {
             continue;
@@ -241,7 +229,7 @@ fn update_holds(
             hold.result = Some(HoldOutcome::Ok);
             commands
                 .entity(arrow.entity)
-                .insert(FadeOut::over(GRADED_FADE_SECONDS));
+                .insert(FadeOut::over(HOLD_OK_FADE_SECONDS));
             spawn_hold_popup(&mut commands, arrow.column, HoldOutcome::Ok);
         } else if hold.life <= 0.0 {
             hold.result = Some(HoldOutcome::Ng);
@@ -259,7 +247,7 @@ fn update_mines(
     mut session: ResMut<PlaySession>,
     mut commands: Commands,
 ) {
-    let now = session.judged_now(&settings.timing);
+    let now = session.graded_now(&settings.timing);
     for mine in &mut session.mines {
         if mine.outcome.is_some() || mine.time.0 > now.0 {
             continue;
@@ -268,7 +256,7 @@ fn update_mines(
             mine.outcome = Some(MineOutcome::Avoided);
             continue;
         }
-        mine.outcome = Some(MineOutcome::Hit);
+        mine.outcome = Some(MineOutcome::Exploded);
         commands.entity(mine.entity).despawn();
         let explosion = spawn_mine_explosion(&mut commands, &skin, mine.column);
         commands
@@ -280,24 +268,25 @@ fn update_mines(
 fn apply_outcome(
     session: &mut PlaySession,
     config: &GameConfig,
-    step_index: usize,
-    outcome: StepOutcome,
-    judgments: &mut MessageWriter<JudgmentShown>,
+    row_index: usize,
+    outcome: RowOutcome,
+    graded: &mut MessageWriter<RowGraded>,
 ) {
-    session.steps[step_index].outcome = Some(outcome);
-    session.judged_count += 1;
+    session.rows[row_index].outcome = Some(outcome);
+    session.graded_count += 1;
+    let grade = config.grade(outcome);
     session.health = session
         .health
-        .saturating_add_signed(config.health_offset(config.judge(outcome)))
+        .saturating_add_signed(config.health_offset(grade))
         .min(config.player_max_health);
-    if config.breaks_combo(config.judge(outcome)) {
+    if config.breaks_combo(grade) {
         session.combo = 0;
     } else {
-        // Every arrow of the step feeds the combo, so a clean jump pays +2.
-        session.combo += session.steps[step_index].arrows.len() as u32;
+        // Every arrow of the row feeds the combo, so a clean jump pays +2.
+        session.combo += session.rows[row_index].arrows.len() as u32;
         session.max_combo = session.max_combo.max(session.combo);
     }
-    judgments.write(JudgmentShown {
+    graded.write(RowGraded {
         outcome,
         combo: session.combo,
     });

@@ -22,9 +22,9 @@ use clap::Parser;
 use rhythm::core::CLEAR_COLOR;
 use rhythm::core::config::GameConfig;
 use rhythm::core::note_field::{
-    ARROW_SIZE, FadeOut, GRADED_FADE_SECONDS, HoldPart, HoldVisual, HoldVisualState, MineNote,
+    ARROW_SIZE, FadeOut, HOLD_OK_FADE_SECONDS, HoldPart, HoldVisual, HoldVisualState, MineNote,
     NoteArrow, NoteFieldClock, NoteFieldPlugin, NoteSpawn, NoteSpeed, Receptor, SpawnedNote,
-    spawn_mine, spawn_mine_explosion, spawn_note, spawn_receptors,
+    spawn_arrow_flash, spawn_mine, spawn_mine_explosion, spawn_note, spawn_receptors,
 };
 use rhythm::core::note_skin::{ActiveNoteSkin, load_note_skin};
 use rhythm::core::stepfile::StepfileTiming;
@@ -159,8 +159,11 @@ struct ScenarioMine {
 enum ScriptAction {
     /// Set the render state of the scenario's i-th note's hold.
     Hold(usize, HoldVisualState),
-    /// Apply the graded fade to the i-th note.
+    /// Apply the hold-OK fade to the i-th note's head.
     Fade(usize),
+    /// Vanish the i-th note at the receptor: despawn it and play the arrow
+    /// flash on its column, as grading does for taps.
+    Vanish(usize),
     /// Press or release a receptor's panel.
     Press(usize, bool),
     /// Blow up the i-th mine.
@@ -169,7 +172,7 @@ enum ScriptAction {
 
 fn scenario_matrix() -> Vec<Scenario> {
     use HoldVisualState::{Dropped, Held, Ok, Released};
-    use ScriptAction::{ExplodeMine, Fade, Hold, Press};
+    use ScriptAction::{ExplodeMine, Fade, Hold, Press, Vanish};
 
     const QUANTS: [u32; 8] = [4, 8, 12, 16, 24, 32, 48, 64];
     let mut all = Vec::new();
@@ -286,12 +289,12 @@ fn scenario_matrix() -> Vec<Scenario> {
     );
 
     add(
-        "tap_graded_at_receptor",
+        "tap_vanish_at_receptor",
         vec![note(0.0, 1, 4, None)],
         vec![],
         vec![
             (0.0, Press(1, true)),
-            (0.0, Fade(0)),
+            (0.0, Vanish(0)),
             (0.4, Press(1, false)),
         ],
     );
@@ -511,7 +514,7 @@ impl FieldRenderer {
             timing: timing.clone(),
             speed: self.speed,
         });
-        let mut notes: Vec<SpawnedNote> = Vec::new();
+        let mut notes: Vec<(SpawnedNote, usize)> = Vec::new();
         let mut mines: Vec<(Entity, usize)> = Vec::new();
         world.resource_scope(|world, skin: Mut<ActiveNoteSkin>| {
             let mut commands = world.commands();
@@ -522,16 +525,19 @@ impl FieldRenderer {
                     let end_beat = Beat(note.beat + length);
                     (timing.seconds_at_beat(end_beat), end_beat)
                 });
-                notes.push(spawn_note(
-                    &mut commands,
-                    &skin,
-                    &NoteSpawn {
-                        time,
-                        beat: Beat(note.beat),
-                        column: note.column,
-                        quant: config.recognized_quant(note.quant),
-                        end,
-                    },
+                notes.push((
+                    spawn_note(
+                        &mut commands,
+                        &skin,
+                        &NoteSpawn {
+                            time,
+                            beat: Beat(note.beat),
+                            column: note.column,
+                            quant: config.recognized_quant(note.quant),
+                            end,
+                        },
+                    ),
+                    note.column,
                 ));
             }
             for mine in &scenario.mines {
@@ -551,6 +557,12 @@ impl FieldRenderer {
             .collect();
         script.sort_by(|a, b| a.0.0.total_cmp(&b.0.0));
 
+        // The vanish flash plays in the best grade's color.
+        let flash_color = config
+            .grades
+            .iter()
+            .find_map(|grade| grade.arrow_flash)
+            .unwrap_or(Color::WHITE);
         let mut encoder = FfmpegEncoder::start(path, self.fps);
         let mut next_action = 0;
         for frame in 0..frame_count {
@@ -558,7 +570,7 @@ impl FieldRenderer {
             let world = self.apps.main.world_mut();
             world.resource_mut::<NoteFieldClock>().visible = now;
             while next_action < script.len() && script[next_action].0.0 <= now.0 {
-                apply_action(world, &notes, &mines, script[next_action].1);
+                apply_action(world, &notes, &mines, script[next_action].1, flash_color);
                 next_action += 1;
             }
             let sender = self.sender.clone();
@@ -650,13 +662,14 @@ fn clip_window(
 
 fn apply_action(
     world: &mut World,
-    notes: &[SpawnedNote],
+    notes: &[(SpawnedNote, usize)],
     mines: &[(Entity, usize)],
     action: ScriptAction,
+    flash_color: Color,
 ) {
     match action {
         ScriptAction::Hold(index, state) => {
-            let mut entity = world.entity_mut(notes[index].head);
+            let mut entity = world.entity_mut(notes[index].0.head);
             let mut visual = entity
                 .get_mut::<HoldVisual>()
                 .expect("scripted hold state on a note without a hold");
@@ -666,8 +679,18 @@ fn apply_action(
         }
         ScriptAction::Fade(index) => {
             world
-                .entity_mut(notes[index].head)
-                .insert(FadeOut::over(GRADED_FADE_SECONDS));
+                .entity_mut(notes[index].0.head)
+                .insert(FadeOut::over(HOLD_OK_FADE_SECONDS));
+        }
+        ScriptAction::Vanish(index) => {
+            let (note, column) = &notes[index];
+            world.despawn(note.head);
+            let column = *column;
+            world.resource_scope(|world, skin: Mut<ActiveNoteSkin>| {
+                let mut commands = world.commands();
+                spawn_arrow_flash(&mut commands, &skin, column, flash_color, false);
+            });
+            world.flush();
         }
         ScriptAction::Press(column, held) => {
             let mut receptors = world.query::<&mut Receptor>();

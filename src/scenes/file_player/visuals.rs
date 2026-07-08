@@ -1,8 +1,7 @@
 use super::{
-    ComboText, HoldOutcome, JudgmentShown, JudgmentText, OffsetOsd, PlaySession, PlaySet,
-    direction_action,
+    ComboText, GradeText, HoldOutcome, OffsetOsd, PlaySession, PlaySet, RowGraded, direction_action,
 };
-use crate::core::config::{GameConfig, Judgment, StepOutcome, TimingFeedback};
+use crate::core::config::{GameConfig, Grade, RowOutcome, TimingFeedback};
 use crate::core::health_vial::HealthVial;
 use crate::core::input::Actions;
 use crate::core::note_field::{HoldVisual, HoldVisualState, NoteFieldClock, Receptor};
@@ -18,7 +17,7 @@ pub(super) fn plugin(app: &mut App) {
         )
         .add_systems(
             Update,
-            (update_judgment_text, update_combo_text, run_offset_osd)
+            (update_grade_text, update_combo_text, run_offset_osd)
                 .chain()
                 .in_set(PlaySet::Present),
         );
@@ -58,7 +57,7 @@ fn sync_note_field(
         }
     }
 
-    for arrow in session.steps.iter().flat_map(|step| &step.arrows) {
+    for arrow in session.rows.iter().flat_map(|row| &row.arrows) {
         let Some(hold) = &arrow.hold else { continue };
         let state = match (hold.engaged, hold.result) {
             (_, Some(HoldOutcome::Ok)) => HoldVisualState::Ok,
@@ -75,15 +74,15 @@ fn sync_note_field(
     }
 }
 
-fn update_judgment_text(
+fn update_grade_text(
     time: Res<Time>,
     config: Res<GameConfig>,
-    mut shown: MessageReader<JudgmentShown>,
-    mut label: Single<(&mut Text2d, &mut TextColor), With<JudgmentText>>,
+    mut graded: MessageReader<RowGraded>,
+    mut label: Single<(&mut Text2d, &mut TextColor), With<GradeText>>,
 ) {
     let (text, color) = &mut *label;
-    for message in shown.read() {
-        let (value, base) = judgment_display(&config, message.outcome);
+    for message in graded.read() {
+        let (value, base) = grade_display(&config, message.outcome);
         text.0 = value;
         color.0 = base.with_alpha(1.0);
     }
@@ -95,15 +94,15 @@ fn update_judgment_text(
     }
 }
 
-/// The judgment text and color for an outcome. Grades opting into timing
+/// The grade text and color for an outcome. Grades opting into timing
 /// feedback mark the side of the perfect moment the input fell on: early
 /// feedback leads the name, late feedback trails it.
-fn judgment_display(config: &GameConfig, outcome: StepOutcome) -> (String, Color) {
-    let StepOutcome::Hit { error } = outcome else {
+fn grade_display(config: &GameConfig, outcome: RowOutcome) -> (String, Color) {
+    let RowOutcome::Hit { error } = outcome else {
         return (config.miss.name.clone(), config.miss.color);
     };
-    let Judgment::Grade(grade) = config.judge(outcome) else {
-        unreachable!("hits always judge to a grade");
+    let Grade::Hit(grade) = config.grade(outcome) else {
+        unreachable!("hits always grade into a timed grade");
     };
     let definition = &config.grades[grade.0];
     let name = &definition.name;
@@ -124,13 +123,13 @@ const COMBO_BOUNCE: Seconds = Seconds(0.18);
 
 fn update_combo_text(
     time: Res<Time>,
-    mut shown: MessageReader<JudgmentShown>,
+    mut graded: MessageReader<RowGraded>,
     mut label: Single<(&mut Text2d, &mut Transform, &mut Visibility), With<ComboText>>,
     mut bounce: Local<Seconds>,
     mut last_combo: Local<u32>,
 ) {
     let (text, transform, visibility) = &mut *label;
-    for message in shown.read() {
+    for message in graded.read() {
         if message.combo > *last_combo {
             *bounce = COMBO_BOUNCE;
         }

@@ -1,4 +1,4 @@
-use crate::core::config::{GameConfig, Judgment};
+use crate::core::config::{GameConfig, Grade};
 use crate::core::font::game_font;
 use crate::core::input::{Actions, GameAction};
 use crate::core::menu::TITLE_COLOR;
@@ -42,9 +42,9 @@ fn enter(
     let mut grade_counts = vec![0u32; config.grades.len()];
     let mut miss_count = 0u32;
     for outcome in &results.outcomes {
-        match config.judge(*outcome) {
-            Judgment::Grade(grade) => grade_counts[grade.0] += 1,
-            Judgment::Miss => miss_count += 1,
+        match config.grade(*outcome) {
+            Grade::Hit(grade) => grade_counts[grade.0] += 1,
+            Grade::Miss => miss_count += 1,
         }
     }
 
@@ -70,7 +70,7 @@ fn enter(
         format!(
             "{:<12} {}/{} avoided",
             "Mines",
-            results.mines_total - results.mines_hit,
+            results.mines_total - results.mines_exploded,
             results.mines_total
         ),
         Color::srgb(0.8, 0.85, 0.8),
@@ -87,14 +87,14 @@ fn enter(
         .collect();
 
     let title = results.title.clone();
-    let (verdict_label, verdict_color) = match results.result {
+    let (result_label, result_color) = match results.result {
         PlayResult::Cleared => ("CLEARED", Color::srgb(0.5, 0.95, 0.6)),
         PlayResult::Failed => ("FAILED", Color::srgb(0.95, 0.25, 0.25)),
     };
-    let verdict = bsn! {
+    let result_line = bsn! {
         game_font(34.0)
-        Text({verdict_label.to_string()})
-        TextColor({verdict_color})
+        Text({result_label.to_string()})
+        TextColor({result_color})
         Node { margin: {UiRect::bottom(Val::Px(20.0))} }
     };
     let combo = format!("Max combo: {}", results.max_combo);
@@ -116,7 +116,7 @@ fn enter(
                     TextColor({TITLE_COLOR})
                     Node { margin: {UiRect::bottom(Val::Px(4.0))} }
                 ),
-                {verdict},
+                {result_line},
                 {tallies},
                 (
                     game_font(32.0)

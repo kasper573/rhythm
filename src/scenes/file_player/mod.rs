@@ -5,7 +5,7 @@ mod visuals;
 
 use crate::core::assets::{asset_root, asset_server_path};
 use crate::core::at;
-use crate::core::config::{GameConfig, StepOutcome};
+use crate::core::config::{GameConfig, RowOutcome};
 use crate::core::font::game_font;
 use crate::core::health_vial::{HealthVialMaterial, spawn_health_vial};
 use crate::core::input::{Actions, GameAction, shift_held};
@@ -31,11 +31,11 @@ pub struct ScoreResults {
     pub id: StepfileId,
     pub title: String,
     pub result: PlayResult,
-    pub outcomes: Vec<StepOutcome>,
+    pub outcomes: Vec<RowOutcome>,
     pub max_combo: u32,
     pub holds_ok: u32,
     pub holds_total: u32,
-    pub mines_hit: u32,
+    pub mines_exploded: u32,
     pub mines_total: u32,
 }
 
@@ -51,7 +51,7 @@ pub struct FilePlayerPlugin;
 
 impl Plugin for FilePlayerPlugin {
     fn build(&self, app: &mut App) {
-        app.add_message::<JudgmentShown>()
+        app.add_message::<RowGraded>()
             .add_plugins((
                 clock::plugin,
                 grading::plugin,
@@ -61,7 +61,7 @@ impl Plugin for FilePlayerPlugin {
             .configure_sets(
                 Update,
                 (
-                    (PlaySet::Clock, PlaySet::Judge, PlaySet::Tune, PlaySet::Sync)
+                    (PlaySet::Clock, PlaySet::Grade, PlaySet::Tune, PlaySet::Sync)
                         .chain()
                         .before(NoteFieldSystems),
                     PlaySet::Present.after(NoteFieldSystems),
@@ -103,7 +103,7 @@ impl Plugin for FilePlayerPlugin {
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum PlaySet {
     Clock,
-    Judge,
+    Grade,
     Tune,
     Sync,
     Present,
@@ -123,9 +123,9 @@ const LEAD_IN: Seconds = Seconds(2.0);
 #[derive(Resource)]
 pub(super) struct PlaySession {
     pub title: String,
-    pub steps: Vec<SessionStep>,
+    pub rows: Vec<SessionRow>,
     pub mines: Vec<SessionMine>,
-    pub judged_count: usize,
+    pub graded_count: usize,
     pub expire_cursor: usize,
     pub phase: PlayPhase,
     /// Raw playback time as the audio mixer reports it (queue position).
@@ -158,27 +158,27 @@ impl PlaySession {
     }
 
     /// The timeline inputs are graded on (shifted by the machine offset).
-    pub fn judged_now(&self, timing: &TimingSettings) -> Seconds {
+    pub fn graded_now(&self, timing: &TimingSettings) -> Seconds {
         self.heard_now(timing) + timing.machine_offset.to_seconds()
     }
 
     /// The timeline arrows are drawn on (shifted by the visual delay).
     pub fn visible_now(&self, timing: &TimingSettings) -> Seconds {
-        self.judged_now(timing) - timing.visual_delay.to_seconds()
+        self.graded_now(timing) - timing.visual_delay.to_seconds()
     }
 }
 
-/// One judgeable row of the chart: every arrow in it must be stepped, and
-/// the whole step resolves into a single outcome (see the grading systems).
-pub(super) struct SessionStep {
+/// One row of the chart as played: every arrow in it must be stepped, and
+/// the whole row resolves into a single outcome (see the grading systems).
+pub(super) struct SessionRow {
     pub time: Seconds,
-    pub outcome: Option<StepOutcome>,
-    /// 1..=4 arrows; two or more make the step a jump.
+    pub outcome: Option<RowOutcome>,
+    /// 1..=4 arrows; two or more make the row a jump.
     pub arrows: Vec<SessionArrow>,
 }
 
-impl SessionStep {
-    /// Steps resolve once every arrow has a banked press.
+impl SessionRow {
+    /// Rows resolve once every arrow has a banked press.
     pub fn complete(&self) -> bool {
         self.arrows.iter().all(|arrow| arrow.error.is_some())
     }
@@ -188,7 +188,7 @@ pub(super) struct SessionArrow {
     pub column: usize,
     pub entity: Entity,
     /// The banked press: its timing error is locked in silently when the
-    /// panel is stepped and only pays out when the whole step resolves.
+    /// panel is stepped and only counts once the whole row resolves.
     pub error: Option<Seconds>,
     pub hold: Option<HoldState>,
 }
@@ -223,14 +223,14 @@ pub(super) struct SessionMine {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum MineOutcome {
-    Hit,
+    Exploded,
     Avoided,
 }
 
-/// Announces a judged note so the judgment/combo displays can react.
+/// Announces a graded row so the grade/combo displays can react.
 #[derive(Message)]
-pub(super) struct JudgmentShown {
-    pub outcome: StepOutcome,
+pub(super) struct RowGraded {
+    pub outcome: RowOutcome,
     pub combo: u32,
 }
 
@@ -243,7 +243,7 @@ pub(super) struct MusicTrack;
 pub(super) struct TickTrack;
 
 #[derive(Component, Default, Clone)]
-pub(super) struct JudgmentText;
+pub(super) struct GradeText;
 
 #[derive(Component, Default, Clone)]
 pub(super) struct ComboText;
@@ -316,7 +316,7 @@ fn enter(
         });
     }
 
-    let mut steps = Vec::new();
+    let mut rows = Vec::new();
     for row in &chart.rows {
         let time = timing.seconds_at_beat(row.beat);
         let quant = config.recognized_quant(row.quant);
@@ -360,7 +360,7 @@ fn enter(
             });
         }
         if !arrows.is_empty() {
-            steps.push(SessionStep {
+            rows.push(SessionRow {
                 time,
                 outcome: None,
                 arrows,
@@ -369,7 +369,7 @@ fn enter(
     }
     // Warps and stops can reorder wall-clock times relative to beats; the
     // expiry cursor needs time order.
-    steps.sort_by(|a, b| a.time.0.total_cmp(&b.time.0));
+    rows.sort_by(|a, b| a.time.0.total_cmp(&b.time.0));
 
     if let Some(path) = entry.music_path().as_deref().and_then(asset_server_path) {
         let music = assets.asset_server.load(path);
@@ -391,7 +391,7 @@ fn enter(
         );
     }
 
-    let tick_times: Vec<Seconds> = steps.iter().map(|step| step.time).collect();
+    let tick_times: Vec<Seconds> = rows.iter().map(|row| row.time).collect();
     match render_tick_track(
         &asset_root().join(Sfx::Tick.asset_path()),
         &tick_times,
@@ -427,9 +427,9 @@ fn enter(
     });
     commands.insert_resource(PlaySession {
         title: entry.display_title(),
-        steps,
+        rows,
         mines,
-        judged_count: 0,
+        graded_count: 0,
         expire_cursor: 0,
         phase: PlayPhase::LeadIn { remaining: LEAD_IN },
         clock: -LEAD_IN,
@@ -467,7 +467,7 @@ fn spawn_hud(commands: &mut Commands) {
     commands.spawn_scoped(
         GameScene::FilePlayer,
         bsn! {
-            JudgmentText
+            GradeText
             game_font(50.0)
             Text2d("")
             TextColor(Color::srgba(1.0, 1.0, 1.0, 0.0))
@@ -633,7 +633,7 @@ fn finish_when_complete(
     mut commands: Commands,
     mut fade: ResMut<SceneFade>,
 ) {
-    if session.finished || session.judged_count < session.steps.len() {
+    if session.finished || session.graded_count < session.rows.len() {
         return;
     }
     let audio_done = if let Ok(sink) = music.single() {
@@ -654,8 +654,8 @@ fn finish_when_complete(
 }
 
 /// Zero health ends the session on the spot: the fail sting fires here so
-/// it plays through the transition, and the judgments given so far become
-/// the final result.
+/// it plays through the transition, and the grades given so far become the
+/// final result.
 fn fail_when_drained(
     mut session: ResMut<PlaySession>,
     selected: Res<SelectedStepfile>,
@@ -678,30 +678,26 @@ fn collect_results(
     result: PlayResult,
 ) -> ScoreResults {
     let holds: Vec<&HoldState> = session
-        .steps
+        .rows
         .iter()
-        .flat_map(|step| &step.arrows)
+        .flat_map(|row| &row.arrows)
         .filter_map(|arrow| arrow.hold.as_ref())
         .collect();
     ScoreResults {
         id: selected.id,
         title: session.title.clone(),
         result,
-        outcomes: session
-            .steps
-            .iter()
-            .filter_map(|step| step.outcome)
-            .collect(),
+        outcomes: session.rows.iter().filter_map(|row| row.outcome).collect(),
         max_combo: session.max_combo,
         holds_ok: holds
             .iter()
             .filter(|hold| hold.result == Some(HoldOutcome::Ok))
             .count() as u32,
         holds_total: holds.len() as u32,
-        mines_hit: session
+        mines_exploded: session
             .mines
             .iter()
-            .filter(|mine| mine.outcome == Some(MineOutcome::Hit))
+            .filter(|mine| mine.outcome == Some(MineOutcome::Exploded))
             .count() as u32,
         mines_total: session.mines.len() as u32,
     }

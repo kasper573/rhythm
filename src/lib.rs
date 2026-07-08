@@ -24,7 +24,7 @@ pub fn run() {
                     primary_window: Some(Window {
                         title: "Rhythm".to_string(),
                         resolution: SCREEN_SIZE.as_uvec2().into(),
-                        // Inputs are judged at frame granularity; vsync would
+                        // Inputs are graded at frame granularity; vsync would
                         // quantize presses to the display refresh (+0..16ms of
                         // one-sided timing error at 60Hz).
                         present_mode: bevy::window::PresentMode::AutoNoVsync,
