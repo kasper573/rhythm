@@ -25,7 +25,8 @@
 - All bespoke rhythm game code must be written from scratch. But general purpose
   problems should be solved via third party crates.
 - Use bevy 0.19 for game development. Follow all bevy 0.19 best practices:
-  https://bevy.org/news/bevy-0-19/.
+  https://bevy.org/news/bevy-0-19/. Use the new BSN notation _literally_ as much as possible.
+  Not using BSN should be considered a failure and a tragic fallback that should be avoided at all cost.
 
 ## Code style
 
