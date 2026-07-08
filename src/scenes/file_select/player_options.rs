@@ -118,6 +118,23 @@ pub(super) fn enter(mut commands: Commands, font: Res<GameFont>) {
                                                 ..default()
                                             },
                                         ));
+                                        option.spawn((
+                                            Underline {
+                                                row: index,
+                                                target: 0,
+                                                current: None,
+                                            },
+                                            Node {
+                                                position_type: PositionType::Absolute,
+                                                left: Val::Px(0.0),
+                                                bottom: Val::Px(-7.0),
+                                                width: Val::Px(0.0),
+                                                height: Val::Px(4.0),
+                                                border_radius: BorderRadius::all(Val::Px(2.0)),
+                                                ..default()
+                                            },
+                                            BackgroundColor(STEPFILE_TEXT),
+                                        ));
                                     });
                             }
                         });
@@ -184,47 +201,88 @@ pub(super) fn refresh_rows(
     skins: Res<NoteSkinLibrary>,
     font: Res<GameFont>,
     mut labels: Query<(&RowText, &mut TextColor)>,
+    mut value_colors: Query<(&ValueText, &mut TextColor), Without<RowText>>,
     containers: Query<(Entity, &RowValues)>,
+    mut underlines: Query<&mut Underline>,
     mut commands: Commands,
 ) {
-    if !active.is_changed() && !settings.is_changed() {
+    let rebuild = settings.is_changed() || active.is_added();
+    if !active.is_changed() && !rebuild {
         return;
     }
     for (label, mut color) in &mut labels {
         color.0 = row_color(label.0 == active.0);
     }
+    if !rebuild {
+        for (value, mut color) in &mut value_colors {
+            color.0 = row_color(value.row == active.0);
+        }
+        return;
+    }
     for (container, marker) in &containers {
         let color = row_color(marker.0 == active.0);
         let (values, selected) = row_values(row(marker.0), &settings, &config, &skins);
+        for mut underline in &mut underlines {
+            if underline.row == marker.0 {
+                underline.target = selected;
+            }
+        }
         commands.entity(container).despawn_related::<Children>();
         commands.entity(container).with_children(|list| {
             for (index, value) in values.into_iter().enumerate() {
-                list.spawn(Node {
-                    flex_direction: FlexDirection::Column,
-                    align_items: AlignItems::Center,
-                    row_gap: Val::Px(3.0),
-                    ..default()
-                })
-                .with_children(|item| {
-                    item.spawn((Text::new(value), font.sized(28.0), TextColor(color)));
-                    item.spawn((
-                        Underline,
-                        Node {
-                            width: Val::Percent(100.0),
-                            height: Val::Px(4.0),
-                            border_radius: BorderRadius::all(Val::Px(2.0)),
-                            ..default()
-                        },
-                        BackgroundColor(STEPFILE_TEXT),
-                        if index == selected {
-                            Visibility::Inherited
-                        } else {
-                            Visibility::Hidden
-                        },
-                    ));
-                });
+                list.spawn((
+                    ValueText {
+                        row: marker.0,
+                        index,
+                    },
+                    Text::new(value),
+                    font.sized(28.0),
+                    TextColor(color),
+                ));
             }
         });
+    }
+}
+
+const UNDERLINE_RATE: f32 = 14.0;
+
+/// Slides and resizes each row's underline toward its selected value,
+/// measuring the laid-out text so the tween tracks real glyph widths.
+#[allow(clippy::type_complexity)]
+pub(super) fn animate_underline(
+    time: Res<Time>,
+    values: Query<(&ValueText, &ComputedNode, &UiGlobalTransform)>,
+    rows: Query<(&ComputedNode, &UiGlobalTransform), (Without<ValueText>, Without<Underline>)>,
+    mut underlines: Query<(&mut Underline, &mut Node, &ChildOf)>,
+) {
+    for (mut underline, mut node, child_of) in &mut underlines {
+        let Ok((row_node, row_transform)) = rows.get(child_of.parent()) else {
+            continue;
+        };
+        let Some((_, value_node, value_transform)) = values
+            .iter()
+            .find(|(value, ..)| value.row == underline.row && value.index == underline.target)
+        else {
+            continue;
+        };
+        if value_node.size.x == 0.0 {
+            continue;
+        }
+        let scale = value_node.inverse_scale_factor;
+        let left = (value_transform.translation.x
+            - value_node.size.x / 2.0
+            - (row_transform.translation.x - row_node.size.x / 2.0))
+            * scale;
+        let target = Vec2::new(left, value_node.size.x * scale);
+        let current = match underline.current {
+            None => target,
+            Some(current) => {
+                current + (target - current) * (1.0 - (-UNDERLINE_RATE * time.delta_secs()).exp())
+            }
+        };
+        underline.current = Some(current);
+        node.left = Val::Px(current.x);
+        node.width = Val::Px(current.y);
     }
 }
 
@@ -305,7 +363,18 @@ pub(super) struct RowText(usize);
 pub(super) struct RowValues(usize);
 
 #[derive(Component)]
-pub(super) struct Underline;
+pub(super) struct ValueText {
+    row: usize,
+    index: usize,
+}
+
+/// One per option row; [`animate_underline`] tweens it to the selected value.
+#[derive(Component)]
+pub(super) struct Underline {
+    row: usize,
+    target: usize,
+    current: Option<Vec2>,
+}
 
 /// Steps the row's value; the ends do not wrap. Switching the speed type
 /// resets the modifier to the new type's default — they are one value in

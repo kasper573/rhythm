@@ -67,6 +67,7 @@ impl Plugin for FileSelectPlugin {
                         player_options::handle_pulses,
                         player_options::handle_close,
                         player_options::refresh_rows,
+                        player_options::animate_underline,
                         player_options::animate_transition,
                     )
                         .run_if(in_state(FileSelectMode::PlayerOptions)),
