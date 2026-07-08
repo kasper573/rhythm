@@ -17,6 +17,7 @@ use crate::core::note_skin::ActiveNoteSkin;
 use crate::core::scene_flow::SpawnScoped;
 use crate::core::settings::{Settings, TimingSettings};
 use crate::core::sfx::{PlaySfx, Sfx};
+use crate::core::stepfile::Difficulty;
 use crate::core::tick_track::render_tick_track;
 use crate::core::units::{Millis, Seconds};
 use crate::scenes::file_select::{FileSelectTarget, SelectedStepfile};
@@ -31,9 +32,14 @@ pub struct ScoreResults {
     pub id: StepfileId,
     pub title: String,
     pub result: PlayResult,
+    pub difficulty: Difficulty,
     pub outcomes: Vec<RowOutcome>,
+    /// Every row of the chart, so partial (failed) runs still rate against
+    /// the whole song.
+    pub rows_total: u32,
     pub max_combo: u32,
     pub holds_ok: u32,
+    pub holds_ng: u32,
     pub holds_total: u32,
     pub mines_exploded: u32,
     pub mines_total: u32,
@@ -123,6 +129,7 @@ const LEAD_IN: Seconds = Seconds(2.0);
 #[derive(Resource)]
 pub(super) struct PlaySession {
     pub title: String,
+    pub difficulty: Difficulty,
     pub rows: Vec<SessionRow>,
     pub mines: Vec<SessionMine>,
     pub graded_count: usize,
@@ -427,6 +434,7 @@ fn enter(
     });
     commands.insert_resource(PlaySession {
         title: entry.display_title(),
+        difficulty: chart.difficulty.clone(),
         rows,
         mines,
         graded_count: 0,
@@ -687,11 +695,17 @@ fn collect_results(
         id: selected.id,
         title: session.title.clone(),
         result,
+        difficulty: session.difficulty.clone(),
         outcomes: session.rows.iter().filter_map(|row| row.outcome).collect(),
+        rows_total: session.rows.len() as u32,
         max_combo: session.max_combo,
         holds_ok: holds
             .iter()
             .filter(|hold| hold.result == Some(HoldOutcome::Ok))
+            .count() as u32,
+        holds_ng: holds
+            .iter()
+            .filter(|hold| hold.result == Some(HoldOutcome::Ng))
             .count() as u32,
         holds_total: holds.len() as u32,
         mines_exploded: session

@@ -130,7 +130,7 @@ fn resolve_row(
     let Grade::Hit(grade) = config.grade(RowOutcome::Hit { error }) else {
         return;
     };
-    let Some(color) = config.grades[grade.0].arrow_flash else {
+    let Some(color) = config.grading.dynamic[grade.0].arrow_flash else {
         return;
     };
     let bright = session.combo >= config.bright_arrow_flash_combo;
@@ -170,13 +170,15 @@ fn expire_missed_rows(
         }
         if row.outcome.is_none() {
             apply_outcome(&mut session, &config, cursor, RowOutcome::Miss, &mut graded);
+            let session = &mut *session;
             for arrow in &mut session.rows[cursor].arrows {
                 let Some(hold) = &mut arrow.hold else {
                     continue;
                 };
                 if arrow.error.is_none() {
                     hold.result = Some(HoldOutcome::Ng);
-                    spawn_hold_popup(&mut commands, arrow.column, HoldOutcome::Ng);
+                    apply_hold_health(&mut session.health, &config, HoldOutcome::Ng);
+                    spawn_hold_popup(&mut commands, &config, arrow.column, HoldOutcome::Ng);
                 }
             }
         }
@@ -192,11 +194,13 @@ fn update_holds(
     actions: Actions,
     time: Res<Time>,
     settings: Res<Settings>,
+    config: Res<GameConfig>,
     mut session: ResMut<PlaySession>,
     mut commands: Commands,
 ) {
     let now = session.graded_now(&settings.timing);
     let delta = time.delta_secs();
+    let session = &mut *session;
     for arrow in session
         .rows
         .iter_mut()
@@ -227,13 +231,15 @@ fn update_holds(
 
         if now.0 >= hold.end.0 && hold.life > 0.0 {
             hold.result = Some(HoldOutcome::Ok);
+            apply_hold_health(&mut session.health, &config, HoldOutcome::Ok);
             commands
                 .entity(arrow.entity)
                 .insert(FadeOut::over(HOLD_OK_FADE_SECONDS));
-            spawn_hold_popup(&mut commands, arrow.column, HoldOutcome::Ok);
+            spawn_hold_popup(&mut commands, &config, arrow.column, HoldOutcome::Ok);
         } else if hold.life <= 0.0 {
             hold.result = Some(HoldOutcome::Ng);
-            spawn_hold_popup(&mut commands, arrow.column, HoldOutcome::Ng);
+            apply_hold_health(&mut session.health, &config, HoldOutcome::Ng);
+            spawn_hold_popup(&mut commands, &config, arrow.column, HoldOutcome::Ng);
         }
     }
 }
@@ -292,17 +298,35 @@ fn apply_outcome(
     });
 }
 
-fn spawn_hold_popup(commands: &mut Commands, column: usize, outcome: HoldOutcome) {
-    let (label, color) = match outcome {
-        HoldOutcome::Ok => ("OK", Color::srgb(0.45, 0.95, 0.5)),
-        HoldOutcome::Ng => ("NG", Color::srgb(0.95, 0.35, 0.35)),
+/// Holds pay their fixed grade's health offset the moment they resolve.
+fn apply_hold_health(health: &mut u32, config: &GameConfig, outcome: HoldOutcome) {
+    let def = match outcome {
+        HoldOutcome::Ok => &config.grading.fixed.ok,
+        HoldOutcome::Ng => &config.grading.fixed.ng,
     };
+    *health = health
+        .saturating_add_signed(def.health_offset)
+        .min(config.player_max_health);
+}
+
+fn spawn_hold_popup(
+    commands: &mut Commands,
+    config: &GameConfig,
+    column: usize,
+    outcome: HoldOutcome,
+) {
+    let def = match outcome {
+        HoldOutcome::Ok => &config.grading.fixed.ok,
+        HoldOutcome::Ng => &config.grading.fixed.ng,
+    };
+    let label = def.name.clone();
+    let color = def.color;
     commands
         .spawn_scoped(
             GameScene::FilePlayer,
             bsn! {
                 game_font(30.0)
-                Text2d({label.to_string()})
+                Text2d({label})
                 TextColor({color})
                 at(column_x(column), TARGET_Y - 54.0, 21.0)
             },

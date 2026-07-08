@@ -3,6 +3,7 @@ mod player_options;
 use crate::core::assets::asset_server_path;
 use crate::core::config::GameConfig;
 use crate::core::font::game_font;
+use crate::core::high_scores::{HighScores, highscore_key};
 use crate::core::input::{Actions, GameAction, NavPulse};
 use crate::core::library::{StepfileId, StepfileLibrary};
 use crate::core::scene_flow::SpawnScoped;
@@ -69,9 +70,11 @@ impl Plugin for FileSelectPlugin {
                     )
                         .run_if(scene_accepts_input.and_then(in_state(FileSelectMode::Browse))),
                     animate_wheel,
-                    // Both refreshers observe `Wheel::dirty`; the info panel
-                    // runs last and clears it.
+                    pin_rating_column,
+                    // The refreshers all observe `Wheel::dirty`; the info
+                    // panel runs last and clears it.
                     refresh_wheel_rows,
+                    refresh_wheel_ratings,
                     refresh_info_panel,
                     update_preview,
                 )
@@ -109,6 +112,12 @@ const WHEEL_X: f32 = 330.0;
 const BULGE_PER_ROW: f32 = 3.0;
 const PREVIEW_DEBOUNCE: Seconds = Seconds(0.35);
 const BANNER_SIZE: Vec2 = Vec2::new(500.0, 156.0);
+/// On-screen height of the wheel's rating images (native art is 120px).
+const RATING_HEIGHT: f32 = 38.0;
+/// Right edge of the rating column in row-local coordinates at zero
+/// bulge; [`pin_rating_column`] cancels the bulge so the column stays
+/// fixed on screen while the bars slide beneath it.
+const RATING_RIGHT_X: f32 = 270.0;
 
 const BACKDROP_COLOR: Color = Color::srgb(0.05, 0.085, 0.03);
 const STEPFILE_BAR: Color = Color::srgb(0.10, 0.19, 0.07);
@@ -158,6 +167,10 @@ struct SlotTitle;
 
 #[derive(Component, Default, Clone)]
 struct SlotArtist;
+
+/// The high-score rating image at the right edge of a stepfile row.
+#[derive(Component, Default, Clone)]
+struct SlotRating;
 
 #[derive(Component, Default, Clone)]
 struct InfoPanel;
@@ -241,6 +254,17 @@ fn enter(
                         TextColor({ARTIST_TEXT})
                         Anchor({Anchor::CENTER_LEFT.0})
                         at(-BAR_WIDTH / 2.0 + 60.0, -15.0, 0.1)
+                    ),
+                    (
+                        WheelSlot(slot)
+                        SlotRating
+                        Sprite
+                        Anchor({Anchor::CENTER_RIGHT.0})
+                        Visibility::Hidden
+                        Transform {
+                            translation: {Vec3::new(RATING_RIGHT_X, 0.0, 0.1)},
+                            scale: {Vec3::splat(RATING_HEIGHT / 120.0)},
+                        }
                     ),
                 ]
             },
@@ -489,6 +513,16 @@ fn animate_wheel(
     }
 }
 
+fn pin_rating_column(
+    wheel: Res<Wheel>,
+    mut ratings: Query<(&WheelSlot, &mut Transform), With<SlotRating>>,
+) {
+    for (slot, mut transform) in &mut ratings {
+        let bulge = slot_x(slot.0, wheel.scroll_offset) - WHEEL_X;
+        transform.translation.x = RATING_RIGHT_X - bulge;
+    }
+}
+
 #[derive(QueryData)]
 #[query_data(mutable)]
 struct SlotTitleText {
@@ -553,6 +587,56 @@ fn refresh_wheel_rows(
             _ => text.0 = String::new(),
         }
     }
+}
+
+fn refresh_wheel_ratings(
+    wheel: Res<Wheel>,
+    library: Res<StepfileLibrary>,
+    high_scores: Res<HighScores>,
+    config: Res<GameConfig>,
+    preferred: Res<PreferredDifficulty>,
+    asset_server: Res<AssetServer>,
+    mut ratings: Query<(&WheelSlot, &mut Sprite, &mut Visibility), With<SlotRating>>,
+) {
+    if !wheel.dirty {
+        return;
+    }
+    for (slot, mut sprite, mut visibility) in &mut ratings {
+        let shown = match slot_entry(&wheel, slot.0) {
+            Some(WheelEntry::Stepfile { id }) => {
+                high_score_rating(*id, &library, &high_scores, &config, preferred.0).map(|image| {
+                    let image = asset_server.load(image);
+                    if sprite.image != image {
+                        sprite.image = image;
+                    }
+                })
+            }
+            _ => None,
+        };
+        visibility.set_if_neq(match shown {
+            Some(()) => Visibility::Visible,
+            None => Visibility::Hidden,
+        });
+    }
+}
+
+/// The rating image earned by the high score of the chart this row would
+/// currently play. Only the total points are stored, so grade-based
+/// rating rules never match here.
+fn high_score_rating(
+    id: StepfileId,
+    library: &StepfileLibrary,
+    high_scores: &HighScores,
+    config: &GameConfig,
+    preferred: u8,
+) -> Option<String> {
+    let entry = library.stepfile(id);
+    let chart = &entry.stepfile.charts[chart_for_preference(&entry.stepfile, preferred)?];
+    let key = highscore_key(library.group_name(id), &entry.name(), &chart.difficulty);
+    let points = high_scores.get(&key)?;
+    let stats = chart.stats();
+    let percent = config.score_percent(points, chart.rows.len() as u32, stats.holds as u32);
+    Some(config.rating(percent, None).image.clone())
 }
 
 /// Rebuilt from scratch: despawn-and-respawn beats mutating a panel of

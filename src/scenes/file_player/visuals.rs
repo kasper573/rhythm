@@ -99,12 +99,13 @@ fn update_grade_text(
 /// feedback leads the name, late feedback trails it.
 fn grade_display(config: &GameConfig, outcome: RowOutcome) -> (String, Color) {
     let RowOutcome::Hit { error } = outcome else {
-        return (config.miss.name.clone(), config.miss.color);
+        let miss = &config.grading.fixed.miss;
+        return (miss.name.clone(), miss.color);
     };
     let Grade::Hit(grade) = config.grade(outcome) else {
         unreachable!("hits always grade into a timed grade");
     };
-    let definition = &config.grades[grade.0];
+    let definition = &config.grading.dynamic[grade.0];
     let name = &definition.name;
     let early = error.0 > 0.0;
     // Displayed offset is input-relative: negative = early, positive = late.

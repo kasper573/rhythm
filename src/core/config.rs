@@ -14,9 +14,7 @@ pub struct GameConfig {
     /// wheel's default active row and expanded group. When nothing matches,
     /// the wheel defaults to the first stepfile of the first group.
     pub wheel_default: (String, String),
-    /// Grading windows ordered best to worst (smallest window first).
-    pub grades: Vec<GradeDef>,
-    pub miss: MissDef,
+    pub grading: GradingConfig,
     /// Tick track volume: `0..=1` attenuates, `1..=2` boosts. Capped at 2 so
     /// a config typo can never blow anyone's eardrums out.
     pub tick_volume: f32,
@@ -34,6 +32,56 @@ pub struct GameConfig {
     /// `health_offset`, and draining to zero fails the session.
     pub player_max_health: u32,
     pub healthbar: HealthBarConfig,
+    /// Rating rules tried in order: the first match wins, so earlier
+    /// entries take priority.
+    pub ratings: Vec<RatingDef>,
+}
+
+/// One `{ image, point_percentage | all_grades_gte }` config entry; the
+/// two rule fields are mutually exclusive.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(try_from = "RawRatingDef")]
+pub struct RatingDef {
+    /// Image path under the asset root.
+    pub image: String,
+    pub kind: RatingKind,
+}
+
+#[derive(Debug, Clone)]
+pub enum RatingKind {
+    /// Matches a score of at least this percentage.
+    PointPercentage(u8),
+    /// Matches when every row of the chart was graded at least this
+    /// (dynamic) grade — partial runs never match.
+    AllGradesGte(String),
+}
+
+#[derive(Deserialize)]
+struct RawRatingDef {
+    image: String,
+    point_percentage: Option<u8>,
+    all_grades_gte: Option<String>,
+}
+
+impl TryFrom<RawRatingDef> for RatingDef {
+    type Error = String;
+
+    fn try_from(raw: RawRatingDef) -> Result<RatingDef, String> {
+        let kind = match (raw.point_percentage, raw.all_grades_gte) {
+            (Some(percent), None) => RatingKind::PointPercentage(percent),
+            (None, Some(grade)) => RatingKind::AllGradesGte(grade),
+            _ => {
+                return Err(format!(
+                    "rating {}: exactly one of point_percentage/all_grades_gte required",
+                    raw.image
+                ));
+            }
+        };
+        Ok(RatingDef {
+            image: raw.image,
+            kind,
+        })
+    }
 }
 
 /// The player's presentation choices for playing stepfiles.
@@ -67,11 +115,28 @@ pub struct SpeedModifierSet {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct MissDef {
+pub struct GradingConfig {
+    /// The timed grades, ordered best to worst (smallest window first).
+    pub dynamic: Vec<GradeDef>,
+    pub fixed: FixedGrades,
+}
+
+/// The built-in grades: rows that expired unstepped (miss), and holds
+/// kept to the end (ok) or dropped (ng).
+#[derive(Debug, Clone, Deserialize)]
+pub struct FixedGrades {
+    pub miss: FixedGradeDef,
+    pub ok: FixedGradeDef,
+    pub ng: FixedGradeDef,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct FixedGradeDef {
     pub name: String,
     #[serde(deserialize_with = "hex_color")]
     pub color: Color,
     pub health_offset: i32,
+    pub points: u32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -201,6 +266,8 @@ pub struct GradeDef {
     pub arrow_flash: Option<Color>,
     /// Applied to the player's health when this grade is given.
     pub health_offset: i32,
+    /// Score points earned when this grade is given.
+    pub points: u32,
 }
 
 /// In the config: `false`, `true`, or `"ms"`.
@@ -252,16 +319,65 @@ impl GameConfig {
 
     pub fn health_offset(&self, grade: Grade) -> i32 {
         match grade {
-            Grade::Hit(grade) => self.grades[grade.0].health_offset,
-            Grade::Miss => self.miss.health_offset,
+            Grade::Hit(grade) => self.grading.dynamic[grade.0].health_offset,
+            Grade::Miss => self.grading.fixed.miss.health_offset,
         }
+    }
+
+    pub fn points(&self, grade: Grade) -> u32 {
+        match grade {
+            Grade::Hit(grade) => self.grading.dynamic[grade.0].points,
+            Grade::Miss => self.grading.fixed.miss.points,
+        }
+    }
+
+    /// The score as a percentage of a perfect run: every row earning the
+    /// highest configured points and every hold kept.
+    pub fn score_percent(&self, points: u32, rows: u32, holds: u32) -> f32 {
+        let best = self
+            .grading
+            .dynamic
+            .iter()
+            .map(|grade| grade.points)
+            .max()
+            .unwrap_or(0);
+        let max = rows as f64 * best as f64 + holds as f64 * self.grading.fixed.ok.points as f64;
+        if max <= 0.0 {
+            return 0.0;
+        }
+        (points as f64 / max * 100.0) as f32
+    }
+
+    /// The first rating rule the result matches, in config order.
+    /// `worst_grade` is the worst grade any row earned, or `None` when
+    /// unknown or the run graded only part of the chart.
+    pub fn rating(&self, percent: f32, worst_grade: Option<Grade>) -> &RatingDef {
+        self.ratings
+            .iter()
+            .find(|rating| match &rating.kind {
+                RatingKind::PointPercentage(threshold) => percent >= *threshold as f32,
+                RatingKind::AllGradesGte(name) => match worst_grade {
+                    Some(Grade::Hit(worst)) => {
+                        let threshold = self
+                            .grading
+                            .dynamic
+                            .iter()
+                            .position(|grade| grade.name == *name)
+                            .expect("validated: all_grades_gte names a dynamic grade");
+                        worst.0 <= threshold
+                    }
+                    Some(Grade::Miss) | None => false,
+                },
+            })
+            .expect("validated: a point_percentage 0 rating always matches")
     }
 
     /// The widest grading window, which doubles as the miss/expiry window:
     /// an unpressed note expires once it is this far in the past.
     pub fn widest_window(&self) -> Seconds {
         Seconds::from_millis(
-            self.grades
+            self.grading
+                .dynamic
                 .last()
                 .expect("grades are validated non-empty")
                 .window_ms,
@@ -272,7 +388,8 @@ impl GameConfig {
     /// input misses every window (a harmless no-op input).
     fn grade_for_error(&self, error: Seconds) -> Option<GradeIndex> {
         let magnitude = error.abs();
-        self.grades
+        self.grading
+            .dynamic
             .iter()
             .position(|grade| magnitude.0 <= Seconds::from_millis(grade.window_ms).0)
             .map(GradeIndex)
@@ -280,7 +397,7 @@ impl GameConfig {
 
     pub fn breaks_combo(&self, grade: Grade) -> bool {
         match grade {
-            Grade::Hit(grade) => self.grades[grade.0].breaks_combo,
+            Grade::Hit(grade) => self.grading.dynamic[grade.0].breaks_combo,
             Grade::Miss => true,
         }
     }
@@ -310,17 +427,17 @@ impl GameConfig {
 
     fn validate(&self, source: &str) {
         assert!(
-            !self.grades.is_empty(),
-            "{source}: grades must not be empty"
+            !self.grading.dynamic.is_empty(),
+            "{source}: grading.dynamic must not be empty"
         );
-        for pair in self.grades.windows(2) {
+        for pair in self.grading.dynamic.windows(2) {
             assert!(
                 pair[0].window_ms < pair[1].window_ms,
                 "{source}: grade windows must be sorted from smallest to largest"
             );
         }
         assert!(
-            self.grades[0].window_ms > 0.0,
+            self.grading.dynamic[0].window_ms > 0.0,
             "{source}: grade windows must be positive"
         );
         assert!(
@@ -339,6 +456,25 @@ impl GameConfig {
             !self.healthbar.colors.is_empty(),
             "{source}: healthbar colors must not be empty"
         );
+        assert!(
+            self.ratings
+                .iter()
+                .any(|rating| matches!(rating.kind, RatingKind::PointPercentage(0))),
+            "{source}: ratings need a point_percentage 0 entry so every score earns one"
+        );
+        for rating in &self.ratings {
+            assert!(
+                asset_root().join(&rating.image).exists(),
+                "{source}: rating image {} does not exist",
+                rating.image
+            );
+            if let RatingKind::AllGradesGte(name) = &rating.kind {
+                assert!(
+                    self.grading.dynamic.iter().any(|grade| grade.name == *name),
+                    "{source}: all_grades_gte {name:?} is not a dynamic grade"
+                );
+            }
+        }
         for cycle in [&self.healthbar.glow, &self.healthbar.liquid] {
             assert!(
                 cycle.speed > 0.0,

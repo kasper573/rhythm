@@ -1,85 +1,105 @@
 {
   "wheel_default": ["EXTREME", "Dance Dance Revolution"],
-  // DDR Extreme timings
-  "grades": [
-    {
-      "name": "Marvelous",
-      "window_ms": 16.667,
-      "color": "#FFFFFF",
-      "arrow_flash": "#FFFFFF",
-      "health_offset": 2
-    },
-    {
-      "name": "Perfect",
-      "window_ms": 33.333,
-      "color": "#FAD94D",
-      "timing_feedback": true,
-      "arrow_flash": "#FFFF40",
-      "health_offset": 2
-    },
-    {
-      "name": "Great",
-      "window_ms": 91.667,
-      "color": "#59E673",
-      "timing_feedback": true,
-      "arrow_flash": "#00F2F2",
-      "health_offset": 1
-    },
-    {
-      "name": "Good",
-      "window_ms": 141.667,
-      "color": "#59A6F2",
-      "timing_feedback": true,
-      "health_offset": 0
-    },
-    {
-      "name": "Bad",
-      "window_ms": 225.0,
-      "color": "#BF73E6",
-      "timing_feedback": true,
-      "breaks_combo": true,
-      "health_offset": -4
+  "grading": {
+    // DDR Extreme timings
+    "dynamic": [
+      {
+        "name": "Marvelous",
+        "window_ms": 16.667,
+        "color": "#FFFFFF",
+        "arrow_flash": "#FFFFFF",
+        "health_offset": 2,
+        "points": 10
+      },
+      {
+        "name": "Perfect",
+        "window_ms": 33.333,
+        "color": "#FAD94D",
+        "timing_feedback": true,
+        "arrow_flash": "#FFFF40",
+        "health_offset": 2,
+        "points": 9
+      },
+      {
+        "name": "Great",
+        "window_ms": 91.667,
+        "color": "#59E673",
+        "timing_feedback": true,
+        "arrow_flash": "#00F2F2",
+        "health_offset": 1,
+        "points": 5
+      },
+      {
+        "name": "Good",
+        "window_ms": 141.667,
+        "color": "#59A6F2",
+        "timing_feedback": true,
+        "health_offset": 0,
+        "points": 2
+      },
+      {
+        "name": "Bad",
+        "window_ms": 225.0,
+        "color": "#BF73E6",
+        "timing_feedback": true,
+        "breaks_combo": true,
+        "health_offset": -4,
+        "points": 0
+      }
+    ],
+    // StepMania default timings
+    // "grades": [
+    //   { "name": "Fantastic", "window_ms": 22.5, "color": "#FFFFFF" },
+    //   {
+    //     "name": "Excellent",
+    //     "window_ms": 45.0,
+    //     "color": "#FAD94D",
+    //     "timing_feedback": true
+    //   },
+    //   {
+    //     "name": "Great",
+    //     "window_ms": 90.0,
+    //     "color": "#59E673",
+    //     "timing_feedback": true
+    //   },
+    //   {
+    //     "name": "Decent",
+    //     "window_ms": 135.0,
+    //     "color": "#59A6F2",
+    //     "timing_feedback": true
+    //   },
+    //   {
+    //     "name": "Way Off",
+    //     "window_ms": 180.0,
+    //     "color": "#BF73E6",
+    //     "timing_feedback": true,
+    //     "breaks_combo": true
+    //   }
+    // ],
+    "fixed": {
+      "miss": { "name": "Miss", "color": "#F23F3F", "health_offset": -8, "points": 0 },
+      "ok": { "name": "OK", "color": "#73F280", "health_offset": 2, "points": 6 },
+      "ng": { "name": "NG", "color": "#F25959", "health_offset": -4, "points": 0 }
     }
-  ],
-  // StepMania default timings
-  // "grades": [
-  //   { "name": "Fantastic", "window_ms": 22.5, "color": "#FFFFFF" },
-  //   {
-  //     "name": "Excellent",
-  //     "window_ms": 45.0,
-  //     "color": "#FAD94D",
-  //     "timing_feedback": true
-  //   },
-  //   {
-  //     "name": "Great",
-  //     "window_ms": 90.0,
-  //     "color": "#59E673",
-  //     "timing_feedback": true
-  //   },
-  //   {
-  //     "name": "Decent",
-  //     "window_ms": 135.0,
-  //     "color": "#59A6F2",
-  //     "timing_feedback": true
-  //   },
-  //   {
-  //     "name": "Way Off",
-  //     "window_ms": 180.0,
-  //     "color": "#BF73E6",
-  //     "timing_feedback": true,
-  //     "breaks_combo": true
-  //   }
-  // ],
-  "miss": { "name": "Miss", "color": "#F23F3F", "health_offset": -8 },
+  },
   "bright_arrow_flash_combo": 100,
   "player_max_health": 100,
+  "ratings": [
+    { "image": "ratings/aaa.png", "all_grades_gte": "Perfect" },
+    { "image": "ratings/aa.png", "point_percentage": 93 },
+    { "image": "ratings/a.png", "point_percentage": 85 },
+    { "image": "ratings/b.png", "point_percentage": 75 },
+    { "image": "ratings/c.png", "point_percentage": 65 },
+    { "image": "ratings/d.png", "point_percentage": 45 },
+    { "image": "ratings/e.png", "point_percentage": 0 }
+  ],
   "healthbar": {
     "glow": { "speed": 4, "easing": [0.7, 0, 1, 0.3] },
     "liquid": { "speed": 1, "easing": [0.37, 0, 0.63, 1] },
     "colors": [
-      [0, [33, "#2A7B9B"], [100, "#53D6ED"]],
-      [50, [33, "#FD1D1D"], [100, "#FCB045"]],
-      [100, [0, "#2A7B9B"], [50, "#57C785"], [100, "#EDDD53"]]
+      [0, [0, "#ff416c"], [42, "#ff4b2b"], [100, "#ffc371"]],
+      [50, [0, "#f12711"], [50, "#f5af19"], [100, "#ff9a44"]],
+      [100, [0, "#1a2980"], [45, "#26d0ce"], [100, "#38ef7d"]]
     ]
   },
   "tick_volume": 1.3,

@@ -559,7 +559,8 @@ impl FieldRenderer {
 
         // The vanish flash plays in the best grade's color.
         let flash_color = config
-            .grades
+            .grading
+            .dynamic
             .iter()
             .find_map(|grade| grade.arrow_flash)
             .unwrap_or(Color::WHITE);

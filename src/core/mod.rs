@@ -2,6 +2,7 @@ pub mod assets;
 pub mod config;
 pub mod font;
 pub mod health_vial;
+pub mod high_scores;
 pub mod input;
 pub mod jsonc;
 pub mod library;

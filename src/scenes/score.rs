@@ -1,6 +1,8 @@
-use crate::core::config::{GameConfig, Grade};
+use crate::core::config::{GameConfig, Grade, GradeIndex};
 use crate::core::font::game_font;
+use crate::core::high_scores::{HighScores, highscore_key};
 use crate::core::input::{Actions, GameAction};
+use crate::core::library::StepfileLibrary;
 use crate::core::menu::TITLE_COLOR;
 use crate::core::scene_flow::SpawnScoped;
 use crate::core::sfx::{PlaySfx, Sfx};
@@ -30,6 +32,9 @@ fn enter(
     mut commands: Commands,
     results: Option<Res<ScoreResults>>,
     config: Res<GameConfig>,
+    library: Res<StepfileLibrary>,
+    mut high_scores: ResMut<HighScores>,
+    asset_server: Res<AssetServer>,
     mut fade: ResMut<SceneFade>,
 ) {
     let Some(results) = results else {
@@ -39,7 +44,7 @@ fn enter(
 
     // Grades are derived from the raw outcomes, so score and gameplay can
     // never disagree about what a timing error means.
-    let mut grade_counts = vec![0u32; config.grades.len()];
+    let mut grade_counts = vec![0u32; config.grading.dynamic.len()];
     let mut miss_count = 0u32;
     for outcome in &results.outcomes {
         match config.grade(*outcome) {
@@ -50,14 +55,15 @@ fn enter(
 
     // Best to worst (config validates smallest window first), Miss last.
     let mut tallies: Vec<_> = config
-        .grades
+        .grading
+        .dynamic
         .iter()
         .zip(&grade_counts)
         .map(|(grade, count)| (format!("{:<12} {count}", grade.name), grade.color))
         .collect();
     tallies.push((
-        format!("{:<12} {miss_count}", config.miss.name),
-        config.miss.color,
+        format!("{:<12} {miss_count}", config.grading.fixed.miss.name),
+        config.grading.fixed.miss.color,
     ));
     tallies.push((
         format!(
@@ -85,6 +91,76 @@ fn enter(
             }
         })
         .collect();
+
+    // The score: points from the tallied grades and holds, rated as a
+    // percentage of a perfect run over the whole chart.
+    let total_points = grade_counts
+        .iter()
+        .zip(&config.grading.dynamic)
+        .map(|(count, grade)| count * grade.points)
+        .sum::<u32>()
+        + miss_count * config.grading.fixed.miss.points
+        + results.holds_ok * config.grading.fixed.ok.points
+        + results.holds_ng * config.grading.fixed.ng.points;
+    let score_percent = config.score_percent(total_points, results.rows_total, results.holds_total);
+    // The worst grade any row earned; partial runs left rows ungraded and
+    // never match all-grades rating rules.
+    let complete = results.outcomes.len() as u32 == results.rows_total;
+    let worst_grade = complete.then(|| {
+        if miss_count > 0 {
+            Grade::Miss
+        } else {
+            Grade::Hit(GradeIndex(
+                grade_counts
+                    .iter()
+                    .rposition(|count| *count > 0)
+                    .unwrap_or(0),
+            ))
+        }
+    });
+    let rating_image = asset_server.load(config.rating(score_percent, worst_grade).image.clone());
+
+    let key = highscore_key(
+        library.group_name(results.id),
+        &library.stepfile(results.id).name(),
+        &results.difficulty,
+    );
+    let new_high_score = high_scores.record(key, total_points);
+    let overlay: Vec<_> = new_high_score
+        .then(|| {
+            bsn! {
+                game_font(18.0)
+                Text("New high score!")
+                TextColor(Color::srgb(1.0, 0.85, 0.35))
+                Node {
+                    position_type: PositionType::Absolute,
+                    top: px(-14),
+                    right: px(-30),
+                }
+            }
+        })
+        .into_iter()
+        .collect();
+    let percent_line = format!("{score_percent:.1}%");
+    let score_line = bsn! {
+        Node {
+            column_gap: px(16),
+            align_items: AlignItems::Center,
+            margin: {UiRect::bottom(Val::Px(14.0))},
+        }
+        Children [
+            (
+                game_font(42.0)
+                Text({percent_line})
+                TextColor(Color::srgb(0.95, 0.97, 1.0))
+            ),
+            (
+                ImageNode { image: {rating_image} }
+                Node { height: px(56) }
+            ),
+            {overlay},
+        ]
+    };
 
     let title = results.title.clone();
     let (result_label, result_color) = match results.result {
@@ -117,6 +193,7 @@ fn enter(
                     Node { margin: {UiRect::bottom(Val::Px(4.0))} }
                 ),
                 {result_line},
+                {score_line},
                 {tallies},
                 (
                     game_font(32.0)

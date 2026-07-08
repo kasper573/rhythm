@@ -96,12 +96,25 @@ impl StepfileLibrary {
         &self.groups[id.group].stepfiles[id.stepfile]
     }
 
+    /// The group a stepfile belongs to.
+    pub fn group_name(&self, id: StepfileId) -> &str {
+        &self.groups[id.group].name
+    }
+
     pub fn is_empty(&self) -> bool {
         self.groups.is_empty()
     }
 }
 
 impl StepfileEntry {
+    /// The stepfile's own name: its .sm file name without the extension.
+    pub fn name(&self) -> String {
+        self.sm_path
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    }
+
     pub fn display_title(&self) -> String {
         let stepfile = &self.stepfile;
         let title = preferred_text(&stepfile.title, &stepfile.title_translit);
