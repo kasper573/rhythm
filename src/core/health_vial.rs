@@ -1,5 +1,6 @@
 use crate::core::config::{GameConfig, HealthColorStop};
 use crate::core::note_field::NoteFieldClock;
+use crate::core::units::Percent;
 use bevy::prelude::*;
 use bevy::render::render_resource::AsBindGroup;
 use bevy::shader::ShaderRef;
@@ -127,11 +128,14 @@ fn animate_vials(
     // One full trip through the mirrored gradient (two units) per cycle.
     let scroll = (config.healthbar.liquid.progress(beat) * 2.0).rem_euclid(2.0);
     for (vial, mut motion, node) in &mut vials {
-        let stops = &config.healthbar.gradient_at(vial.fill * 100.0).stops;
+        let stops = &config
+            .healthbar
+            .gradient_at(Percent(vial.fill * 100.0))
+            .stops;
         let targets: Vec<Vec4> = (0..GRADIENT_SAMPLES)
             .map(|sample| {
                 let at = sample as f32 / (GRADIENT_SAMPLES - 1) as f32;
-                let color = LinearRgba::from(sample_stops(stops, at * 100.0));
+                let color = LinearRgba::from(sample_stops(stops, Percent(at * 100.0)));
                 Vec4::new(color.red, color.green, color.blue, color.alpha)
             })
             .collect();
@@ -167,15 +171,15 @@ fn animate_vials(
 
 /// Samples the stops at `percent` like a CSS gradient: flat beyond the
 /// outermost stops, linear sRGB interpolation between adjacent ones.
-fn sample_stops(stops: &[HealthColorStop], percent: f32) -> Srgba {
+fn sample_stops(stops: &[HealthColorStop], percent: Percent) -> Srgba {
     let first = stops.first().expect("config validates stops are non-empty");
     if percent <= first.percent {
         return first.color.to_srgba();
     }
     for pair in stops.windows(2) {
         if percent <= pair[1].percent {
-            let span = pair[1].percent - pair[0].percent;
-            let t = (percent - pair[0].percent) / span;
+            let span = pair[1].percent.0 - pair[0].percent.0;
+            let t = (percent.0 - pair[0].percent.0) / span;
             let a = pair[0].color.to_srgba();
             let b = pair[1].color.to_srgba();
             return Srgba::new(

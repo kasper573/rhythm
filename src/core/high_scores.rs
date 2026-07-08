@@ -1,9 +1,9 @@
+use crate::core::persist::{load_user_data, save_user_data};
 use crate::core::stepfile::Difficulty;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 
 /// Best total points per played chart, keyed by [`highscore_key`]. Any
 /// mutation is automatically persisted to `user_highscores.json` next to
@@ -30,7 +30,9 @@ impl HighScores {
 
 /// One stable key per (group, stepfile, difficulty): the parts are joined
 /// unambiguously and hashed, so the stored key is opaque and immune to
-/// awkward characters in names.
+/// awkward characters in names. The difficulty's `Debug` form is the
+/// canonical encoding — renaming a [`Difficulty`] variant orphans the
+/// scores stored under it.
 pub fn highscore_key(group_name: &str, stepfile_name: &str, difficulty: &Difficulty) -> String {
     let mut hasher = Sha256::new();
     hasher.update(format!("{group_name}\x1f{stepfile_name}\x1f{difficulty:?}"));
@@ -50,38 +52,15 @@ impl Plugin for HighScoresPlugin {
     }
 }
 
-fn high_scores_path() -> PathBuf {
-    dirs::config_dir()
-        .expect("no OS config directory available to store high scores")
-        .join("rhythm")
-        .join("user_highscores.json")
-}
+const HIGH_SCORES_FILE: &str = "user_highscores.json";
 
 fn load_high_scores() -> HighScores {
-    let path = high_scores_path();
-    if !path.exists() {
-        return HighScores::default();
-    }
-    let text = std::fs::read_to_string(&path)
-        .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
-    crate::core::jsonc::parse(&text)
-        .unwrap_or_else(|error| panic!("invalid high scores file {}: {error}", path.display()))
+    load_user_data(HIGH_SCORES_FILE)
 }
 
 /// Persists on every edit; the initial insertion is not an edit.
 fn save_high_scores(high_scores: Res<HighScores>) {
-    if !high_scores.is_changed() || high_scores.is_added() {
-        return;
-    }
-    let path = high_scores_path();
-    let write = || -> std::io::Result<()> {
-        std::fs::create_dir_all(path.parent().expect("high scores path has a parent"))?;
-        let json =
-            serde_json::to_string_pretty(&*high_scores).expect("high scores always serialize");
-        std::fs::write(&path, json)
-    };
-    match write() {
-        Ok(()) => info!("high scores saved to {}", path.display()),
-        Err(error) => error!("failed to save high scores to {}: {error}", path.display()),
+    if high_scores.is_changed() && !high_scores.is_added() {
+        save_user_data(HIGH_SCORES_FILE, &*high_scores);
     }
 }

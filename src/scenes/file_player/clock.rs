@@ -1,12 +1,12 @@
-use super::{MusicTrack, PlayPhase, PlaySession, PlaySet, TickTrack};
+use super::{MusicTrack, PlayPhase, PlaySession, PlaySet, PlaybackClock, TickTrack};
 use crate::core::settings::Settings;
 use crate::core::units::{Millis, Seconds};
 use bevy::audio::AudioSinkPlayback;
 use bevy::prelude::*;
 
-/// Keeps [`PlaySession::clock`] on the audio clock: a fixed lead-in counts up
-/// to zero, both tracks start together, then the clock advances with frame
-/// time and servos onto the mixer's position reports.
+/// Keeps the session's [`PlaybackClock`] on the audio clock: a fixed
+/// lead-in counts up to zero, both tracks start together, then the clock
+/// advances with frame time and servos onto the mixer's position reports.
 ///
 /// The mixer consumes audio in output-callback bursts, so its reported
 /// position is a staircase: exact at the moment it changes, stale in
@@ -28,12 +28,13 @@ fn advance_clock(
     tick: Query<&AudioSink, With<TickTrack>>,
 ) {
     let delta = Seconds(time.delta_secs_f64());
-    match session.phase {
+    let clock = &mut session.clock;
+    match clock.phase {
         PlayPhase::LeadIn { remaining } => {
             let remaining = remaining - delta;
-            session.clock = -remaining.max(Seconds::ZERO);
+            clock.position = -remaining.max(Seconds::ZERO);
             if remaining.0 > 0.0 {
-                session.phase = PlayPhase::LeadIn { remaining };
+                clock.phase = PlayPhase::LeadIn { remaining };
                 return;
             }
             // Hold at zero until every spawned track has a live sink, so the
@@ -47,32 +48,32 @@ fn advance_clock(
                 if let Ok(sink) = tick_sink {
                     sink.play();
                 }
-                session.phase = PlayPhase::Playing;
+                clock.phase = PlayPhase::Playing;
             } else {
-                session.phase = PlayPhase::LeadIn {
+                clock.phase = PlayPhase::LeadIn {
                     remaining: Seconds::ZERO,
                 };
             }
         }
         PlayPhase::Playing => {
-            session.clock += delta;
-            session.wall_since_play += delta;
+            clock.position += delta;
+            clock.wall_since_play += delta;
             let position = music
                 .single()
                 .or(tick.single())
                 .map(|sink| Seconds(sink.position().as_secs_f64()));
             if let Ok(position) = position
-                && position != session.last_sink_position
+                && position != clock.last_sink_position
             {
-                let first_report = session.last_sink_position.0 < 0.0;
-                session.last_sink_position = position;
-                servo_clock(&mut session, position, first_report);
+                let first_report = clock.last_sink_position.0 < 0.0;
+                clock.last_sink_position = position;
+                servo_clock(clock, position, first_report);
 
                 // Reading through the ResMut must not touch it mutably:
                 // change detection would flag Settings every frame and the
                 // auto-save would hammer the disk.
                 if settings.timing.audio_latency.is_none()
-                    && let Some(measured) = measure_audio_latency(&mut session, position)
+                    && let Some(measured) = measure_audio_latency(clock, position)
                 {
                     settings.timing.audio_latency = Some(measured);
                     info!("measured audio latency: {measured}");
@@ -92,29 +93,29 @@ const MAX_FORWARD_STEP: f64 = 0.010;
 /// Beyond this the stream underran or seeked; tracking smoothly is wrong.
 const RESYNC_THRESHOLD: f64 = 0.25;
 
-fn servo_clock(session: &mut PlaySession, position: Seconds, first_report: bool) {
-    let error = position.0 - session.clock.0;
+fn servo_clock(clock: &mut PlaybackClock, position: Seconds, first_report: bool) {
+    let error = position.0 - clock.position.0;
     if first_report || error.abs() > RESYNC_THRESHOLD {
-        session.clock = position;
+        clock.position = position;
         return;
     }
-    session.clock.0 += (error * SERVO_GAIN).clamp(-MAX_BACKWARD_STEP, MAX_FORWARD_STEP);
+    clock.position.0 += (error * SERVO_GAIN).clamp(-MAX_BACKWARD_STEP, MAX_FORWARD_STEP);
 }
 
 /// The mixer consumes samples ahead of real time by roughly the output
 /// buffer it keeps queued — which is how far the reported position runs
 /// ahead of the speakers. Returns the steady-state median of that lead once
 /// enough samples are in: the first-start audio latency estimate.
-fn measure_audio_latency(session: &mut PlaySession, position: Seconds) -> Option<Millis> {
-    let wall = session.wall_since_play;
+fn measure_audio_latency(clock: &mut PlaybackClock, position: Seconds) -> Option<Millis> {
+    let wall = clock.wall_since_play;
     if (0.3..2.0).contains(&wall.0) {
-        session.latency_samples.push(position - wall);
+        clock.latency_samples.push(position - wall);
         return None;
     }
-    if wall.0 < 2.0 || session.latency_samples.is_empty() {
+    if wall.0 < 2.0 || clock.latency_samples.is_empty() {
         return None;
     }
-    let mut samples = std::mem::take(&mut session.latency_samples);
+    let mut samples = std::mem::take(&mut clock.latency_samples);
     samples.sort_by(|a, b| a.0.total_cmp(&b.0));
     let median = samples[samples.len() / 2];
     Some(Millis(median.to_millis().round().max(0.0) as i64))

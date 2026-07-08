@@ -27,9 +27,6 @@ pub(super) fn plugin(app: &mut App) {
 #[derive(Message)]
 pub(super) struct OffsetOsdLine(pub(super) String);
 
-/// Pushes the session's state into the note field: the drawn timeline, the
-/// receptors' pressed panels, and every hold's render state. Runs after
-/// grading and before the field's animation systems.
 fn sync_health_vial(
     session: Res<PlaySession>,
     config: Res<GameConfig>,
@@ -40,6 +37,9 @@ fn sync_health_vial(
     }
 }
 
+/// Pushes the session's state into the note field: the drawn timeline, the
+/// receptors' pressed panels, and every hold's render state. Runs after
+/// grading and before the field's animation systems.
 fn sync_note_field(
     actions: Actions,
     session: Res<PlaySession>,

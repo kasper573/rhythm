@@ -82,10 +82,13 @@ impl Millis {
 #[display("beat {_0:.3}")]
 pub struct Beat(pub f64);
 
+/// A percentage in `0..=100` space — never a `0..=1` fraction.
+#[derive(
+    Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize, Add, Sub, Display,
+)]
+#[display("{_0:.1}%")]
+pub struct Percent(pub f32);
+
 impl Beat {
     pub const ZERO: Beat = Beat(0.0);
-
-    pub fn phase(self) -> f64 {
-        self.0.rem_euclid(1.0)
-    }
 }

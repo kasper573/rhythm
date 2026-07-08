@@ -1,7 +1,7 @@
 use crate::core::assets::asset_root;
 use crate::core::input::GameAction;
 use crate::core::note_field::NoteSpeed;
-use crate::core::units::Seconds;
+use crate::core::units::{Percent, Seconds};
 use bevy::math::cubic_splines::CubicSegment;
 use bevy::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -117,7 +117,7 @@ pub struct SpeedModifierSet {
 #[derive(Debug, Clone, Deserialize)]
 pub struct GradingConfig {
     /// The timed grades, ordered best to worst (smallest window first).
-    pub dynamic: Vec<GradeDef>,
+    pub dynamic: Vec<DynamicGradeDef>,
     pub fixed: FixedGrades,
 }
 
@@ -187,11 +187,11 @@ impl RhythmCycle {
 }
 
 impl HealthBarConfig {
-    pub fn gradient_at(&self, health_percent: f32) -> &HealthGradient {
+    pub fn gradient_at(&self, health: Percent) -> &HealthGradient {
         self.colors
             .iter()
             .rev()
-            .find(|gradient| gradient.min_health <= health_percent)
+            .find(|gradient| gradient.min_health <= health)
             .unwrap_or(&self.colors[0])
     }
 }
@@ -201,7 +201,7 @@ impl HealthBarConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(try_from = "RawHealthGradient")]
 pub struct HealthGradient {
-    pub min_health: f32,
+    pub min_health: Percent,
     /// Sorted ascending; the spectrum outside the outermost stops extends
     /// flat, like CSS gradients.
     pub stops: Vec<HealthColorStop>,
@@ -209,8 +209,8 @@ pub struct HealthGradient {
 
 #[derive(Debug, Clone, Copy)]
 pub struct HealthColorStop {
-    /// `0..=100` position along the gradient axis, bottom to top.
-    pub percent: f32,
+    /// Position along the gradient axis, bottom to top.
+    pub percent: Percent,
     pub color: Color,
 }
 
@@ -236,7 +236,7 @@ impl TryFrom<RawHealthGradient> for HealthGradient {
             .map(|part| match part {
                 RawGradientPart::Stop(percent, hex) => Srgba::hex(&hex)
                     .map(|color| HealthColorStop {
-                        percent,
+                        percent: Percent(percent),
                         color: Color::Srgba(color),
                     })
                     .map_err(|error| format!("bad hex color {hex:?}: {error}")),
@@ -245,12 +245,15 @@ impl TryFrom<RawHealthGradient> for HealthGradient {
                 }
             })
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(HealthGradient { min_health, stops })
+        Ok(HealthGradient {
+            min_health: Percent(min_health),
+            stops,
+        })
     }
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct GradeDef {
+pub struct DynamicGradeDef {
     pub name: String,
     pub window_ms: f64,
     #[serde(deserialize_with = "hex_color")]
@@ -281,6 +284,7 @@ pub enum TimingFeedback {
     Millis,
 }
 
+/// Index into [`GradingConfig::dynamic`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GradeIndex(pub usize);
 
@@ -333,7 +337,7 @@ impl GameConfig {
 
     /// The score as a percentage of a perfect run: every row earning the
     /// highest configured points and every hold kept.
-    pub fn score_percent(&self, points: u32, rows: u32, holds: u32) -> f32 {
+    pub fn score_percent(&self, points: u32, rows: u32, holds: u32) -> Percent {
         let best = self
             .grading
             .dynamic
@@ -343,19 +347,19 @@ impl GameConfig {
             .unwrap_or(0);
         let max = rows as f64 * best as f64 + holds as f64 * self.grading.fixed.ok.points as f64;
         if max <= 0.0 {
-            return 0.0;
+            return Percent(0.0);
         }
-        (points as f64 / max * 100.0) as f32
+        Percent((points as f64 / max * 100.0) as f32)
     }
 
     /// The first rating rule the result matches, in config order.
     /// `worst_grade` is the worst grade any row earned, or `None` when
     /// unknown or the run graded only part of the chart.
-    pub fn rating(&self, percent: f32, worst_grade: Option<Grade>) -> &RatingDef {
+    pub fn rating(&self, percent: Percent, worst_grade: Option<Grade>) -> &RatingDef {
         self.ratings
             .iter()
             .find(|rating| match &rating.kind {
-                RatingKind::PointPercentage(threshold) => percent >= *threshold as f32,
+                RatingKind::PointPercentage(threshold) => percent.0 >= *threshold as f32,
                 RatingKind::AllGradesGte(name) => match worst_grade {
                     Some(Grade::Hit(worst)) => {
                         let threshold = self

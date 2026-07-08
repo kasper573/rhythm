@@ -6,6 +6,7 @@ use crate::core::library::StepfileLibrary;
 use crate::core::menu::TITLE_COLOR;
 use crate::core::scene_flow::SpawnScoped;
 use crate::core::sfx::{PlaySfx, Sfx};
+use crate::core::units::Percent;
 use crate::scenes::file_player::{PlayResult, ScoreResults};
 use crate::scenes::file_select::FileSelectTarget;
 use crate::scenes::{GameScene, SceneFade, scene_accepts_input};
@@ -42,27 +43,21 @@ fn enter(
         return;
     };
 
-    // Grades are derived from the raw outcomes, so score and gameplay can
-    // never disagree about what a timing error means.
-    let mut grade_counts = vec![0u32; config.grading.dynamic.len()];
-    let mut miss_count = 0u32;
-    for outcome in &results.outcomes {
-        match config.grade(*outcome) {
-            Grade::Hit(grade) => grade_counts[grade.0] += 1,
-            Grade::Miss => miss_count += 1,
-        }
-    }
+    let tally = tally(&config, &results);
 
     // Best to worst (config validates smallest window first), Miss last.
     let mut tallies: Vec<_> = config
         .grading
         .dynamic
         .iter()
-        .zip(&grade_counts)
+        .zip(&tally.grade_counts)
         .map(|(grade, count)| (format!("{:<12} {count}", grade.name), grade.color))
         .collect();
     tallies.push((
-        format!("{:<12} {miss_count}", config.grading.fixed.miss.name),
+        format!(
+            "{:<12} {}",
+            config.grading.fixed.miss.name, tally.miss_count
+        ),
         config.grading.fixed.miss.color,
     ));
     tallies.push((
@@ -92,40 +87,19 @@ fn enter(
         })
         .collect();
 
-    // The score: points from the tallied grades and holds, rated as a
-    // percentage of a perfect run over the whole chart.
-    let total_points = grade_counts
-        .iter()
-        .zip(&config.grading.dynamic)
-        .map(|(count, grade)| count * grade.points)
-        .sum::<u32>()
-        + miss_count * config.grading.fixed.miss.points
-        + results.holds_ok * config.grading.fixed.ok.points
-        + results.holds_ng * config.grading.fixed.ng.points;
-    let score_percent = config.score_percent(total_points, results.rows_total, results.holds_total);
-    // The worst grade any row earned; partial runs left rows ungraded and
-    // never match all-grades rating rules.
-    let complete = results.outcomes.len() as u32 == results.rows_total;
-    let worst_grade = complete.then(|| {
-        if miss_count > 0 {
-            Grade::Miss
-        } else {
-            Grade::Hit(GradeIndex(
-                grade_counts
-                    .iter()
-                    .rposition(|count| *count > 0)
-                    .unwrap_or(0),
-            ))
-        }
-    });
-    let rating_image = asset_server.load(config.rating(score_percent, worst_grade).image.clone());
+    let rating_image = asset_server.load(
+        config
+            .rating(tally.percent, tally.worst_grade)
+            .image
+            .clone(),
+    );
 
     let key = highscore_key(
         library.group_name(results.id),
         &library.stepfile(results.id).name(),
         &results.difficulty,
     );
-    let new_high_score = high_scores.record(key, total_points);
+    let new_high_score = high_scores.record(key, tally.total_points);
     let overlay: Vec<_> = new_high_score
         .then(|| {
             bsn! {
@@ -141,7 +115,7 @@ fn enter(
         })
         .into_iter()
         .collect();
-    let percent_line = format!("{score_percent:.1}%");
+    let percent_line = tally.percent.to_string();
     let score_line = bsn! {
         Node {
             column_gap: px(16),
@@ -204,6 +178,63 @@ fn enter(
             ]
         },
     );
+}
+
+/// Everything the score derives from the raw outcomes — grades and score
+/// are always recomputed from them, so score and gameplay can never
+/// disagree about what a timing error means.
+struct Tally {
+    /// Per dynamic grade, in config order.
+    grade_counts: Vec<u32>,
+    miss_count: u32,
+    total_points: u32,
+    /// Of a perfect run over the whole chart, holds included.
+    percent: Percent,
+    /// The worst grade any row earned; `None` when part of the chart went
+    /// ungraded (failed runs), which no all-grades rating rule matches.
+    worst_grade: Option<Grade>,
+}
+
+fn tally(config: &GameConfig, results: &ScoreResults) -> Tally {
+    let mut grade_counts = vec![0u32; config.grading.dynamic.len()];
+    let mut miss_count = 0u32;
+    for outcome in &results.outcomes {
+        match config.grade(*outcome) {
+            Grade::Hit(grade) => grade_counts[grade.0] += 1,
+            Grade::Miss => miss_count += 1,
+        }
+    }
+
+    let total_points = grade_counts
+        .iter()
+        .zip(&config.grading.dynamic)
+        .map(|(count, grade)| count * grade.points)
+        .sum::<u32>()
+        + miss_count * config.grading.fixed.miss.points
+        + results.holds_ok * config.grading.fixed.ok.points
+        + results.holds_ng * config.grading.fixed.ng.points;
+
+    let complete = results.outcomes.len() as u32 == results.rows_total;
+    let worst_grade = complete.then(|| {
+        if miss_count > 0 {
+            Grade::Miss
+        } else {
+            Grade::Hit(GradeIndex(
+                grade_counts
+                    .iter()
+                    .rposition(|count| *count > 0)
+                    .unwrap_or(0),
+            ))
+        }
+    });
+
+    Tally {
+        percent: config.score_percent(total_points, results.rows_total, results.holds_total),
+        grade_counts,
+        miss_count,
+        total_points,
+        worst_grade,
+    }
 }
 
 fn leave(

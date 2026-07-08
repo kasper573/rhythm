@@ -9,7 +9,7 @@ use crate::core::config::{GameConfig, RowOutcome};
 use crate::core::font::game_font;
 use crate::core::health_vial::{HealthVialMaterial, spawn_health_vial};
 use crate::core::input::{Actions, GameAction, shift_held};
-use crate::core::library::{StepfileId, StepfileLibrary};
+use crate::core::library::{StepfileEntry, StepfileId, StepfileLibrary};
 use crate::core::note_field::{
     NoteFieldClock, NoteFieldSystems, NoteSpawn, spawn_mine, spawn_note, spawn_receptors,
 };
@@ -17,7 +17,7 @@ use crate::core::note_skin::ActiveNoteSkin;
 use crate::core::scene_flow::SpawnScoped;
 use crate::core::settings::{Settings, TimingSettings};
 use crate::core::sfx::{PlaySfx, Sfx};
-use crate::core::stepfile::Difficulty;
+use crate::core::stepfile::{Chart, Difficulty, StepfileTiming};
 use crate::core::tick_track::render_tick_track;
 use crate::core::units::{Millis, Seconds};
 use crate::scenes::file_select::{FileSelectTarget, SelectedStepfile};
@@ -134,23 +134,25 @@ pub(super) struct PlaySession {
     pub mines: Vec<SessionMine>,
     pub graded_count: usize,
     pub expire_cursor: usize,
-    pub phase: PlayPhase,
-    /// Raw playback time as the audio mixer reports it (queue position).
-    pub clock: Seconds,
-    pub last_sink_position: Seconds,
-    /// Wall-clock time since the tracks were started, for measuring how far
-    /// the mixer's queue runs ahead of real time (the audio latency).
-    pub wall_since_play: Seconds,
-    pub latency_samples: Vec<Seconds>,
+    pub clock: PlaybackClock,
     pub combo: u32,
     pub max_combo: u32,
     pub health: u32,
     pub last_note_time: Seconds,
     pub finished: bool,
-    /// While enabled, hit errors accumulate and the median of every batch is
-    /// folded into the machine offset (AutoSync).
-    pub autosync: bool,
-    pub autosync_samples: Vec<Seconds>,
+    pub autosync: AutoSync,
+}
+
+/// The audio-clock servo state, advanced by the [`clock`] module.
+pub(super) struct PlaybackClock {
+    pub phase: PlayPhase,
+    /// Raw playback time as the audio mixer reports it (queue position).
+    pub position: Seconds,
+    pub last_sink_position: Seconds,
+    /// Wall-clock time since the tracks were started, for measuring how far
+    /// the mixer's queue runs ahead of real time (the audio latency).
+    pub wall_since_play: Seconds,
+    pub latency_samples: Vec<Seconds>,
 }
 
 pub(super) enum PlayPhase {
@@ -158,10 +160,18 @@ pub(super) enum PlayPhase {
     Playing,
 }
 
+/// While enabled, hit errors accumulate and the median of every batch is
+/// folded into the machine offset (AutoSync).
+#[derive(Default)]
+pub(super) struct AutoSync {
+    pub enabled: bool,
+    pub samples: Vec<Seconds>,
+}
+
 impl PlaySession {
     /// What the speakers are playing right now.
     pub fn heard_now(&self, timing: &TimingSettings) -> Seconds {
-        self.clock - timing.audio_latency().to_seconds()
+        self.clock.position - timing.audio_latency().to_seconds()
     }
 
     /// The timeline inputs are graded on (shifted by the machine offset).
@@ -303,6 +313,56 @@ fn enter(
         .entity(vial)
         .insert(DespawnOnExit(GameScene::FilePlayer));
 
+    let (rows, mines, last_note_time) =
+        spawn_chart(&mut commands, &assets.skin, &config, chart, &timing);
+    spawn_audio_tracks(&mut commands, &mut assets, entry, &rows, &config);
+    background::spawn_background(&mut commands, entry, &timing);
+    spawn_hud(&mut commands);
+
+    commands.insert_resource(NoteFieldClock {
+        visible: -LEAD_IN,
+        timing,
+        speed: settings.stepfile.note_speed,
+    });
+    commands.insert_resource(PlaySession {
+        title: entry.display_title(),
+        difficulty: chart.difficulty.clone(),
+        rows,
+        mines,
+        graded_count: 0,
+        expire_cursor: 0,
+        clock: PlaybackClock {
+            phase: PlayPhase::LeadIn { remaining: LEAD_IN },
+            position: -LEAD_IN,
+            last_sink_position: Seconds(-1.0),
+            wall_since_play: Seconds::ZERO,
+            latency_samples: Vec::new(),
+        },
+        combo: 0,
+        max_combo: 0,
+        health: config.player_max_health,
+        last_note_time,
+        finished: false,
+        autosync: AutoSync::default(),
+    });
+}
+
+fn exit(mut commands: Commands) {
+    commands.remove_resource::<PlaySession>();
+    commands.remove_resource::<NoteFieldClock>();
+    commands.remove_resource::<SelectedStepfile>();
+}
+
+/// Spawns every note and mine of the chart into the field, scoped to the
+/// scene, and returns the session records tracking them plus the time the
+/// chart is over.
+fn spawn_chart(
+    commands: &mut Commands,
+    skin: &ActiveNoteSkin,
+    config: &GameConfig,
+    chart: &Chart,
+    timing: &StepfileTiming,
+) -> (Vec<SessionRow>, Vec<SessionMine>, Seconds) {
     let mut mines = Vec::new();
     let mut last_note_time = Seconds::ZERO;
     for mine in &chart.mines {
@@ -311,7 +371,7 @@ fn enter(
         }
         let time = timing.seconds_at_beat(mine.beat);
         last_note_time = last_note_time.max(time);
-        let entity = spawn_mine(&mut commands, &assets.skin, time, mine.beat, mine.column);
+        let entity = spawn_mine(commands, skin, time, mine.beat, mine.column);
         commands
             .entity(entity)
             .insert(DespawnOnExit(GameScene::FilePlayer));
@@ -337,8 +397,8 @@ fn enter(
                 .map(|tail| (timing.seconds_at_beat(tail.end), tail.end));
             last_note_time = last_note_time.max(end.map(|(end, _)| end).unwrap_or(time));
             let spawned = spawn_note(
-                &mut commands,
-                &assets.skin,
+                commands,
+                skin,
                 &NoteSpawn {
                     time,
                     beat: row.beat,
@@ -377,7 +437,18 @@ fn enter(
     // Warps and stops can reorder wall-clock times relative to beats; the
     // expiry cursor needs time order.
     rows.sort_by(|a, b| a.time.0.total_cmp(&b.time.0));
+    (rows, mines, last_note_time)
+}
 
+/// Spawns the music (when the stepfile has any) and the pre-rendered tick
+/// track, both paused until the lead-in ends.
+fn spawn_audio_tracks(
+    commands: &mut Commands,
+    assets: &mut StageAssets,
+    entry: &StepfileEntry,
+    rows: &[SessionRow],
+    config: &GameConfig,
+) {
     if let Some(path) = entry.music_path().as_deref().and_then(asset_server_path) {
         let music = assets.asset_server.load(path);
         commands.spawn_scoped(
@@ -423,41 +494,6 @@ fn enter(
         }
         Err(error) => warn!("could not render tick track: {error}"),
     }
-
-    background::spawn_background(&mut commands, entry, &timing);
-    spawn_hud(&mut commands);
-
-    commands.insert_resource(NoteFieldClock {
-        visible: -LEAD_IN,
-        timing,
-        speed: settings.stepfile.note_speed,
-    });
-    commands.insert_resource(PlaySession {
-        title: entry.display_title(),
-        difficulty: chart.difficulty.clone(),
-        rows,
-        mines,
-        graded_count: 0,
-        expire_cursor: 0,
-        phase: PlayPhase::LeadIn { remaining: LEAD_IN },
-        clock: -LEAD_IN,
-        last_sink_position: Seconds(-1.0),
-        wall_since_play: Seconds::ZERO,
-        latency_samples: Vec::new(),
-        combo: 0,
-        max_combo: 0,
-        health: config.player_max_health,
-        last_note_time,
-        finished: false,
-        autosync: false,
-        autosync_samples: Vec::new(),
-    });
-}
-
-fn exit(mut commands: Commands) {
-    commands.remove_resource::<PlaySession>();
-    commands.remove_resource::<NoteFieldClock>();
-    commands.remove_resource::<SelectedStepfile>();
 }
 
 fn spawn_hud(commands: &mut Commands) {
@@ -517,9 +553,8 @@ fn toggle_autosync(actions: Actions, mut session: ResMut<PlaySession>) {
     if !actions.just_pressed(GameAction::ToggleAutoSync) {
         return;
     }
-    let enabled = !session.autosync;
-    session.autosync = enabled;
-    session.autosync_samples.clear();
+    session.autosync.enabled = !session.autosync.enabled;
+    session.autosync.samples.clear();
 }
 
 /// AutoSync: with enough hit samples, fold their median error into the
@@ -532,10 +567,10 @@ fn fold_autosync(
     mut settings: ResMut<Settings>,
     mut osd: MessageWriter<visuals::OffsetOsdLine>,
 ) {
-    if !session.autosync || session.autosync_samples.len() < AUTOSYNC_SAMPLES {
+    if !session.autosync.enabled || session.autosync.samples.len() < AUTOSYNC_SAMPLES {
         return;
     }
-    let mut samples = std::mem::take(&mut session.autosync_samples);
+    let mut samples = std::mem::take(&mut session.autosync.samples);
     samples.sort_by(|a, b| a.0.total_cmp(&b.0));
     let median = samples[samples.len() / 2];
     let delta = Millis(median.to_millis().round() as i64);
@@ -554,13 +589,13 @@ fn update_autosync_status(
     mut status: Single<(&mut Text, &mut Visibility), With<AutoSyncText>>,
     mut shown: Local<Option<(bool, usize)>>,
 ) {
-    let state = (session.autosync, session.autosync_samples.len());
+    let state = (session.autosync.enabled, session.autosync.samples.len());
     if *shown == Some(state) {
         return;
     }
     *shown = Some(state);
     let (text, visibility) = &mut *status;
-    if session.autosync {
+    if session.autosync.enabled {
         text.0 = format!("AutoSync ({}/{AUTOSYNC_SAMPLES} samples)", state.1);
         **visibility = Visibility::Visible;
     } else {
@@ -649,11 +684,11 @@ fn finish_when_complete(
     } else if let Ok(sink) = tick.single() {
         sink.empty()
     } else {
-        session.clock.0 > session.last_note_time.0 + 2.0
+        session.clock.position.0 > session.last_note_time.0 + 2.0
     };
     // Trailing mines and hold tails can outlive the audio; let them resolve.
-    let chart_done = session.clock.0 >= session.last_note_time.0;
-    if !audio_done || !chart_done || !matches!(session.phase, PlayPhase::Playing) {
+    let chart_done = session.clock.position.0 >= session.last_note_time.0;
+    if !audio_done || !chart_done || !matches!(session.clock.phase, PlayPhase::Playing) {
         return;
     }
     session.finished = true;

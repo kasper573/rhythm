@@ -1,6 +1,6 @@
 use super::{HoldOutcome, MineOutcome, PlaySession, PlaySet, RowGraded, direction_action};
 use crate::core::at;
-use crate::core::config::{GameConfig, Grade, RowOutcome};
+use crate::core::config::{FixedGradeDef, GameConfig, Grade, RowOutcome};
 use crate::core::font::game_font;
 use crate::core::input::Actions;
 use crate::core::note_field::{
@@ -78,8 +78,8 @@ fn bank_row_inputs(
         let Some(index) = candidate else { continue };
 
         let error = session.rows[index].time - input_time;
-        if session.autosync {
-            session.autosync_samples.push(error);
+        if session.autosync.enabled {
+            session.autosync.samples.push(error);
         }
         let arrow = session.rows[index]
             .arrows
@@ -134,17 +134,13 @@ fn resolve_row(
         return;
     };
     let bright = session.combo >= config.bright_arrow_flash_combo;
-    for arrow_index in 0..session.rows[index].arrows.len() {
-        let arrow = &session.rows[index].arrows[arrow_index];
-        let column = arrow.column;
-        let entity = arrow.entity;
-        let is_hold = arrow.hold.is_some();
-        let flash = spawn_arrow_flash(commands, skin, column, color, bright);
+    for arrow in &session.rows[index].arrows {
+        let flash = spawn_arrow_flash(commands, skin, arrow.column, color, bright);
         commands
             .entity(flash)
             .insert(DespawnOnExit(GameScene::FilePlayer));
-        if !is_hold {
-            commands.entity(entity).despawn();
+        if arrow.hold.is_none() {
+            commands.entity(arrow.entity).despawn();
         }
     }
 }
@@ -298,14 +294,17 @@ fn apply_outcome(
     });
 }
 
-/// Holds pay their fixed grade's health offset the moment they resolve.
-fn apply_hold_health(health: &mut u32, config: &GameConfig, outcome: HoldOutcome) {
-    let def = match outcome {
+fn hold_def(config: &GameConfig, outcome: HoldOutcome) -> &FixedGradeDef {
+    match outcome {
         HoldOutcome::Ok => &config.grading.fixed.ok,
         HoldOutcome::Ng => &config.grading.fixed.ng,
-    };
+    }
+}
+
+/// Holds pay their fixed grade's health offset the moment they resolve.
+fn apply_hold_health(health: &mut u32, config: &GameConfig, outcome: HoldOutcome) {
     *health = health
-        .saturating_add_signed(def.health_offset)
+        .saturating_add_signed(hold_def(config, outcome).health_offset)
         .min(config.player_max_health);
 }
 
@@ -315,10 +314,7 @@ fn spawn_hold_popup(
     column: usize,
     outcome: HoldOutcome,
 ) {
-    let def = match outcome {
-        HoldOutcome::Ok => &config.grading.fixed.ok,
-        HoldOutcome::Ng => &config.grading.fixed.ng,
-    };
+    let def = hold_def(config, outcome);
     let label = def.name.clone();
     let color = def.color;
     commands

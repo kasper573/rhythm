@@ -1,6 +1,7 @@
+mod info_panel;
 mod player_options;
+mod preview;
 
-use crate::core::assets::asset_server_path;
 use crate::core::config::GameConfig;
 use crate::core::font::game_font;
 use crate::core::high_scores::{HighScores, highscore_key};
@@ -8,16 +9,14 @@ use crate::core::input::{Actions, GameAction, NavPulse};
 use crate::core::library::{StepfileId, StepfileLibrary};
 use crate::core::scene_flow::SpawnScoped;
 use crate::core::sfx::{PlaySfx, Sfx};
-use crate::core::stepfile::{Difficulty, DisplayBpm, Stepfile, StepsType};
+use crate::core::stepfile::{Difficulty, Stepfile, StepsType};
 use crate::core::units::Seconds;
 use crate::core::{SCREEN_SIZE, at};
 use crate::scenes::{GameScene, SceneFade, scene_accepts_input};
-use bevy::audio::PlaybackMode;
 use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::sprite::Anchor;
-use std::time::Duration;
 
 /// The file player scene's entry param.
 #[derive(Resource, Debug, Clone, Copy)]
@@ -75,8 +74,8 @@ impl Plugin for FileSelectPlugin {
                     // panel runs last and clears it.
                     refresh_wheel_rows,
                     refresh_wheel_ratings,
-                    refresh_info_panel,
-                    update_preview,
+                    info_panel::refresh_info_panel,
+                    preview::update_preview,
                 )
                     .chain()
                     .run_if(in_state(GameScene::FileSelect).and_then(resource_exists::<Wheel>)),
@@ -110,7 +109,6 @@ const BAR_HEIGHT: f32 = 50.0;
 const WHEEL_X: f32 = 330.0;
 /// Rows shift right as they leave the center, curving the wheel.
 const BULGE_PER_ROW: f32 = 3.0;
-const PREVIEW_DEBOUNCE: Seconds = Seconds(0.35);
 const BANNER_SIZE: Vec2 = Vec2::new(500.0, 156.0);
 /// On-screen height of the wheel's rating images (native art is 120px).
 const RATING_HEIGHT: f32 = 38.0;
@@ -141,10 +139,6 @@ struct Wheel {
     /// back to zero every frame so the active item spins into the center.
     scroll_offset: f32,
     expanded_group: Option<usize>,
-    /// Stepfile whose music the preview aims at, plus its debounce clock.
-    preview_stepfile: Option<StepfileId>,
-    preview_wait: Seconds,
-    preview_entity: Option<Entity>,
     /// The generated rounded-gradient texture shared by bars and panels.
     bar_image: Handle<Image>,
     dirty: bool,
@@ -171,9 +165,6 @@ struct SlotArtist;
 /// The high-score rating image at the right edge of a stepfile row.
 #[derive(Component, Default, Clone)]
 struct SlotRating;
-
-#[derive(Component, Default, Clone)]
-struct InfoPanel;
 
 fn enter(
     mut commands: Commands,
@@ -319,16 +310,15 @@ fn enter(
         active,
         scroll_offset: 0.0,
         expanded_group,
-        preview_stepfile: None,
-        preview_wait: Seconds::ZERO,
-        preview_entity: None,
         bar_image,
         dirty: true,
     });
+    commands.init_resource::<preview::Preview>();
 }
 
 fn exit(mut commands: Commands) {
     commands.remove_resource::<Wheel>();
+    commands.remove_resource::<preview::Preview>();
 }
 
 fn navigate(
@@ -476,9 +466,6 @@ fn handle_tap(
                 sfx.write(PlaySfx(Sfx::GroupToggle));
             }
             WheelEntry::Stepfile { id } => {
-                if let Some(preview) = wheel.preview_entity.take() {
-                    commands.entity(preview).try_despawn();
-                }
                 let stepfile = &library.stepfile(id).stepfile;
                 let chart = chart_for_preference(stepfile, preferred.0).unwrap_or(0);
                 commands.insert_resource(SelectedStepfile { id, chart });
@@ -639,182 +626,6 @@ fn high_score_rating(
     Some(config.rating(percent, None).image.clone())
 }
 
-/// Rebuilt from scratch: despawn-and-respawn beats mutating a panel of
-/// text entities in place.
-fn refresh_info_panel(
-    mut wheel: ResMut<Wheel>,
-    library: Res<StepfileLibrary>,
-    preferred: Res<PreferredDifficulty>,
-    asset_server: Res<AssetServer>,
-    panels: Query<Entity, With<InfoPanel>>,
-    mut commands: Commands,
-) {
-    if !wheel.dirty {
-        return;
-    }
-    wheel.dirty = false;
-    for panel in &panels {
-        commands.entity(panel).despawn();
-    }
-    let Some(entry) = wheel.entries.get(wheel.active).copied() else {
-        return;
-    };
-
-    let (banner_path, fallback_title, headline, chart) = match entry {
-        WheelEntry::Stepfile { id } => {
-            let entry = library.stepfile(id);
-            (
-                entry.banner_path(),
-                entry.display_title(),
-                bpm_label(&entry.stepfile),
-                chart_for_preference(&entry.stepfile, preferred.0).map(|index| (id, index)),
-            )
-        }
-        WheelEntry::Group { index } => {
-            let group = &library.groups[index];
-            let headline = match group.stepfiles.len() {
-                1 => "1 stepfile".to_string(),
-                count => format!("{count} stepfiles"),
-            };
-            (
-                group.banner_path.clone(),
-                group.name.clone(),
-                headline,
-                None,
-            )
-        }
-    };
-
-    let (image, tint, title) = match banner_path.as_deref().and_then(asset_server_path) {
-        Some(path) => (asset_server.load(path), Color::WHITE, None),
-        None => (wheel.bar_image.clone(), BANNER_TINT, Some(fallback_title)),
-    };
-    let title: Vec<_> = title
-        .map(|title| {
-            bsn! {
-                game_font(24.0)
-                Text2d({title})
-                TextColor({BANNER_TEXT})
-                at(0.0, 190.0, 0.5)
-            }
-        })
-        .into_iter()
-        .collect();
-    let chart_lines: Vec<_> = chart
-        .map(|(id, index)| {
-            let stepfile = &library.stepfile(id).stepfile;
-            let chart = &stepfile.charts[index];
-            let (name, color) = difficulty_style(&chart.difficulty);
-            vec![
-                (format!("{name} {}", chart.meter), 34.0, color, 18.0),
-                (stats_label(stepfile, index), 22.0, STATS_TEXT, -70.0),
-            ]
-        })
-        .unwrap_or_default()
-        .into_iter()
-        .map(|(line, size, color, y)| {
-            bsn! {
-                game_font(size)
-                Text2d({line})
-                TextColor({color})
-                at(0.0, y, 0.0)
-            }
-        })
-        .collect();
-
-    commands.spawn_scoped(
-        GameScene::FileSelect,
-        bsn! {
-            InfoPanel
-            at(-320.0, 0.0, 5.0)
-            Visibility::default()
-            Children [
-                (
-                    Sprite { image: {image}, color: {tint}, custom_size: {Some(BANNER_SIZE)} }
-                    at(0.0, 190.0, 0.0)
-                ),
-                {title},
-                (
-                    game_font(28.0)
-                    Text2d({headline})
-                    TextColor({BPM_TEXT})
-                    at(0.0, 70.0, 0.0)
-                ),
-                {chart_lines},
-            ]
-        },
-    );
-}
-
-fn stats_label(stepfile: &Stepfile, chart_index: usize) -> String {
-    let chart = &stepfile.charts[chart_index];
-    let stats = chart.stats();
-    let duration = chart
-        .last_note_beat()
-        .map(|beat| stepfile.timing.seconds_at_beat(beat))
-        .unwrap_or(Seconds::ZERO);
-    let minutes = (duration.0.max(0.0) / 60.0) as u32;
-    let seconds = (duration.0.max(0.0) % 60.0) as u32;
-    format!(
-        "Steps {}   Jumps {}\nHolds {}   Mines {}\nLength {minutes}:{seconds:02}",
-        stats.steps, stats.jumps, stats.holds, stats.mines
-    )
-}
-
-fn update_preview(
-    time: Res<Time>,
-    mut wheel: ResMut<Wheel>,
-    library: Res<StepfileLibrary>,
-    asset_server: Res<AssetServer>,
-    mut commands: Commands,
-) {
-    let active_stepfile = match wheel.entries.get(wheel.active) {
-        Some(WheelEntry::Stepfile { id }) => Some(*id),
-        _ => None,
-    };
-
-    if wheel.preview_stepfile != active_stepfile {
-        wheel.preview_stepfile = active_stepfile;
-        wheel.preview_wait = Seconds::ZERO;
-        if let Some(preview) = wheel.preview_entity.take() {
-            commands.entity(preview).try_despawn();
-        }
-        return;
-    }
-
-    let Some(id) = active_stepfile else { return };
-    if wheel.preview_entity.is_some() {
-        return;
-    }
-    wheel.preview_wait += Seconds(time.delta_secs_f64());
-    if wheel.preview_wait < PREVIEW_DEBOUNCE {
-        return;
-    }
-
-    let entry = library.stepfile(id);
-    let Some(path) = entry.music_path().as_deref().and_then(asset_server_path) else {
-        return;
-    };
-    let stepfile = &entry.stepfile;
-    let start = stepfile.sample_start.0.max(0.0);
-    let length = stepfile.sample_length.0;
-    let music = asset_server.load(path);
-    let entity = commands
-        .spawn_scoped(
-            GameScene::FileSelect,
-            bsn! {
-                AudioPlayer({music})
-                PlaybackSettings {
-                    mode: {PlaybackMode::Loop},
-                    start_position: {Some(Duration::from_secs_f64(start))},
-                    duration: {(length > 0.0).then(|| Duration::from_secs_f64(length))},
-                }
-            },
-        )
-        .id();
-    wheel.preview_entity = Some(entity);
-}
-
 fn slot_y(slot: usize, scroll_offset: f32) -> f32 {
     (CENTER as f32 - slot as f32 + scroll_offset) * ROW_HEIGHT
 }
@@ -906,34 +717,6 @@ fn chart_for_preference(stepfile: &Stepfile, preferred: u8) -> Option<usize> {
             let rank = stepfile.charts[index].difficulty.rank();
             ((rank as i16 - preferred as i16).abs(), rank)
         })
-}
-
-fn difficulty_style(difficulty: &Difficulty) -> (&str, Color) {
-    match difficulty {
-        Difficulty::Beginner => ("Beginner", Color::srgb(0.35, 0.9, 0.95)),
-        Difficulty::Easy => ("Basic", Color::srgb(0.95, 0.8, 0.25)),
-        Difficulty::Medium => ("Difficult", Color::srgb(0.95, 0.35, 0.3)),
-        Difficulty::Hard => ("Expert", Color::srgb(0.4, 0.95, 0.4)),
-        Difficulty::Challenge => ("Challenge", Color::srgb(0.8, 0.45, 0.95)),
-        Difficulty::Edit => ("Edit", Color::srgb(0.7, 0.7, 0.75)),
-        Difficulty::Other(name) => (name.as_str(), Color::srgb(0.7, 0.7, 0.75)),
-    }
-}
-
-fn bpm_label(stepfile: &Stepfile) -> String {
-    match stepfile.display_bpm {
-        Some(DisplayBpm::Single(bpm)) => format!("BPM {bpm:.0}"),
-        Some(DisplayBpm::Range(low, high)) => format!("BPM {low:.0}-{high:.0}"),
-        Some(DisplayBpm::Random) => "BPM ???".to_string(),
-        None => {
-            let (low, high) = stepfile.timing.bpm_range();
-            if (high - low).abs() < 0.5 {
-                format!("BPM {low:.0}")
-            } else {
-                format!("BPM {low:.0}-{high:.0}")
-            }
-        }
-    }
 }
 
 /// A white vertical-gradient rounded rectangle for sprites to tint: every

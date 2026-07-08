@@ -30,10 +30,6 @@ impl StepfileTiming {
         Beat(anchor.beat + (seconds.0 - anchor.seconds) * anchor.beats_per_second)
     }
 
-    pub fn beat_phase(&self, seconds: Seconds) -> f64 {
-        self.beat_at_seconds(seconds).phase()
-    }
-
     pub fn bpm_range(&self) -> (f64, f64) {
         self.anchors
             .iter()
