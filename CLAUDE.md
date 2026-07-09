@@ -67,6 +67,8 @@ Core is supposed to house generic mechanisms and systems, and you should design
 them as configurable/injectable systems so that tiny pieces of integration code
 can be wired together in `src/integrations/`
 
+- All code in `src` must be platform agnostic. Platform specific code should only go into `src/native.rs` or `src/web.rs`. No exceptions.
+
 ## Comments
 
 - The default mindset should be: Do not write comments. Write code that is self
