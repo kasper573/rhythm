@@ -120,7 +120,7 @@ impl Platform for NativePlatform {
         }
         let window = match options.window {
             Some((start, length)) => {
-                sink.append(WindowedMusic::open(bytes, start, length));
+                sink.append(WindowedMusic::open(bytes, start, length)?);
                 Some((start.0.max(0.0), length.0))
             }
             None => {
@@ -249,9 +249,9 @@ struct WindowedMusic {
 }
 
 impl WindowedMusic {
-    fn open(bytes: Arc<[u8]>, start: Seconds, length: Seconds) -> WindowedMusic {
-        let mut decoder = rodio::Decoder::new(Cursor::new(bytes))
-            .expect("music bytes already decoded once as an AudioSource");
+    fn open(bytes: Arc<[u8]>, start: Seconds, length: Seconds) -> Result<WindowedMusic, String> {
+        let mut decoder =
+            rodio::Decoder::new(Cursor::new(bytes)).map_err(|error| error.to_string())?;
         let start = Duration::from_secs_f64(start.0.max(0.0));
         let window = match decoder.try_seek(start) {
             Ok(()) => (length.0 > 0.0).then(|| Duration::from_secs_f64(length.0)),
@@ -260,12 +260,12 @@ impl WindowedMusic {
                 None
             }
         };
-        WindowedMusic {
+        Ok(WindowedMusic {
             decoder,
             start,
             window,
             played: 0,
-        }
+        })
     }
 
     fn window_samples(&self, window: Duration) -> u64 {

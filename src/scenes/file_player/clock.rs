@@ -1,23 +1,26 @@
 use super::{MusicTrack, PlayPhase, PlaySession, PlaySet, PlaybackClock, TickTrack};
-use crate::core::audio::SoundChannel;
+use crate::core::audio::{SoundChannel, SoundPlayer};
 use crate::core::settings::Settings;
 use crate::core::units::{Millis, Seconds};
 use bevy::prelude::*;
 
 /// Keeps the session's [`PlaybackClock`] on the audio clock: a fixed
 /// lead-in counts up to zero, both tracks start together, then the
-/// [`AudioClock`](crate::core::audio_clock::AudioClock) servos onto the
-/// channel's position reports so grading sees a smooth, accurate timeline.
+/// [`StepfileClock`](crate::core::stepfile::StepfileClock) servos onto
+/// the channel's position reports so grading sees a smooth, accurate
+/// timeline.
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(Update, advance_clock.in_set(PlaySet::Clock));
 }
+
+type TrackChannel = (Option<&'static mut SoundChannel>, Has<SoundPlayer>);
 
 fn advance_clock(
     time: Res<Time>,
     mut session: ResMut<PlaySession>,
     mut settings: ResMut<Settings>,
-    mut music: Query<Option<&mut SoundChannel>, (With<MusicTrack>, Without<TickTrack>)>,
-    mut tick: Query<Option<&mut SoundChannel>, (With<TickTrack>, Without<MusicTrack>)>,
+    mut music: Query<TrackChannel, (With<MusicTrack>, Without<TickTrack>)>,
+    mut tick: Query<TrackChannel, (With<TickTrack>, Without<MusicTrack>)>,
 ) {
     let delta = Seconds(time.delta_secs_f64());
     let clock = &mut session.clock;
@@ -29,32 +32,34 @@ fn advance_clock(
                 clock.phase = PlayPhase::LeadIn { remaining };
                 return;
             }
-            // Hold at zero until every spawned track is decoded and
-            // playable, so the music and the tick track always start in
-            // lockstep.
-            let mut channels: Vec<_> = music.iter_mut().chain(tick.iter_mut()).collect();
-            let ready = !channels.is_empty()
-                && channels
-                    .iter()
-                    .all(|channel| channel.as_ref().is_some_and(|channel| channel.is_ready()));
-            if ready {
-                for channel in channels.iter_mut().flatten() {
-                    channel.set_paused(false);
-                }
-                clock.phase = PlayPhase::Playing;
-            } else {
+            // Hold at zero while any track is still loading or decoding,
+            // so the music and the tick track start in lockstep. Tracks
+            // that failed outright never hold the start: the session
+            // plays with whatever survives, silent if nothing does.
+            let mut tracks: Vec<_> = music.iter_mut().chain(tick.iter_mut()).collect();
+            let pending = tracks.iter().any(|(channel, queued)| match channel {
+                Some(channel) => !channel.is_ready(),
+                None => *queued,
+            });
+            if pending {
                 clock.phase = PlayPhase::LeadIn {
                     remaining: Seconds::ZERO,
                 };
+            } else {
+                for (channel, _) in &mut tracks {
+                    if let Some(channel) = channel {
+                        channel.set_paused(false);
+                    }
+                }
+                clock.phase = PlayPhase::Playing;
             }
         }
         PlayPhase::Playing => {
             clock.wall_since_play += delta;
             let report = music
                 .iter()
-                .flatten()
-                .next()
-                .or_else(|| tick.iter().flatten().next())
+                .find_map(|(channel, _)| channel)
+                .or_else(|| tick.iter().find_map(|(channel, _)| channel))
                 .map(|channel| channel.position());
             let fresh = clock.music.advance(delta, report);
 

@@ -1,5 +1,5 @@
 use crate::core::platform::{AudioChannel, SoundOptions, platform};
-use bevy::asset::{AssetLoader, LoadContext, io::Reader};
+use bevy::asset::{AssetLoader, LoadContext, LoadState, io::Reader};
 use bevy::prelude::*;
 use std::sync::Arc;
 
@@ -34,14 +34,21 @@ impl Plugin for AudioPlugin {
 }
 
 /// Opens a channel for every queued [`SoundPlayer`] whose bytes have
-/// loaded.
+/// loaded. A sound that fails — loading or opening — sheds its player,
+/// so a bare entity is readable as "this track failed" while a player
+/// without a channel means "still on its way".
 fn start_queued_sounds(
     sounds: Res<Assets<Sound>>,
+    asset_server: Res<AssetServer>,
     queued: Query<(Entity, &SoundPlayer), Without<SoundChannel>>,
     mut commands: Commands,
 ) {
     for (entity, player) in &queued {
         let Some(sound) = sounds.get(&player.sound) else {
+            if matches!(asset_server.load_state(&player.sound), LoadState::Failed(_)) {
+                warn!("sound failed to load: {:?}", player.sound.path());
+                commands.entity(entity).remove::<SoundPlayer>();
+            }
             continue;
         };
         match platform().open_audio(sound.bytes.clone(), player.options) {
