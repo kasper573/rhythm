@@ -1,11 +1,11 @@
 use crate::core::assets::asset_server_path;
+use crate::core::audio::Sound;
+use crate::core::platform::{AudioChannel, SoundOptions, platform};
 use crate::core::settings::TimingSettings;
 use crate::core::stepfile::{Stepfile, StepfileClock};
 use crate::core::units::{Beat, Seconds};
-use bevy::audio::{AudioSinkPlayback, PlaybackMode};
 use bevy::prelude::*;
 use std::path::PathBuf;
-use std::time::Duration;
 
 /// Music a scene can hand to the [`MusicPlayer`]: always a real stepfile,
 /// so whatever plays can synchronize UI through its timing.
@@ -29,31 +29,28 @@ pub struct MusicPlayer {
 
 struct PlayingBgm {
     bgm: Bgm,
-    entity: Option<Entity>,
+    source: Option<Handle<Sound>>,
+    channel: Option<Box<dyn AudioChannel>>,
     clock: Option<StepfileClock>,
 }
 
 impl MusicPlayer {
-    pub fn play(&mut self, commands: &mut Commands, bgm: Bgm) {
+    pub fn play(&mut self, bgm: Bgm) {
         if let Some(playing) = &self.playing
             && playing.bgm.sm_path == bgm.sm_path
         {
             return;
         }
-        self.stop(commands);
         self.playing = Some(PlayingBgm {
             bgm,
-            entity: None,
+            source: None,
+            channel: None,
             clock: None,
         });
     }
 
-    pub fn stop(&mut self, commands: &mut Commands) {
-        if let Some(playing) = self.playing.take()
-            && let Some(entity) = playing.entity
-        {
-            commands.entity(entity).try_despawn();
-        }
+    pub fn stop(&mut self) {
+        self.playing = None;
     }
 
     /// The beat the speakers are on, for UI synchronized to the music;
@@ -73,51 +70,56 @@ impl Plugin for MusicPlayerPlugin {
     }
 }
 
-/// Spawns the audio for the current stepfile once — unscoped, so it
-/// survives scene changes — and keeps the shared clock servo'd onto its
-/// sink. The mixer's raw position keeps growing while the sample loops,
-/// so it is folded back into the loop window first; the servo's resync
-/// snap absorbs the seam.
+/// Opens the audio for the current stepfile once its bytes load — looping
+/// the preview sample window — and keeps the shared clock servo'd onto
+/// the channel's position reports.
 fn drive_music_player(
     time: Res<Time>,
     asset_server: Res<AssetServer>,
-    sinks: Query<&AudioSink>,
+    sounds: Res<Assets<Sound>>,
     mut player: ResMut<MusicPlayer>,
-    mut commands: Commands,
 ) {
     let Some(playing) = &mut player.playing else {
         return;
     };
-    let PlayingBgm { bgm, entity, clock } = playing;
+    let PlayingBgm {
+        bgm,
+        source,
+        channel,
+        clock,
+    } = playing;
 
-    if entity.is_none() {
+    let Some(active) = channel else {
         let Some(path) = bgm.music.as_deref().and_then(asset_server_path) else {
             return;
         };
-        let start = bgm.stepfile.sample_start.0.max(0.0);
-        let length = bgm.stepfile.sample_length.0;
-        let music = asset_server.load(path);
-        *entity = Some(
-            commands
-                .spawn_scene(bsn! {
-                    AudioPlayer({music})
-                    PlaybackSettings {
-                        mode: {PlaybackMode::Loop},
-                        start_position: {Some(Duration::from_secs_f64(start))},
-                        duration: {(length > 0.0).then(|| Duration::from_secs_f64(length))},
-                    }
-                })
-                .id(),
-        );
-        return;
-    }
-
-    let Some(sink) = entity.and_then(|entity| sinks.get(entity).ok()) else {
+        let handle = source.get_or_insert_with(|| asset_server.load(path));
+        let Some(sound) = sounds.get(handle.id()) else {
+            return;
+        };
+        let options = SoundOptions {
+            window: Some((bgm.stepfile.sample_start, bgm.stepfile.sample_length)),
+            ..default()
+        };
+        match platform().open_audio(sound.bytes.clone(), options) {
+            Ok(opened) => *channel = Some(opened),
+            Err(error) => {
+                warn!("music cannot play: {error}");
+                bgm.music = None;
+            }
+        }
         return;
     };
-    let report = bgm
-        .stepfile
-        .sample_position(Seconds(sink.position().as_secs_f64()));
+
+    if !active.is_ready() {
+        return;
+    }
+    if active.is_finished() {
+        // The file ran out (it had no loopable window); start it over.
+        *channel = None;
+        return;
+    }
+    let report = active.position();
     let clock =
         clock.get_or_insert_with(|| StepfileClock::start_at(bgm.stepfile.timing.clone(), report));
     clock.advance(Seconds(time.delta_secs_f64()), Some(report));

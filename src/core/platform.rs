@@ -1,7 +1,7 @@
 use crate::core::units::Seconds;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 /// Everything the game needs from its host that bevy does not already
 /// abstract: asset file access, user-data persistence, and video decoding.
@@ -33,6 +33,44 @@ pub trait Platform: Send + Sync {
 
     /// Opens a video for streaming; fails when the host cannot decode it.
     fn open_video(&self, path: &Path, looping: bool) -> Result<Box<dyn VideoSource>, String>;
+
+    /// Starts playing an encoded sound. The host owns decoding and output
+    /// and MUST keep playback running independently of the game loop: a
+    /// stalled frame may never tear the audio.
+    fn open_audio(
+        &self,
+        bytes: Arc<[u8]>,
+        options: SoundOptions,
+    ) -> Result<Box<dyn AudioChannel>, String>;
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SoundOptions {
+    /// Loop this `(start, length)` window of the sound's timeline forever.
+    /// A window never finishes; it plays whole-file from `start` when
+    /// `length` is zero or less.
+    pub window: Option<(Seconds, Seconds)>,
+    pub paused: bool,
+    pub muted: bool,
+}
+
+/// One playing sound; dropping the channel stops it.
+pub trait AudioChannel: Send + Sync {
+    /// Whether the sound is decoded and playback obeys this channel; until
+    /// then [`position`](AudioChannel::position) stands still.
+    fn is_ready(&self) -> bool;
+
+    fn set_paused(&mut self, paused: bool);
+
+    fn set_muted(&mut self, muted: bool);
+
+    fn is_muted(&self) -> bool;
+
+    /// Seconds into the sound's own timeline.
+    fn position(&self) -> Seconds;
+
+    /// The sound ran out; looping windows never finish.
+    fn is_finished(&self) -> bool;
 }
 
 #[derive(Debug, Clone)]

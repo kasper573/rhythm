@@ -17,10 +17,6 @@ bevy = { version = "0.19", default-features = false, features = [
     "ui_api",
     "ui_bevy_render",
     "bevy_ui_widgets",
-    "bevy_audio",
-    "vorbis",
-    "mp3",
-    "wav",
     "keyboard",
     "mouse",
     "png",
@@ -47,6 +43,12 @@ bevy = { version = "0.19", default-features = false, features = [
 ] }
 clap = { version = "4", features = ["derive"] }
 dirs = "6"
+rodio = { version = "0.22", default-features = false, features = [
+    "playback",
+    "vorbis",
+    "mp3",
+    "wav",
+] }
 tiny_http = "0.12"
 video-rs = { version = "0.11.0", features = ["ndarray"] }
 walkdir = "2"
@@ -66,13 +68,23 @@ console_error_panic_hook = "0.1"
 futures = { version = "0.3", default-features = false, features = ["alloc"] }
 gloo-net = { version = "0.6", default-features = false, features = ["http"] }
 gloo-storage = "0.3"
+js-sys = "0.3"
 send_wrapper = "0.6"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 web-sys = { version = "0.3", features = [
+    "AudioBuffer",
+    "AudioBufferSourceNode",
+    "AudioContext",
+    "AudioDestinationNode",
+    "AudioNode",
+    "AudioParam",
+    "AudioScheduledSourceNode",
+    "BaseAudioContext",
     "CanvasRenderingContext2d",
     "Document",
     "Element",
+    "GainNode",
     "HtmlCanvasElement",
     "HtmlElement",
     "HtmlMediaElement",

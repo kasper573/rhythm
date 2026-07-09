@@ -25,6 +25,8 @@ pub struct GameConfig {
     pub default_keymap: BTreeMap<GameAction, KeyCode>,
     pub speed_modifiers: SpeedModifiers,
     pub default_stepfile_options: StepfileOptions,
+    /// Timing for fresh installs and settings files that predate it.
+    pub timing_defaults: crate::core::settings::TimingSettings,
     /// Combo at which the arrow flash switches to its brighter, snappier
     /// variant.
     pub bright_arrow_flash_combo: u32,

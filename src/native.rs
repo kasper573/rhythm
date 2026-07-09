@@ -1,10 +1,15 @@
-use crate::core::platform::{AssetEntry, Platform, VideoFrame, VideoSource};
+use crate::core::platform::{
+    AssetEntry, AudioChannel, Platform, SoundOptions, VideoFrame, VideoSource,
+};
 use crate::core::units::Seconds;
 use bevy::log::warn;
+use rodio::Source;
 use std::io;
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 
 /// The desktop host: assets and user data on the real filesystem, video
 /// decoded in-process by `video-rs` on a worker thread.
@@ -94,6 +99,105 @@ impl Platform for NativePlatform {
             frames: Mutex::new(frames),
         }))
     }
+
+    /// Sounds mix on rodio's dedicated audio thread; the game loop only
+    /// issues commands, so a stalled frame never tears playback. Loop
+    /// windows are entered and looped with decoder seeks — instant jumps,
+    /// where decoding-and-discarding up to a window would stall the frame
+    /// that starts the music.
+    fn open_audio(
+        &self,
+        bytes: Arc<[u8]>,
+        options: SoundOptions,
+    ) -> Result<Box<dyn AudioChannel>, String> {
+        let mixer = output_mixer().ok_or("no audio device")?;
+        let sink = rodio::Player::connect_new(mixer);
+        if options.paused {
+            sink.pause();
+        }
+        if options.muted {
+            sink.set_volume(0.0);
+        }
+        let window = match options.window {
+            Some((start, length)) => {
+                sink.append(WindowedMusic::open(bytes, start, length));
+                Some((start.0.max(0.0), length.0))
+            }
+            None => {
+                let decoder =
+                    rodio::Decoder::new(Cursor::new(bytes)).map_err(|error| error.to_string())?;
+                sink.append(decoder);
+                None
+            }
+        };
+        Ok(Box::new(NativeChannel {
+            sink,
+            window,
+            muted: options.muted,
+        }))
+    }
+}
+
+/// The one output stream, opened on first use and kept for the process's
+/// lifetime.
+fn output_mixer() -> Option<&'static rodio::mixer::Mixer> {
+    static OUTPUT: OnceLock<Option<rodio::MixerDeviceSink>> = OnceLock::new();
+    OUTPUT
+        .get_or_init(|| {
+            rodio::DeviceSinkBuilder::open_default_sink()
+                .map(|mut sink| {
+                    sink.log_on_drop(false);
+                    sink
+                })
+                .inspect_err(|error| warn!("no audio device: {error}"))
+                .ok()
+        })
+        .as_ref()
+        .map(|sink| sink.mixer())
+}
+
+struct NativeChannel {
+    sink: rodio::Player,
+    /// `(start, length)` when playing a loop window, for folding the
+    /// sink's monotonic position back into the sound's timeline.
+    window: Option<(f64, f64)>,
+    muted: bool,
+}
+
+impl AudioChannel for NativeChannel {
+    fn is_ready(&self) -> bool {
+        true
+    }
+
+    fn set_paused(&mut self, paused: bool) {
+        if paused {
+            self.sink.pause();
+        } else {
+            self.sink.play();
+        }
+    }
+
+    fn set_muted(&mut self, muted: bool) {
+        self.sink.set_volume(if muted { 0.0 } else { 1.0 });
+        self.muted = muted;
+    }
+
+    fn is_muted(&self) -> bool {
+        self.muted
+    }
+
+    fn position(&self) -> Seconds {
+        let raw = self.sink.get_pos().as_secs_f64();
+        match self.window {
+            Some((start, length)) if length > 0.0 => Seconds(start + raw.rem_euclid(length)),
+            Some((start, _)) => Seconds(start + raw),
+            None => Seconds(raw),
+        }
+    }
+
+    fn is_finished(&self) -> bool {
+        self.sink.empty()
+    }
 }
 
 /// User data lives in the OS config directory under `rhythm/`.
@@ -130,6 +234,95 @@ impl VideoSource for NativeVideoSource {
             height: self.height,
             rgba,
         })
+    }
+}
+
+/// Music playing its preview sample window: the decoder is seeked to the
+/// window start when opened and seeked back whenever the window runs out.
+struct WindowedMusic {
+    decoder: rodio::Decoder<Cursor<Arc<[u8]>>>,
+    start: Duration,
+    /// The window length, while looping it stays possible.
+    window: Option<Duration>,
+    /// Samples yielded since the window start.
+    played: u64,
+}
+
+impl WindowedMusic {
+    fn open(bytes: Arc<[u8]>, start: Seconds, length: Seconds) -> WindowedMusic {
+        let mut decoder = rodio::Decoder::new(Cursor::new(bytes))
+            .expect("music bytes already decoded once as an AudioSource");
+        let start = Duration::from_secs_f64(start.0.max(0.0));
+        let window = match decoder.try_seek(start) {
+            Ok(()) => (length.0 > 0.0).then(|| Duration::from_secs_f64(length.0)),
+            Err(error) => {
+                warn!("music cannot seek, playing it whole: {error:?}");
+                None
+            }
+        };
+        WindowedMusic {
+            decoder,
+            start,
+            window,
+            played: 0,
+        }
+    }
+
+    fn window_samples(&self, window: Duration) -> u64 {
+        let per_second =
+            self.decoder.sample_rate().get() as u64 * self.decoder.channels().get() as u64;
+        (window.as_secs_f64() * per_second as f64) as u64
+    }
+
+    fn rewind(&mut self) -> bool {
+        self.played = 0;
+        match self.decoder.try_seek(self.start) {
+            Ok(()) => true,
+            Err(error) => {
+                warn!("music stopped looping its window: {error:?}");
+                self.window = None;
+                false
+            }
+        }
+    }
+}
+
+impl Iterator for WindowedMusic {
+    type Item = rodio::Sample;
+
+    fn next(&mut self) -> Option<rodio::Sample> {
+        if let Some(window) = self.window
+            && self.played >= self.window_samples(window)
+        {
+            self.rewind();
+        }
+        match self.decoder.next() {
+            Some(sample) => {
+                self.played += 1;
+                Some(sample)
+            }
+            // The file ran out inside the window; wrap early.
+            None if self.window.is_some() && self.rewind() => self.decoder.next(),
+            None => None,
+        }
+    }
+}
+
+impl Source for WindowedMusic {
+    fn current_span_len(&self) -> Option<usize> {
+        self.decoder.current_span_len()
+    }
+
+    fn channels(&self) -> rodio::ChannelCount {
+        self.decoder.channels()
+    }
+
+    fn sample_rate(&self) -> rodio::SampleRate {
+        self.decoder.sample_rate()
+    }
+
+    fn total_duration(&self) -> Option<Duration> {
+        None
     }
 }
 

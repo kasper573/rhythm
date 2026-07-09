@@ -59,12 +59,17 @@ impl TimingSettings {
 pub struct SettingsPlugin {
     /// Stepfile options for settings files that predate the field.
     pub default_stepfile: StepfileOptions,
+    /// Timing for settings files that predate the field.
+    pub default_timing: TimingSettings,
 }
 
 impl Plugin for SettingsPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(load_settings(self.default_stepfile.clone()))
-            .add_systems(Update, save_settings);
+        app.insert_resource(load_settings(
+            self.default_stepfile.clone(),
+            self.default_timing.clone(),
+        ))
+        .add_systems(Update, save_settings);
     }
 }
 
@@ -74,17 +79,17 @@ impl Plugin for SettingsPlugin {
 #[serde(default)]
 struct SettingsFile {
     keymap: Keymap,
-    timing: TimingSettings,
+    timing: Option<TimingSettings>,
     stepfile: Option<StepfileOptions>,
 }
 
 const SETTINGS_FILE: &str = "settings.json";
 
-fn load_settings(default_stepfile: StepfileOptions) -> Settings {
+fn load_settings(default_stepfile: StepfileOptions, default_timing: TimingSettings) -> Settings {
     let file: SettingsFile = load_user_data(SETTINGS_FILE);
     Settings {
         keymap: file.keymap,
-        timing: file.timing,
+        timing: file.timing.unwrap_or(default_timing),
         stepfile: file.stepfile.unwrap_or(default_stepfile),
     }
 }

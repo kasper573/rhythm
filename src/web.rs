@@ -1,11 +1,20 @@
-use crate::core::platform::{AssetEntry, Platform, VideoFrame, VideoSource};
+use crate::core::platform::{
+    AssetEntry, AudioChannel, Platform, SoundOptions, VideoFrame, VideoSource,
+};
 use crate::core::units::Seconds;
+use bevy::log::warn;
 use send_wrapper::SendWrapper;
+use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::sync::{Arc, OnceLock};
 use wasm_bindgen::JsCast;
-use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlVideoElement};
+use web_sys::{
+    AudioBuffer, AudioBufferSourceNode, AudioContext, AudioScheduledSourceNode,
+    CanvasRenderingContext2d, GainNode, HtmlCanvasElement, HtmlVideoElement,
+};
 
 /// Boots the browser build: fetches the asset index and every
 /// synchronously-read text asset, then hands the platform to
@@ -173,8 +182,12 @@ impl Platform for WebPlatform {
             .map_err(|_| "cannot create a canvas")?
             .dyn_into()
             .map_err(|_| "not a canvas element")?;
+        // Every frame is read back to the CPU; without this hint each
+        // read forces a GPU sync stall long enough to starve the audio.
+        let options = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&options, &"willReadFrequently".into(), &true.into());
         let context: CanvasRenderingContext2d = canvas
-            .get_context("2d")
+            .get_context_with_context_options("2d", &options)
             .ok()
             .flatten()
             .ok_or("no 2d canvas context")?
@@ -190,10 +203,84 @@ impl Platform for WebPlatform {
             last_time: -1.0,
         }))
     }
+
+    /// Sounds are handed to the browser's own audio engine: decoding runs
+    /// off the main thread and scheduled nodes keep playing on the
+    /// browser's audio thread no matter how long a game frame stalls.
+    /// Loop windows map directly onto `loopStart`/`loopEnd`.
+    fn open_audio(
+        &self,
+        bytes: Arc<[u8]>,
+        options: SoundOptions,
+    ) -> Result<Box<dyn AudioChannel>, String> {
+        let context = audio_context()?;
+        let gain: GainNode = context
+            .create_gain()
+            .map_err(|_| "cannot create a gain node")?;
+        gain.gain().set_value(if options.muted { 0.0 } else { 1.0 });
+        gain.connect_with_audio_node(&context.destination())
+            .map_err(|_| "cannot reach the audio output")?;
+
+        let window = options
+            .window
+            .map(|(start, length)| (start.0.max(0.0), length.0));
+        let state = Rc::new(RefCell::new(WebAudio {
+            context: context.clone(),
+            gain,
+            buffer: None,
+            node: None,
+            window,
+            paused: options.paused,
+            muted: options.muted,
+            offset: window.map(|(start, _)| start).unwrap_or(0.0),
+            started_at: 0.0,
+            failed: false,
+            dropped: false,
+        }));
+
+        // The browser decodes in the background; playback starts (unless
+        // paused) the moment the buffer is ready.
+        let encoded = js_sys::Uint8Array::from(bytes.as_ref()).buffer();
+        let decoding = context
+            .decode_audio_data(&encoded)
+            .map_err(|_| "the browser refused to decode this sound")?;
+        wasm_bindgen_futures::spawn_local({
+            let state = Rc::clone(&state);
+            async move {
+                let decoded = wasm_bindgen_futures::JsFuture::from(decoding).await;
+                let mut state = state.borrow_mut();
+                if state.dropped {
+                    return;
+                }
+                match decoded {
+                    Ok(buffer) => {
+                        state.buffer = Some(buffer.unchecked_into::<AudioBuffer>());
+                        if !state.paused {
+                            state.start_node();
+                        }
+                    }
+                    Err(error) => {
+                        warn!("sound decode failed: {error:?}");
+                        state.failed = true;
+                    }
+                }
+            }
+        });
+
+        Ok(Box::new(WebChannel {
+            state: SendWrapper::new(state),
+        }))
+    }
 }
 
 const ASSET_ROOT: &str = "assets";
 const INDEX_FILE: &str = "index.json";
+
+/// The page's width in physical pixels.
+fn viewport_width() -> Option<f64> {
+    let window = web_sys::window()?;
+    Some(window.inner_width().ok()?.as_f64()? * window.device_pixel_ratio())
+}
 
 fn url(file: &str) -> String {
     encode_path(&format!("{ASSET_ROOT}/{file}"))
@@ -258,6 +345,150 @@ fn video_mime(path: &Path) -> Result<&'static str, String> {
     }
 }
 
+/// The one AudioContext, created on first use — always after the page's
+/// start gesture, so the browser lets it run.
+fn audio_context() -> Result<AudioContext, String> {
+    static CONTEXT: OnceLock<SendWrapper<Option<AudioContext>>> = OnceLock::new();
+    let context: &Option<AudioContext> =
+        CONTEXT.get_or_init(|| SendWrapper::new(AudioContext::new().ok()));
+    context
+        .clone()
+        .ok_or_else(|| "no audio context".to_string())
+}
+
+/// One sound in the browser's audio graph. The active node plays
+/// autonomously on the browser's audio thread; this state only creates,
+/// stops, and observes it. Positions derive from the context clock, so
+/// they track the speakers.
+struct WebAudio {
+    context: AudioContext,
+    gain: GainNode,
+    buffer: Option<AudioBuffer>,
+    node: Option<AudioBufferSourceNode>,
+    /// `(start, length)` of a loop window; non-positive lengths play the
+    /// file whole from `start`.
+    window: Option<(f64, f64)>,
+    paused: bool,
+    muted: bool,
+    /// The sound-timeline position playback (re)started at, and when.
+    offset: f64,
+    started_at: f64,
+    failed: bool,
+    dropped: bool,
+}
+
+impl WebAudio {
+    fn start_node(&mut self) {
+        let Some(buffer) = &self.buffer else {
+            return;
+        };
+        let Ok(node) = self.context.create_buffer_source() else {
+            warn!("cannot create an audio source node");
+            self.failed = true;
+            return;
+        };
+        node.set_buffer(Some(buffer));
+        if let Some((start, length)) = self.window
+            && length > 0.0
+        {
+            node.set_loop(true);
+            node.set_loop_start(start);
+            node.set_loop_end((start + length).min(buffer.duration()));
+        }
+        let _ = node.connect_with_audio_node(&self.gain);
+        let _ = node.start_with_when_and_grain_offset(0.0, self.offset);
+        self.started_at = self.context.current_time();
+        self.node = Some(node);
+    }
+
+    fn stop_node(&mut self) {
+        if let Some(node) = self.node.take() {
+            let scheduled: &AudioScheduledSourceNode = node.as_ref();
+            let _ = scheduled.stop();
+            let _ = node.disconnect();
+        }
+    }
+
+    fn position(&self) -> f64 {
+        if self.node.is_none() {
+            return self.offset;
+        }
+        let raw = self.offset + (self.context.current_time() - self.started_at);
+        match self.window {
+            Some((start, length)) if length > 0.0 => start + (raw - start).rem_euclid(length),
+            _ => match &self.buffer {
+                Some(buffer) => raw.min(buffer.duration()),
+                None => raw,
+            },
+        }
+    }
+
+    fn looping(&self) -> bool {
+        matches!(self.window, Some((_, length)) if length > 0.0)
+    }
+}
+
+struct WebChannel {
+    state: SendWrapper<Rc<RefCell<WebAudio>>>,
+}
+
+impl AudioChannel for WebChannel {
+    fn is_ready(&self) -> bool {
+        self.state.borrow().buffer.is_some()
+    }
+
+    fn set_paused(&mut self, paused: bool) {
+        let mut state = self.state.borrow_mut();
+        if state.paused == paused {
+            return;
+        }
+        state.paused = paused;
+        if paused {
+            state.offset = state.position();
+            state.stop_node();
+        } else {
+            state.start_node();
+        }
+    }
+
+    fn set_muted(&mut self, muted: bool) {
+        let mut state = self.state.borrow_mut();
+        state.muted = muted;
+        state.gain.gain().set_value(if muted { 0.0 } else { 1.0 });
+    }
+
+    fn is_muted(&self) -> bool {
+        self.state.borrow().muted
+    }
+
+    fn position(&self) -> Seconds {
+        Seconds(self.state.borrow().position())
+    }
+
+    fn is_finished(&self) -> bool {
+        let state = self.state.borrow();
+        if state.failed {
+            return true;
+        }
+        if state.looping() {
+            return false;
+        }
+        match &state.buffer {
+            Some(buffer) => !state.paused && state.position() >= buffer.duration() - 0.001,
+            None => false,
+        }
+    }
+}
+
+impl Drop for WebChannel {
+    fn drop(&mut self) {
+        let mut state = self.state.borrow_mut();
+        state.dropped = true;
+        state.stop_node();
+        let _ = state.gain.disconnect();
+    }
+}
+
 struct WebVideo {
     video: HtmlVideoElement,
     canvas: HtmlCanvasElement,
@@ -296,10 +527,16 @@ impl VideoSource for WebVideoSource {
             return None;
         }
         self.last_time = time;
-        let (width, height) = (video.video_width(), video.video_height());
-        if width == 0 || height == 0 {
+        let (source_width, source_height) = (video.video_width(), video.video_height());
+        if source_width == 0 || source_height == 0 {
             return None;
         }
+        // Frames are read back at the size the viewport can actually
+        // show; pixels beyond that are copy cost without visible gain.
+        let scale =
+            (viewport_width().unwrap_or(source_width as f64) / source_width as f64).min(1.0);
+        let width = (source_width as f64 * scale).round() as u32;
+        let height = (source_height as f64 * scale).round() as u32;
         if canvas.width() != width {
             canvas.set_width(width);
         }
@@ -307,7 +544,13 @@ impl VideoSource for WebVideoSource {
             canvas.set_height(height);
         }
         context
-            .draw_image_with_html_video_element(video, 0.0, 0.0)
+            .draw_image_with_html_video_element_and_dw_and_dh(
+                video,
+                0.0,
+                0.0,
+                width as f64,
+                height as f64,
+            )
             .ok()?;
         let data = context
             .get_image_data(0.0, 0.0, width as f64, height as f64)

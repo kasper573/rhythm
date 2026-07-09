@@ -121,5 +121,9 @@
   "default_stepfile_options": {
     "note_skin": "ddrextreme_note",
     "note_speed": { "Dynamic": 1 }
+  },
+  "timing_defaults": {
+    "machine_offset": -100,
+    "visual_delay": 0
   }
 }

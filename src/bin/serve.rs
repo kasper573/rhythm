@@ -200,25 +200,26 @@ fn respond(request: tiny_http::Request, site: &Path, assets: &Path) {
         .find(|header| header.field.equiv("range"))
         .and_then(|header| parse_range(header.value.as_str(), bytes.len()));
 
-    let _ = match range {
-        Some((start, end)) => request.respond(
-            tiny_http::Response::from_data(bytes[start..=end].to_vec())
-                .with_status_code(206)
-                .with_header(header("Content-Type", mime))
-                .with_header(header("Cache-Control", "no-cache"))
-                .with_header(header("Accept-Ranges", "bytes"))
-                .with_header(header(
-                    "Content-Range",
-                    &format!("bytes {start}-{end}/{}", bytes.len()),
-                )),
-        ),
-        None => request.respond(
-            tiny_http::Response::from_data(bytes)
-                .with_header(header("Content-Type", mime))
-                .with_header(header("Cache-Control", "no-cache"))
-                .with_header(header("Accept-Ranges", "bytes")),
-        ),
+    let response = match range {
+        Some((start, end)) => tiny_http::Response::from_data(bytes[start..=end].to_vec())
+            .with_status_code(206)
+            .with_header(header(
+                "Content-Range",
+                &format!("bytes {start}-{end}/{}", bytes.len()),
+            )),
+        None => tiny_http::Response::from_data(bytes),
     };
+    let _ = request.respond(
+        response
+            .with_header(header("Content-Type", mime))
+            .with_header(header("Cache-Control", "no-cache"))
+            .with_header(header("Accept-Ranges", "bytes"))
+            // Cross-origin isolation: SharedArrayBuffer (and with it any
+            // future wasm threading) only exists on pages served with
+            // these headers.
+            .with_header(header("Cross-Origin-Opener-Policy", "same-origin"))
+            .with_header(header("Cross-Origin-Embedder-Policy", "require-corp")),
+    );
 }
 
 /// The byte window of a `Range: bytes=a-b` header (also `a-` and `-n`

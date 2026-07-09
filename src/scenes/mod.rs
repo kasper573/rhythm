@@ -101,9 +101,8 @@ pub fn stream_default_backgrounds(
 pub fn play_default_bgm(
     library: Res<crate::core::library::StepfileLibrary>,
     mut music: ResMut<crate::core::stepfile::MusicPlayer>,
-    mut commands: Commands,
 ) {
-    music.play(&mut commands, library.default_bgm.bgm());
+    music.play(library.default_bgm.bgm());
 }
 
 pub fn scene_accepts_input(fade: Res<SceneFade>) -> bool {

@@ -1,13 +1,13 @@
 use super::{MusicTrack, PlayPhase, PlaySession, PlaySet, PlaybackClock, TickTrack};
+use crate::core::audio::SoundChannel;
 use crate::core::settings::Settings;
 use crate::core::units::{Millis, Seconds};
-use bevy::audio::AudioSinkPlayback;
 use bevy::prelude::*;
 
 /// Keeps the session's [`PlaybackClock`] on the audio clock: a fixed
 /// lead-in counts up to zero, both tracks start together, then the
 /// [`AudioClock`](crate::core::audio_clock::AudioClock) servos onto the
-/// mixer's position reports so grading sees a smooth, accurate timeline.
+/// channel's position reports so grading sees a smooth, accurate timeline.
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(Update, advance_clock.in_set(PlaySet::Clock));
 }
@@ -16,8 +16,8 @@ fn advance_clock(
     time: Res<Time>,
     mut session: ResMut<PlaySession>,
     mut settings: ResMut<Settings>,
-    music: Query<&AudioSink, With<MusicTrack>>,
-    tick: Query<&AudioSink, With<TickTrack>>,
+    mut music: Query<Option<&mut SoundChannel>, (With<MusicTrack>, Without<TickTrack>)>,
+    mut tick: Query<Option<&mut SoundChannel>, (With<TickTrack>, Without<MusicTrack>)>,
 ) {
     let delta = Seconds(time.delta_secs_f64());
     let clock = &mut session.clock;
@@ -29,16 +29,17 @@ fn advance_clock(
                 clock.phase = PlayPhase::LeadIn { remaining };
                 return;
             }
-            // Hold at zero until every spawned track has a live sink, so the
-            // music and the tick track always start in lockstep.
-            let music_sink = music.single();
-            let tick_sink = tick.single();
-            if music_sink.is_ok() || tick_sink.is_ok() {
-                if let Ok(sink) = music_sink {
-                    sink.play();
-                }
-                if let Ok(sink) = tick_sink {
-                    sink.play();
+            // Hold at zero until every spawned track is decoded and
+            // playable, so the music and the tick track always start in
+            // lockstep.
+            let mut channels: Vec<_> = music.iter_mut().chain(tick.iter_mut()).collect();
+            let ready = !channels.is_empty()
+                && channels
+                    .iter()
+                    .all(|channel| channel.as_ref().is_some_and(|channel| channel.is_ready()));
+            if ready {
+                for channel in channels.iter_mut().flatten() {
+                    channel.set_paused(false);
                 }
                 clock.phase = PlayPhase::Playing;
             } else {
@@ -50,10 +51,11 @@ fn advance_clock(
         PlayPhase::Playing => {
             clock.wall_since_play += delta;
             let report = music
-                .single()
-                .or(tick.single())
-                .ok()
-                .map(|sink| Seconds(sink.position().as_secs_f64()));
+                .iter()
+                .flatten()
+                .next()
+                .or_else(|| tick.iter().flatten().next())
+                .map(|channel| channel.position());
             let fresh = clock.music.advance(delta, report);
 
             // Reading through the ResMut must not touch it mutably:

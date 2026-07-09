@@ -25,6 +25,7 @@ pub fn run(platform: impl core::platform::Platform + 'static) {
     let config = GameConfig::load();
     let settings_plugin = SettingsPlugin {
         default_stepfile: config.default_stepfile_options.clone(),
+        default_timing: config.timing_defaults.clone(),
     };
     App::new()
         .add_plugins(
@@ -57,6 +58,7 @@ pub fn run(platform: impl core::platform::Platform + 'static) {
         .insert_resource(StepfileLibrary::scan())
         .add_plugins((
             settings_plugin,
+            crate::core::audio::AudioPlugin,
             NoteSkinPlugin,
             NoteFieldPlugin,
             HealthVialPlugin,

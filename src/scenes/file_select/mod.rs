@@ -75,16 +75,18 @@ impl Plugin for FileSelectPlugin {
                     fit_wheel_rows,
                     animate_wheel,
                     pin_rating_column,
+                    settle_wheel,
                     bgm::drive_wheel_bgm,
                     bgm::pulse_active_row,
-                    // The refreshers all observe `Wheel::dirty`; the info
-                    // panel runs last and clears it.
+                    // The cheap refreshers observe `Wheel::dirty` every
+                    // step; the heavyweight ones wait for `just_settled`.
                     refresh_scene_background,
                     stream_wash_videos,
                     fade_scene_background,
                     refresh_wheel_rows,
                     refresh_wheel_ratings,
                     info_panel::refresh_info_panel,
+                    clear_wheel_flags,
                 )
                     .chain()
                     .run_if(in_state(GameScene::FileSelect).and_then(resource_exists::<Wheel>)),
@@ -152,7 +154,24 @@ struct Wheel {
     /// The generated rounded-gradient texture shared by bars and panels.
     bar_image: Handle<Image>,
     dirty: bool,
+    /// Time since the last scroll step; the heavyweight reactions (music,
+    /// wash, info panel) wait out [`SETTLE_DELAY`] so rows scrolling past
+    /// cost nothing.
+    settle: Seconds,
+    just_settled: bool,
 }
+
+impl Wheel {
+    /// Discrete actions (anything but scrolling) take effect immediately.
+    fn mark_settled(&mut self) {
+        self.settle = SETTLE_DELAY;
+        self.just_settled = true;
+    }
+}
+
+/// Scrolling must settle before the music, background wash, and info
+/// panel react, so passing rows don't each load media.
+const SETTLE_DELAY: Seconds = Seconds(0.35);
 
 #[derive(Clone, Copy)]
 enum WheelEntry {
@@ -327,7 +346,7 @@ fn enter(
         },
     );
 
-    commands.insert_resource(Wheel {
+    let mut wheel = Wheel {
         entries,
         active,
         slots,
@@ -335,11 +354,15 @@ fn enter(
         expanded_group,
         bar_image,
         dirty: true,
-    });
+        settle: Seconds::ZERO,
+        just_settled: false,
+    };
+    wheel.mark_settled();
+    commands.insert_resource(wheel);
 }
 
 fn exit(mut commands: Commands, mut music: ResMut<MusicPlayer>) {
-    music.stop(&mut commands);
+    music.stop();
     commands.remove_resource::<Wheel>();
 }
 
@@ -365,7 +388,27 @@ fn navigate(
             _ => continue,
         }
         wheel.dirty = true;
+        wheel.settle = Seconds::ZERO;
         sfx.write(PlaySfx(Sfx::WheelMove));
+    }
+}
+
+/// Advances the settle timer; crossing [`SETTLE_DELAY`] fires the settled
+/// reactions once.
+fn settle_wheel(time: Res<Time>, mut wheel: ResMut<Wheel>) {
+    if wheel.settle >= SETTLE_DELAY {
+        return;
+    }
+    wheel.settle += Seconds(time.delta_secs_f64());
+    if wheel.settle >= SETTLE_DELAY {
+        wheel.just_settled = true;
+    }
+}
+
+fn clear_wheel_flags(mut wheel: ResMut<Wheel>) {
+    if wheel.dirty || wheel.just_settled {
+        wheel.dirty = false;
+        wheel.just_settled = false;
     }
 }
 
@@ -402,6 +445,7 @@ fn change_difficulty(
     if new_position != position {
         preferred.0 = stepfile.charts[charts[new_position]].difficulty.rank();
         wheel.dirty = true;
+        wheel.mark_settled();
         sfx.write(PlaySfx(Sfx::Navigate));
     }
 }
@@ -485,6 +529,7 @@ fn handle_tap(
                     )
                     .unwrap_or(0);
                 wheel.dirty = true;
+                wheel.mark_settled();
                 sfx.write(PlaySfx(Sfx::GroupToggle));
             }
             WheelEntry::Stepfile { id } => {
@@ -613,7 +658,7 @@ fn refresh_scene_background(
     mut commands: Commands,
     mut layer_count: Local<u32>,
 ) {
-    if !wheel.dirty {
+    if !wheel.just_settled {
         return;
     }
     // Rows without a background of their own fall back to the default
@@ -838,6 +883,7 @@ fn fit_wheel_rows(
     }
     wheel.slots = slots;
     wheel.dirty = true;
+    wheel.mark_settled();
     for entity in &slot_roots {
         commands.entity(entity).despawn();
     }

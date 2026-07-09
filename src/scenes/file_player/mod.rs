@@ -5,6 +5,7 @@ mod visuals;
 
 use crate::core::assets::{asset_root, asset_server_path};
 use crate::core::at;
+use crate::core::audio::{Sound, SoundChannel, SoundPlayer};
 use crate::core::config::{GameConfig, RowOutcome};
 use crate::core::font::game_font;
 use crate::core::health_vial::{HealthVialMaterial, spawn_health_vial};
@@ -14,6 +15,7 @@ use crate::core::note_field::{
     NoteFieldClock, NoteFieldSystems, NoteSpawn, TARGET_Y, spawn_mine, spawn_note, spawn_receptors,
 };
 use crate::core::note_skin::ActiveNoteSkin;
+use crate::core::platform::SoundOptions;
 use crate::core::scene_flow::SpawnScoped;
 use crate::core::settings::{Settings, TimingSettings};
 use crate::core::sfx::{PlaySfx, Sfx};
@@ -22,7 +24,6 @@ use crate::core::tick_track::render_tick_track;
 use crate::core::units::{Millis, Seconds};
 use crate::scenes::file_select::{FileSelectTarget, SelectedStepfile};
 use crate::scenes::{GameScene, SceneFade, scene_accepts_input};
-use bevy::audio::{AudioSinkPlayback, PlaybackMode};
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
@@ -120,7 +121,7 @@ enum PlaySet {
 struct StageAssets<'w> {
     skin: Res<'w, ActiveNoteSkin>,
     asset_server: Res<'w, AssetServer>,
-    audio_sources: ResMut<'w, Assets<AudioSource>>,
+    sounds: ResMut<'w, Assets<Sound>>,
     vial_materials: ResMut<'w, Assets<HealthVialMaterial>>,
 }
 
@@ -341,7 +342,7 @@ fn enter(
 }
 
 fn exit(mut commands: Commands, mut music: ResMut<MusicPlayer>) {
-    music.stop(&mut commands);
+    music.stop();
     commands.remove_resource::<PlaySession>();
     commands.remove_resource::<NoteFieldClock>();
     commands.remove_resource::<SelectedStepfile>();
@@ -445,17 +446,20 @@ fn spawn_audio_tracks(
 ) {
     if let Some(path) = entry.music_path().as_deref().and_then(asset_server_path) {
         let music = assets.asset_server.load(path);
-        commands.spawn_scoped(
-            GameScene::FilePlayer,
-            bsn! {
-                MusicTrack
-                AudioPlayer({music})
-                PlaybackSettings {
-                    mode: {PlaybackMode::Once},
+        commands
+            .spawn_scoped(
+                GameScene::FilePlayer,
+                bsn! {
+                    MusicTrack
+                },
+            )
+            .insert(SoundPlayer {
+                sound: music,
+                options: SoundOptions {
                     paused: true,
-                }
-            },
-        );
+                    ..default()
+                },
+            });
     } else {
         info!(
             "no music file for \"{}\", playing silent",
@@ -470,21 +474,24 @@ fn spawn_audio_tracks(
         config.tick_volume,
     ) {
         Ok(bytes) => {
-            let handle = assets.audio_sources.add(AudioSource {
+            let handle = assets.sounds.add(Sound {
                 bytes: bytes.into(),
             });
-            commands.spawn_scoped(
-                GameScene::FilePlayer,
-                bsn! {
-                    TickTrack
-                    AudioPlayer({handle})
-                    PlaybackSettings {
-                        mode: {PlaybackMode::Once},
+            commands
+                .spawn_scoped(
+                    GameScene::FilePlayer,
+                    bsn! {
+                        TickTrack
+                    },
+                )
+                .insert(SoundPlayer {
+                    sound: handle,
+                    options: SoundOptions {
                         paused: true,
                         muted: true,
-                    }
-                },
-            );
+                        ..default()
+                    },
+                });
         }
         Err(error) => warn!("could not render tick track: {error}"),
     }
@@ -597,12 +604,13 @@ fn update_autosync_status(
     }
 }
 
-fn toggle_tick_audio(actions: Actions, mut tick: Query<&mut AudioSink, With<TickTrack>>) {
+fn toggle_tick_audio(actions: Actions, mut tick: Query<&mut SoundChannel, With<TickTrack>>) {
     if !actions.just_pressed(GameAction::ToggleTickAudio) {
         return;
     }
-    for mut sink in &mut tick {
-        sink.toggle_mute();
+    for mut channel in &mut tick {
+        let muted = channel.is_muted();
+        channel.set_muted(!muted);
     }
 }
 
@@ -665,18 +673,18 @@ fn adjust_timing_offsets(
 fn finish_when_complete(
     mut session: ResMut<PlaySession>,
     selected: Res<SelectedStepfile>,
-    music: Query<&AudioSink, With<MusicTrack>>,
-    tick: Query<&AudioSink, With<TickTrack>>,
+    music: Query<&SoundChannel, With<MusicTrack>>,
+    tick: Query<&SoundChannel, With<TickTrack>>,
     mut commands: Commands,
     mut fade: ResMut<SceneFade>,
 ) {
     if session.finished || session.graded_count < session.rows.len() {
         return;
     }
-    let audio_done = if let Ok(sink) = music.single() {
-        sink.empty()
-    } else if let Ok(sink) = tick.single() {
-        sink.empty()
+    let audio_done = if let Ok(channel) = music.single() {
+        channel.is_finished()
+    } else if let Ok(channel) = tick.single() {
+        channel.is_finished()
     } else {
         session.clock.music.position().0 > session.last_note_time.0 + 2.0
     };

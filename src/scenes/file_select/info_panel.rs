@@ -19,17 +19,16 @@ pub(super) struct InfoPanel;
 /// Rebuilt from scratch: despawn-and-respawn beats mutating a panel of
 /// text entities in place.
 pub(super) fn refresh_info_panel(
-    mut wheel: ResMut<Wheel>,
+    wheel: Res<Wheel>,
     library: Res<StepfileLibrary>,
     preferred: Res<PreferredDifficulty>,
     asset_server: Res<AssetServer>,
     panels: Query<Entity, With<InfoPanel>>,
     mut commands: Commands,
 ) {
-    if !wheel.dirty {
+    if !wheel.just_settled {
         return;
     }
-    wheel.dirty = false;
     for panel in &panels {
         commands.entity(panel).despawn();
     }

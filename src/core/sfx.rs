@@ -1,4 +1,5 @@
-use bevy::audio::PlaybackMode;
+use crate::core::audio::Sound;
+use crate::core::platform::{AudioChannel, SoundOptions, platform};
 use bevy::prelude::*;
 use std::collections::HashMap;
 use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
@@ -37,7 +38,7 @@ impl Plugin for SfxPlugin {
 }
 
 #[derive(Resource)]
-struct SfxLibrary(HashMap<Sfx, Handle<AudioSource>>);
+struct SfxLibrary(HashMap<Sfx, Handle<Sound>>);
 
 fn load_sfx(mut commands: Commands, asset_server: Res<AssetServer>) {
     let handles = Sfx::iter()
@@ -46,16 +47,22 @@ fn load_sfx(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.insert_resource(SfxLibrary(handles));
 }
 
+/// Fired sounds live in the local pool until they finish, so their
+/// channels stay alive for as long as they play.
 fn play_requested_sfx(
     mut requests: MessageReader<PlaySfx>,
     library: Res<SfxLibrary>,
-    mut commands: Commands,
+    sounds: Res<Assets<Sound>>,
+    mut live: Local<Vec<Box<dyn AudioChannel>>>,
 ) {
+    live.retain(|channel| !channel.is_finished());
     for PlaySfx(sfx) in requests.read() {
-        let source = library.0[sfx].clone();
-        commands.spawn_scene(bsn! {
-            AudioPlayer({source})
-            PlaybackSettings { mode: {PlaybackMode::Despawn} }
-        });
+        let Some(sound) = sounds.get(&library.0[sfx]) else {
+            continue;
+        };
+        match platform().open_audio(sound.bytes.clone(), SoundOptions::default()) {
+            Ok(channel) => live.push(channel),
+            Err(error) => warn!("sfx cannot play: {error}"),
+        }
     }
 }
