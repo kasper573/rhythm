@@ -1,5 +1,6 @@
 mod background;
 mod clock;
+mod grade_text;
 mod grading;
 mod tuning;
 mod visuals;
@@ -69,6 +70,7 @@ impl Plugin for FilePlayerPlugin {
                 grading::plugin,
                 tuning::plugin,
                 visuals::plugin,
+                grade_text::plugin,
                 background::plugin,
             ))
             .configure_sets(
@@ -122,6 +124,7 @@ enum PlaySet {
 struct StageAssets<'w, 's> {
     skins: Res<'w, ActiveNoteSkins>,
     asset_server: Res<'w, AssetServer>,
+    images: ResMut<'w, Assets<Image>>,
     sounds: ResMut<'w, Assets<Sound>>,
     vial_materials: ResMut<'w, Assets<HealthVialMaterial>>,
     machine: Res<'w, MachineSettings>,
@@ -279,9 +282,6 @@ pub(super) struct TickTrack;
 #[derive(Component, Clone, Copy, FromTemplate)]
 pub struct ForPlayer(pub PlayerId);
 
-#[derive(Component, Default, Clone)]
-pub(super) struct GradeText;
-
 /// The combo readout, carrying its own bounce animation state.
 #[derive(Component, Default, Clone)]
 pub(super) struct ComboText {
@@ -365,6 +365,14 @@ fn enter(
             .entity(vial)
             .insert((ForPlayer(player), DespawnOnExit(GameScene::FilePlayer)));
         spawn_stage_hud(&mut commands, player, origin_x);
+        grade_text::spawn(
+            &mut commands,
+            &assets.asset_server,
+            &mut assets.images,
+            player,
+            origin_x,
+            player_settings[player].grade_layer,
+        );
 
         let (rows, mines, stage_last) = spawn_chart(
             &mut commands,
@@ -683,7 +691,8 @@ fn spawn_audio_tracks(
     }
 }
 
-/// The per-stage readouts, centered over the stage's field.
+/// The per-stage combo readout, centered over the stage's field. The grade
+/// text is a shader rig spawned separately by [`grade_text::spawn`].
 fn spawn_stage_hud(commands: &mut Commands, player: PlayerId, origin_x: f32) {
     commands.spawn_scoped(
         GameScene::FilePlayer,
@@ -695,17 +704,6 @@ fn spawn_stage_hud(commands: &mut Commands, player: PlayerId, origin_x: f32) {
             TextColor(Color::WHITE)
             at(origin_x, -60.0, 5.0)
             Visibility::Hidden
-        },
-    );
-    commands.spawn_scoped(
-        GameScene::FilePlayer,
-        bsn! {
-            GradeText
-            ForPlayer({player})
-            game_font(50.0)
-            Text2d("")
-            TextColor(Color::srgba(1.0, 1.0, 1.0, 0.0))
-            at(origin_x, 10.0, 6.0)
         },
     );
 }

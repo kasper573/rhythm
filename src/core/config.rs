@@ -178,6 +178,27 @@ pub struct FixedGradeDef {
     pub color: Color,
     pub health_offset: i32,
     pub points: u32,
+    #[serde(default)]
+    pub glow: GradeGlow,
+}
+
+/// The grade text's shader shimmer (see `scenes::file_player::grade_text`):
+/// an additive glow in `color`, oscillating at `strength` (0 = plain text).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct GradeGlow {
+    #[serde(deserialize_with = "hex_color")]
+    pub color: Color,
+    pub strength: f32,
+}
+
+impl Default for GradeGlow {
+    fn default() -> GradeGlow {
+        GradeGlow {
+            color: Color::WHITE,
+            strength: 0.0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -328,6 +349,8 @@ pub struct DynamicGradeDef {
     pub health_offset: i32,
     /// Score points earned when this grade is given.
     pub points: u32,
+    #[serde(default)]
+    pub glow: GradeGlow,
 }
 
 /// In the config: `false`, `true`, or `"ms"`.

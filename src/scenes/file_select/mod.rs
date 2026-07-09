@@ -76,7 +76,7 @@ impl Plugin for FileSelectPlugin {
                         .run_if(scene_accepts_input.and_then(in_state(FileSelectFocus::Browse))),
                     fit_wheel_rows,
                     animate_wheel,
-                    ratings::pin_rating_column,
+                    ratings::pack_player_ratings,
                     ratings::position_rating_labels,
                     settle_wheel,
                     bgm::drive_wheel_bgm,

@@ -3,11 +3,11 @@ use crate::core::input::Keymap;
 use crate::core::note_field::{NoteSpeed, Perspective};
 use crate::core::persist::{load_user_data, save_user_data};
 use crate::core::player::{PerPlayer, PlayerId};
-use crate::core::units::{Millis, Seconds};
+use crate::core::units::{Millis, Percent, Seconds};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::ops::{Index, IndexMut};
-use strum::IntoEnumIterator;
+use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
 
 /// Settings that belong to the machine rather than to either player: the
 /// key bindings for both player slots, the rig's timing calibration, and
@@ -77,6 +77,18 @@ pub struct PlayerOptions {
     pub note_skin: String,
     pub note_speed: NoteSpeed,
     pub perspective: Perspective,
+    pub grade_layer: GradeLayer,
+    /// Grade text height as a percentage down the screen: 0 hugs the top
+    /// edge, 100 the bottom edge, ignoring the stage's edge padding.
+    pub grade_position: Percent,
+}
+
+/// Whether the grade text pops out behind the arrows or in front of them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, EnumIter, IntoStaticStr)]
+pub enum GradeLayer {
+    Behind,
+    #[strum(serialize = "In front")]
+    InFront,
 }
 
 /// The synchronization model:
@@ -168,6 +180,8 @@ struct PlayerOptionsFile {
     note_skin: Option<String>,
     note_speed: Option<NoteSpeed>,
     perspective: Option<Perspective>,
+    grade_layer: Option<GradeLayer>,
+    grade_position: Option<Percent>,
 }
 
 const MACHINE_SETTINGS_FILE: &str = "machine_settings.json";
@@ -220,6 +234,12 @@ fn load_player_settings(defaults: &SettingsDefaults) -> PlayerSettings {
             perspective: file
                 .perspective
                 .unwrap_or(defaults.player_options.perspective),
+            grade_layer: file
+                .grade_layer
+                .unwrap_or(defaults.player_options.grade_layer),
+            grade_position: file
+                .grade_position
+                .unwrap_or(defaults.player_options.grade_position),
         }
     };
     PlayerSettings(PerPlayer {

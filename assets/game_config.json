@@ -29,7 +29,9 @@
     "player_options": {
       "note_skin": "ddrextreme_note",
       "note_speed": { "Dynamic": 1 },
-      "perspective": "None"
+      "perspective": "None",
+      "grade_layer": "Behind",
+      "grade_position": 50
     },
     "timing_options": {
       "machine_offset": -100,
@@ -63,7 +65,8 @@
         "color": "#FFFFFF",
         "arrow_flash": "#FFFFFF",
         "health_offset": 2,
-        "points": 10
+        "points": 10,
+        "glow": { "color": "#66CCFF", "strength": 1.0 }
       },
       {
         "name": "Perfect",
@@ -72,7 +75,8 @@
         "timing_feedback": true,
         "arrow_flash": "#FFFF40",
         "health_offset": 2,
-        "points": 9
+        "points": 9,
+        "glow": { "color": "#FFFFFF", "strength": 0.85 }
       },
       {
         "name": "Great",
@@ -81,7 +85,8 @@
         "timing_feedback": true,
         "arrow_flash": "#00F2F2",
         "health_offset": 1,
-        "points": 5
+        "points": 5,
+        "glow": { "color": "#FFFFFF", "strength": 0.5 }
       },
       {
         "name": "Good",
@@ -89,7 +94,8 @@
         "color": "#59A6F2",
         "timing_feedback": true,
         "health_offset": 0,
-        "points": 2
+        "points": 2,
+        "glow": { "color": "#FFFFFF", "strength": 0.3 }
       },
       {
         "name": "Bad",
@@ -98,7 +104,8 @@
         "timing_feedback": true,
         "breaks_combo": true,
         "health_offset": -4,
-        "points": 0
+        "points": 0,
+        "glow": { "color": "#FFFFFF", "strength": 0.15 }
       }
     ],
     "fixed": {
@@ -106,7 +113,8 @@
         "name": "Miss",
         "color": "#F23F3F",
         "health_offset": -8,
-        "points": 0
+        "points": 0,
+        "glow": { "color": "#FF6666", "strength": 0.4 }
       },
       "ok": {
         "name": "OK",

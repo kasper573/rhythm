@@ -1,4 +1,4 @@
-use super::{PreferredDifficulty, WHEEL_X, Wheel, WheelEntry, slot_entry, slot_x};
+use super::{PreferredDifficulty, Wheel, WheelEntry, slot_entry};
 use crate::core::at;
 use crate::core::config::GameConfig;
 use crate::core::font::game_font;
@@ -11,9 +11,9 @@ use strum::IntoEnumIterator;
 
 /// On-screen height of the wheel's rating images (native art is 120px).
 const RATING_HEIGHT: f32 = 38.0;
-/// Right edge of the rating column in row-local coordinates at zero
-/// bulge; [`pin_rating_column`] cancels the bulge so the column stays
-/// fixed on screen while the bars slide beneath it.
+/// Right edge of the rating column in row-local coordinates; the ratings
+/// are children of their wheel row, so they ride it at this inset from its
+/// center as it scrolls and bulges.
 const RATING_RIGHT_X: f32 = 270.0;
 /// Width reserved per player's rating in versus, where both are inline:
 /// wide enough for the widest rating art at [`RATING_HEIGHT`].
@@ -61,12 +61,13 @@ pub(super) fn slot_ratings(slot: usize) -> Vec<impl Scene + use<>> {
         .collect()
 }
 
-pub(super) fn pin_rating_column(
+/// Packs each player's rating into its row's rating column: in versus both
+/// players' ratings sit inline, the last active player's at the right edge
+/// and earlier players stacked to its left.
+pub(super) fn pack_player_ratings(
     wheel: Res<Wheel>,
     mut ratings: Query<(&SlotRating, &mut Transform)>,
 ) {
-    // Ratings pack right-to-left in player order, so the last active
-    // player's sits at the column's right edge.
     for (rating, mut transform) in &mut ratings {
         let position = wheel
             .players
@@ -74,8 +75,7 @@ pub(super) fn pin_rating_column(
             .position(|player| *player == rating.player)
             .unwrap_or(0);
         let packed = (wheel.players.len() - 1 - position) as f32 * RATING_SLOT_WIDTH;
-        let bulge = slot_x(rating.slot, wheel.slots, wheel.scroll_offset) - WHEEL_X;
-        let x = RATING_RIGHT_X - bulge - packed;
+        let x = RATING_RIGHT_X - packed;
         if transform.translation.x != x {
             transform.translation.x = x;
         }

@@ -1,7 +1,5 @@
-use super::{
-    ComboText, ForPlayer, GradeText, HoldOutcome, OffsetOsd, PlaySession, PlaySet, RowGraded,
-};
-use crate::core::config::{GameConfig, Grade, RowOutcome, TimingFeedback};
+use super::{ComboText, ForPlayer, HoldOutcome, OffsetOsd, PlaySession, PlaySet, RowGraded};
+use crate::core::config::GameConfig;
 use crate::core::health_vial::HealthVial;
 use crate::core::input::Actions;
 use crate::core::note_field::{
@@ -20,7 +18,7 @@ pub(super) fn plugin(app: &mut App) {
         )
         .add_systems(
             Update,
-            (update_grade_texts, update_combo_texts, run_offset_osd)
+            (update_combo_texts, run_offset_osd)
                 .chain()
                 .in_set(PlaySet::Present),
         );
@@ -106,58 +104,6 @@ fn sync_note_field(
             }
         }
     }
-}
-
-fn update_grade_texts(
-    time: Res<Time>,
-    config: Res<GameConfig>,
-    mut graded: MessageReader<RowGraded>,
-    mut labels: Query<(&ForPlayer, &mut Text2d, &mut TextColor), With<GradeText>>,
-) {
-    for message in graded.read() {
-        for (owner, mut text, mut color) in &mut labels {
-            if owner.0 != message.player {
-                continue;
-            }
-            let (value, base) = grade_display(&config, message.outcome);
-            text.0 = value;
-            color.0 = base.with_alpha(1.0);
-        }
-    }
-    // Visible while the player keeps hitting arrows, gone within a second
-    // once they stop.
-    for (_, _, mut color) in &mut labels {
-        if color.0.alpha() > 0.0 {
-            let alpha = (color.0.alpha() - time.delta_secs()).max(0.0);
-            color.0.set_alpha(alpha);
-        }
-    }
-}
-
-/// The grade text and color for an outcome. Grades opting into timing
-/// feedback mark the side of the perfect moment the input fell on: early
-/// feedback leads the name, late feedback trails it.
-fn grade_display(config: &GameConfig, outcome: RowOutcome) -> (String, Color) {
-    let RowOutcome::Hit { error } = outcome else {
-        let miss = &config.grading.fixed.miss;
-        return (miss.name.clone(), miss.color);
-    };
-    let Grade::Hit(grade) = config.grade(outcome) else {
-        unreachable!("hits always grade into a timed grade");
-    };
-    let definition = &config.grading.dynamic[grade.0];
-    let name = &definition.name;
-    let early = error.0 > 0.0;
-    // Displayed offset is input-relative: negative = early, positive = late.
-    let offset_ms = (-error.to_millis()).round() as i64;
-    let text = match definition.timing_feedback {
-        TimingFeedback::Off => name.clone(),
-        TimingFeedback::Sign if early => format!("-{name}"),
-        TimingFeedback::Sign => format!("{name}-"),
-        TimingFeedback::Millis if early => format!("({offset_ms}ms) {name}"),
-        TimingFeedback::Millis => format!("{name} (+{offset_ms}ms)"),
-    };
-    (text, definition.color)
 }
 
 const COMBO_BOUNCE: Seconds = Seconds(0.18);

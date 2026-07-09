@@ -1,5 +1,4 @@
-use super::{FileSelectFocus, STATS_TEXT};
-use crate::core::at;
+use super::FileSelectFocus;
 use crate::core::config::GameConfig;
 use crate::core::font::game_font;
 use crate::core::input::{Actions, GameAction, NavPulse, StepDirection};
@@ -11,11 +10,10 @@ use crate::core::note_field::{
 use crate::core::note_skin::{ActiveNoteSkins, NoteSkinLibrary};
 use crate::core::player::{PlayMode, PlayerId};
 use crate::core::scene_flow::SpawnScoped;
-use crate::core::settings::{MachineSettings, PlayerOptions, PlayerSettings};
+use crate::core::settings::{GradeLayer, MachineSettings, PlayerOptions, PlayerSettings};
 use crate::core::sfx::{PlaySfx, Sfx};
 use crate::core::stepfile::MusicPlayer;
-use crate::core::units::{Beat, Seconds};
-use crate::scenes::GameScene;
+use crate::core::units::{Beat, Percent, Seconds};
 use bevy::ecs::query::QueryFilter;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
@@ -26,14 +24,9 @@ use strum::{EnumCount, EnumIter, IntoEnumIterator, IntoStaticStr};
 /// an edge-to-edge stripe over the vertical center of the file select,
 /// which stays mounted underneath. One options panel per active player —
 /// P1 to the left, P2 to the right — each driven by its player's own pad.
-/// Also keeps the options summary next to the wheel current.
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(OnEnter(FileSelectFocus::PlayerOptions), enter)
         .add_systems(OnExit(FileSelectFocus::PlayerOptions), exit_previews)
-        .add_systems(
-            Update,
-            refresh_summary.run_if(in_state(GameScene::FileSelect)),
-        )
         .add_systems(
             Update,
             (
@@ -345,64 +338,6 @@ fn animate_transition(
     }
 }
 
-/// Upserts the options summary shown next to the wheel — one line per
-/// active player, tagged when both play, e.g. `P1  Dynamic 2x · DDREx Note`.
-fn refresh_summary(
-    mode: Res<PlayMode>,
-    settings: Res<PlayerSettings>,
-    skins: Res<NoteSkinLibrary>,
-    text: Option<Single<&mut Text2d, With<OptionsSummary>>>,
-    mut commands: Commands,
-) {
-    let Some(mut text) = text else {
-        let lines = summary(*mode, &settings, &skins);
-        commands.spawn_scoped(
-            GameScene::FileSelect,
-            bsn! {
-                OptionsSummary
-                game_font(22.0)
-                Text2d({lines})
-                TextColor({STATS_TEXT})
-                at(-320.0, -150.0, 5.0)
-            },
-        );
-        return;
-    };
-    if settings.is_changed() {
-        text.0 = summary(*mode, &settings, &skins);
-    }
-}
-
-fn summary(mode: PlayMode, settings: &PlayerSettings, skins: &NoteSkinLibrary) -> String {
-    let tagged = mode.players().len() > 1;
-    mode.players()
-        .iter()
-        .map(|player| {
-            let options = &settings[*player];
-            let speed = match options.note_speed {
-                NoteSpeed::Constant(value) => {
-                    format!("Constant {}", format_modifier(value, options.note_speed))
-                }
-                NoteSpeed::Dynamic(value) => {
-                    format!("Dynamic {}", format_modifier(value, options.note_speed))
-                }
-            };
-            let skin = skins
-                .skins
-                .iter()
-                .find(|skin| skin.name == options.note_skin)
-                .map(|skin| skin.display_name.clone())
-                .unwrap_or_else(|| options.note_skin.clone());
-            if tagged {
-                format!("{}  {speed} · {skin}", player.label())
-            } else {
-                format!("{speed} · {skin}")
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 fn row_color(active: bool) -> Color {
     if active { ACTIVE_COLOR } else { INACTIVE_COLOR }
 }
@@ -416,7 +351,15 @@ enum OptionRow {
     #[strum(serialize = "Note Skin")]
     NoteSkin,
     Perspective,
+    #[strum(serialize = "Grade Layer")]
+    GradeLayer,
+    #[strum(serialize = "Grade Position")]
+    GradePosition,
 }
+
+/// The grade position steps between the top and bottom screen edges in
+/// tenths, shown as a percentage.
+const GRADE_POSITION_STEP: Percent = Percent(10.0);
 
 fn row(index: usize) -> OptionRow {
     OptionRow::iter().nth(index).expect("row index is wrapped")
@@ -460,9 +403,6 @@ struct ValueText {
     player: PlayerId,
     row: usize,
 }
-
-#[derive(Component, Default, Clone)]
-struct OptionsSummary;
 
 /// Steps the row's value; the ends do not wrap. Switching the speed type
 /// resets the modifier to the new type's default — they are one value in
@@ -536,6 +476,32 @@ fn change_value(
             options.perspective = *perspective;
             true
         }
+        OptionRow::GradeLayer => {
+            let all: Vec<GradeLayer> = GradeLayer::iter().collect();
+            let index = all
+                .iter()
+                .position(|layer| *layer == options.grade_layer)
+                .unwrap_or(0);
+            let stepped = index.saturating_add_signed(delta as isize);
+            let Some(layer) = all.get(stepped) else {
+                return false;
+            };
+            if stepped == index {
+                return false;
+            }
+            options.grade_layer = *layer;
+            true
+        }
+        OptionRow::GradePosition => {
+            let stepped = Percent(
+                (options.grade_position.0 + delta as f32 * GRADE_POSITION_STEP.0).clamp(0.0, 100.0),
+            );
+            if stepped == options.grade_position {
+                return false;
+            }
+            options.grade_position = stepped;
+            true
+        }
     }
 }
 
@@ -563,6 +529,8 @@ fn row_value(
             .map(|skin| skin.display_name.clone())
             .unwrap_or_else(|| options.note_skin.clone()),
         OptionRow::Perspective => <&str>::from(options.perspective).to_string(),
+        OptionRow::GradeLayer => <&str>::from(options.grade_layer).to_string(),
+        OptionRow::GradePosition => format!("{:.0}%", options.grade_position.0),
     }
 }
 
