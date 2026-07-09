@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2024"
 default-run = "rhythm"
 
+[features]
+# Span instrumentation for the bench binary's --profile capture; bevy's
+# debug feature puts real system names on the spans.
+profile = ["bevy/trace", "bevy/debug", "dep:tracing-chrome"]
+
 [dependencies]
 bevy = { version = "0.19", default-features = false, features = [
     # default features minus bevy_gilrs (gamepad), which needs libudev headers
@@ -50,6 +55,7 @@ rodio = { version = "0.22", default-features = false, features = [
     "wav",
 ] }
 tiny_http = "0.12"
+tracing-chrome = { version = "0.7", optional = true }
 video-rs = { version = "0.11.0", features = ["ndarray"] }
 walkdir = "2"
 

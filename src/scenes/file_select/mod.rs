@@ -561,9 +561,15 @@ fn animate_wheel(
             wheel.scroll_offset = 0.0;
         }
     }
+    // Assign only on change: an idle wheel must not dirty two transforms
+    // per slot every frame.
     for (slot, mut transform) in &mut roots {
-        transform.translation.x = slot_x(slot.0, wheel.slots, wheel.scroll_offset);
-        transform.translation.y = slot_y(slot.0, wheel.slots, wheel.scroll_offset);
+        let x = slot_x(slot.0, wheel.slots, wheel.scroll_offset);
+        let y = slot_y(slot.0, wheel.slots, wheel.scroll_offset);
+        if transform.translation.x != x || transform.translation.y != y {
+            transform.translation.x = x;
+            transform.translation.y = y;
+        }
     }
 }
 
@@ -573,7 +579,10 @@ fn pin_rating_column(
 ) {
     for (slot, mut transform) in &mut ratings {
         let bulge = slot_x(slot.0, wheel.slots, wheel.scroll_offset) - WHEEL_X;
-        transform.translation.x = RATING_RIGHT_X - bulge;
+        let x = RATING_RIGHT_X - bulge;
+        if transform.translation.x != x {
+            transform.translation.x = x;
+        }
     }
 }
 

@@ -128,12 +128,22 @@ pub struct NavPulse {
     pub action: GameAction,
 }
 
+/// The pulse emitter's slot in `PreUpdate`: synthetic key state (the
+/// bench scenarios) must land after bevy's input update and before this
+/// set to register on the frame it was written.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct NavPulseSystems;
+
 pub struct InputPlugin;
 
 impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
-        app.add_message::<NavPulse>()
-            .add_systems(PreUpdate, emit_nav_pulses.after(bevy::input::InputSystems));
+        app.add_message::<NavPulse>().add_systems(
+            PreUpdate,
+            emit_nav_pulses
+                .in_set(NavPulseSystems)
+                .after(bevy::input::InputSystems),
+        );
     }
 }
 

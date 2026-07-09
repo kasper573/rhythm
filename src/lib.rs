@@ -1,6 +1,7 @@
 pub mod core;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod native;
+pub mod profiling;
 pub mod scenes;
 #[cfg(target_arch = "wasm32")]
 pub mod web;
@@ -21,63 +22,70 @@ use bevy::prelude::*;
 use bevy::ui::UiScale;
 
 pub fn run(platform: impl core::platform::Platform + 'static) {
+    app(platform).run();
+}
+
+/// The complete game, exactly as [`run`] plays it — also the base the
+/// bench binary drives, so measurements exercise the shipped code paths.
+pub fn app(platform: impl core::platform::Platform + 'static) -> App {
     core::platform::install(platform);
     let config = GameConfig::load();
     let settings_plugin = SettingsPlugin {
         default_stepfile: config.default_stepfile_options.clone(),
         default_timing: config.timing_defaults.clone(),
     };
-    App::new()
-        .add_plugins(
-            DefaultPlugins
-                .set(WindowPlugin {
-                    primary_window: Some(Window {
-                        title: "Rhythm".to_string(),
-                        resolution: SCREEN_SIZE.as_uvec2().into(),
-                        // Inputs are graded at frame granularity; vsync would
-                        // quantize presses to the display refresh (+0..16ms of
-                        // one-sided timing error at 60Hz).
-                        present_mode: bevy::window::PresentMode::AutoNoVsync,
-                        fit_canvas_to_parent: true,
-                        ..default()
-                    }),
-                    ..default()
-                })
-                .set(bevy::log::LogPlugin {
-                    // The text layouter's line segmenter ships without the
-                    // CJK dictionary, so laying out a Japanese title warns
-                    // "no segmentation model" on every relayout. The model
-                    // only matters for wrapping CJK text mid-word, which
-                    // never happens here — all our text is unwrapped.
-                    filter: format!("{},icu_provider=error", bevy::log::DEFAULT_FILTER),
+    let mut app = App::new();
+    app.add_plugins(
+        DefaultPlugins
+            .set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "Rhythm".to_string(),
+                    resolution: SCREEN_SIZE.as_uvec2().into(),
+                    // Inputs are graded at frame granularity; vsync would
+                    // quantize presses to the display refresh (+0..16ms of
+                    // one-sided timing error at 60Hz).
+                    present_mode: bevy::window::PresentMode::AutoNoVsync,
+                    fit_canvas_to_parent: true,
                     ..default()
                 }),
-        )
-        .insert_resource(ClearColor(CLEAR_COLOR))
-        .insert_resource(config)
-        .insert_resource(StepfileLibrary::scan())
-        .add_plugins((
-            settings_plugin,
-            crate::core::audio::AudioPlugin,
-            NoteSkinPlugin,
-            NoteFieldPlugin,
-            HealthVialPlugin,
-            HighScoresPlugin,
-            MusicPlayerPlugin,
-            InputPlugin,
-            SfxPlugin,
-            scenes::ScenesPlugin,
-        ))
-        .add_systems(Startup, spawn_camera)
-        .add_systems(
-            Update,
-            (
-                scale_ui_to_window,
-                size_viewport_covers,
-                scenes::stream_default_backgrounds,
-            ),
-        )
-        .run();
+                ..default()
+            })
+            .set(bevy::log::LogPlugin {
+                // The text layouter's line segmenter ships without the
+                // CJK dictionary, so laying out a Japanese title warns
+                // "no segmentation model" on every relayout. The model
+                // only matters for wrapping CJK text mid-word, which
+                // never happens here — all our text is unwrapped.
+                filter: format!("{},icu_provider=error", bevy::log::DEFAULT_FILTER),
+                custom_layer: profiling::layer,
+                ..default()
+            }),
+    )
+    .insert_resource(ClearColor(CLEAR_COLOR))
+    .insert_resource(config)
+    .insert_resource(StepfileLibrary::scan())
+    .add_plugins((
+        settings_plugin,
+        crate::core::audio::AudioPlugin,
+        NoteSkinPlugin,
+        NoteFieldPlugin,
+        HealthVialPlugin,
+        HighScoresPlugin,
+        MusicPlayerPlugin,
+        InputPlugin,
+        SfxPlugin,
+        scenes::ScenesPlugin,
+    ))
+    .add_systems(Startup, spawn_camera)
+    .add_systems(
+        Update,
+        (
+            scale_ui_to_window,
+            size_viewport_covers,
+            scenes::stream_default_backgrounds,
+        ),
+    );
+    app
 }
 
 /// The game is designed on a fixed 1280x720 canvas and scales uniformly

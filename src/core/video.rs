@@ -1,5 +1,6 @@
 use crate::core::platform::{VideoSource, platform};
 use crate::core::units::Seconds;
+use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use std::path::Path;
@@ -15,7 +16,6 @@ pub struct VideoStream {
     /// Clock time at which the video starts.
     start_time: Seconds,
     source: Box<dyn VideoSource>,
-    size: (u32, u32),
 }
 
 impl VideoStream {
@@ -28,12 +28,11 @@ impl VideoStream {
         let source = platform().open_video(path, looping)?;
         // A placeholder until the first frame arrives: some platforms only
         // learn a video's dimensions after opening it.
-        let image = images.add(sized_image(1, 1, vec![0, 0, 0, 255]));
+        let image = images.add(frame_image(1, 1, vec![0, 0, 0, 255]));
         Ok(VideoStream {
             image,
             start_time,
             source,
-            size: (1, 1),
         })
     }
 
@@ -42,19 +41,17 @@ impl VideoStream {
         let Some(frame) = self.source.poll(clock - self.start_time) else {
             return;
         };
-        let Some(mut image) = images.get_mut(&self.image) else {
-            return;
-        };
-        if self.size == (frame.width, frame.height) {
-            image.data = Some(frame.rgba);
-        } else {
-            self.size = (frame.width, frame.height);
-            *image = sized_image(frame.width, frame.height, frame.rgba);
-        }
+        let _ = images.insert(
+            self.image.id(),
+            frame_image(frame.width, frame.height, frame.rgba),
+        );
     }
 }
 
-fn sized_image(width: u32, height: u32, rgba: Vec<u8>) -> Image {
+/// Video frames live in the render world only: extraction then moves the
+/// pixels to the render thread instead of cloning megabytes every frame,
+/// and each new frame re-inserts the asset whole.
+fn frame_image(width: u32, height: u32, rgba: Vec<u8>) -> Image {
     Image::new(
         Extent3d {
             width,
@@ -64,6 +61,6 @@ fn sized_image(width: u32, height: u32, rgba: Vec<u8>) -> Image {
         TextureDimension::D2,
         rgba,
         TextureFormat::Rgba8UnormSrgb,
-        Default::default(),
+        RenderAssetUsages::RENDER_WORLD,
     )
 }
