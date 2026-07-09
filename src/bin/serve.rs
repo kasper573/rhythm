@@ -258,6 +258,7 @@ fn mime(path: &Path) -> &'static str {
         "js" => "text/javascript",
         "wasm" => "application/wasm",
         "json" => "application/json",
+        "glb" => "model/gltf-binary",
         "png" => "image/png",
         "jpg" | "jpeg" => "image/jpeg",
         "ogg" => "audio/ogg",

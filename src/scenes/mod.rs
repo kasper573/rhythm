@@ -1,3 +1,4 @@
+pub mod audio_settings;
 pub mod file_player;
 pub mod file_select;
 pub mod keymap;
@@ -23,6 +24,7 @@ pub enum GameScene {
     ModeSelect,
     SettingsMenu,
     Keymap,
+    AudioSettings,
     FileSelect,
     FilePlayer,
     Score,
@@ -123,6 +125,7 @@ impl Plugin for ScenesPlugin {
                 mode_select::ModeSelectPlugin,
                 settings_menu::SettingsMenuPlugin,
                 keymap::KeymapScenePlugin,
+                audio_settings::AudioSettingsPlugin,
                 file_select::FileSelectPlugin,
                 file_player::FilePlayerPlugin,
                 score::ScoreScenePlugin,

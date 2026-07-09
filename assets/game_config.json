@@ -1,6 +1,61 @@
 {
   "wheel_default": ["EXTREME", "Dance Dance Revolution"],
+  "defaults": {
+    "keymap": {
+      "Next": "ArrowDown",
+      "Previous": "ArrowUp",
+      "Reset": "Delete",
+      "P1Left": "ArrowLeft",
+      "P1Down": "ArrowDown",
+      "P1Up": "ArrowUp",
+      "P1Right": "ArrowRight",
+      "P1Select": "Enter",
+      "P1Cancel": "Escape",
+      "P2Left": "KeyA",
+      "P2Down": "KeyS",
+      "P2Up": "KeyW",
+      "P2Right": "KeyD",
+      "P2Select": "KeyQ",
+      "P2Cancel": "KeyE",
+      "ToggleAutoSync": "F5",
+      "ToggleTickAudio": "F6",
+      "DecreaseAudioLatency": "F7",
+      "IncreaseAudioLatency": "F8",
+      "DecreaseVisualDelay": "F9",
+      "IncreaseVisualDelay": "F10",
+      "DecreaseMachineOffset": "F11",
+      "IncreaseMachineOffset": "F12"
+    },
+    "player_options": {
+      "note_skin": "ddrextreme_note",
+      "note_speed": { "Dynamic": 1 },
+      "perspective": "None"
+    },
+    "timing_options": {
+      "machine_offset": -100,
+      "visual_delay": 0,
+      "audio_latency": null
+    },
+    "volume_options": {
+      "master": 1.0,
+      "sfx": 1.0,
+      "music": 1.0
+    }
+  },
+  "stage": {
+    "max_arrow_size": 128,
+    "margin_x": 150,
+    "field_gap_columns": 2.0,
+    "lead_in_seconds": 2.0,
+    "screen_edge_padding": 50
+  },
+  "lane_camera": {
+    "fov_degrees": 45.0,
+    "tilt_degrees": 30.0
+  },
   "grading": {
+    "hold_grace_seconds": 0.25,
+    "roll_grace_seconds": 0.5,
     "dynamic": [
       {
         "name": "Marvelous",
@@ -89,31 +144,6 @@
   },
   "tick_volume": 1.3,
   "note_quants": [4, 8, 12, 16, 24, 32, 48, 64],
-  "default_keymap": {
-    "Next": "ArrowDown",
-    "Previous": "ArrowUp",
-    "Reset": "Delete",
-    "P1Left": "ArrowLeft",
-    "P1Down": "ArrowDown",
-    "P1Up": "ArrowUp",
-    "P1Right": "ArrowRight",
-    "P1Select": "Enter",
-    "P1Cancel": "Escape",
-    "P2Left": "KeyA",
-    "P2Down": "KeyS",
-    "P2Up": "KeyW",
-    "P2Right": "KeyD",
-    "P2Select": "KeyQ",
-    "P2Cancel": "KeyE",
-    "ToggleAutoSync": "F5",
-    "ToggleTickAudio": "F6",
-    "DecreaseAudioLatency": "F7",
-    "IncreaseAudioLatency": "F8",
-    "DecreaseVisualDelay": "F9",
-    "IncreaseVisualDelay": "F10",
-    "DecreaseMachineOffset": "F11",
-    "IncreaseMachineOffset": "F12"
-  },
   "speed_modifiers": {
     "Constant": {
       "options": [150, 300, 500, 700, 850, 1000],
@@ -123,13 +153,5 @@
       "options": [0.25, 0.5, 1, 1.5, 2, 3],
       "default": 1
     }
-  },
-  "default_player_options": {
-    "note_skin": "ddrextreme_note",
-    "note_speed": { "Dynamic": 1 }
-  },
-  "timing_defaults": {
-    "machine_offset": -100,
-    "visual_delay": 0
   }
 }

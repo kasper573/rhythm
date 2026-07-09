@@ -1,5 +1,6 @@
+use crate::core::config::{GameConfig, SettingsDefaults};
 use crate::core::input::Keymap;
-use crate::core::note_field::NoteSpeed;
+use crate::core::note_field::{NoteSpeed, Perspective};
 use crate::core::persist::{load_user_data, save_user_data};
 use crate::core::player::{PerPlayer, PlayerId};
 use crate::core::units::{Millis, Seconds};
@@ -9,18 +10,51 @@ use std::ops::{Index, IndexMut};
 use strum::IntoEnumIterator;
 
 /// Settings that belong to the machine rather than to either player: the
-/// key bindings for both player slots and the rig's timing calibration.
-/// Any mutation is automatically persisted to disk.
+/// key bindings for both player slots, the rig's timing calibration, and
+/// its playback volumes. Any mutation is automatically persisted to disk.
 #[derive(Resource, Debug, Clone, PartialEq, Serialize)]
 pub struct MachineSettings {
     pub keymap: Keymap,
     pub timing: TimingSettings,
+    pub volume: VolumeSettings,
+}
+
+/// Playback volumes, each `0..=1`: `master` scales everything, the others
+/// their own bus.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VolumeSettings {
+    pub master: f32,
+    pub sfx: f32,
+    pub music: f32,
+}
+
+impl VolumeSettings {
+    /// The gain music playback runs at.
+    pub fn music_gain(&self) -> f32 {
+        self.master * self.music
+    }
+
+    /// The gain sound effects (and the tick track) run at.
+    pub fn sfx_gain(&self) -> f32 {
+        self.master * self.sfx
+    }
 }
 
 /// Each player slot's own presentation options, indexed by player. Any
 /// mutation is automatically persisted, one file per player.
 #[derive(Resource, Debug, Clone, PartialEq)]
 pub struct PlayerSettings(PerPlayer<PlayerOptions>);
+
+impl PlayerSettings {
+    /// Both players on one set of options — for tools that run without
+    /// [`SettingsPlugin`] (nothing is persisted).
+    pub fn uniform(options: PlayerOptions) -> PlayerSettings {
+        PlayerSettings(PerPlayer {
+            p1: options.clone(),
+            p2: options,
+        })
+    }
+}
 
 impl Index<PlayerId> for PlayerSettings {
     type Output = PlayerOptions;
@@ -42,6 +76,7 @@ pub struct PlayerOptions {
     /// Folder name of the note skin under `assets/note_skins`.
     pub note_skin: String,
     pub note_speed: NoteSpeed,
+    pub perspective: Perspective,
 }
 
 /// The synchronization model:
@@ -56,8 +91,7 @@ pub struct PlayerOptions {
 /// latency between queue and speakers is measured on first play and stored
 /// here. `machine_offset` shifts the graded timeline to compensate for the
 /// rig as a whole; `visual_delay` shifts only what is drawn.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TimingSettings {
     pub machine_offset: Millis,
     pub visual_delay: Millis,
@@ -87,28 +121,53 @@ impl TimingSettings {
     }
 }
 
-pub struct SettingsPlugin {
-    /// Player options for settings files that predate the field.
-    pub default_options: PlayerOptions,
-    /// Timing for settings files that predate the field.
-    pub default_timing: TimingSettings,
-}
+/// Loads the settings on startup, backfilling anything missing — whole
+/// files or single fields — from the config's [`SettingsDefaults`]: the
+/// code holds no default values of its own. Requires [`GameConfig`] to
+/// already be inserted.
+pub struct SettingsPlugin;
 
 impl Plugin for SettingsPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(load_machine_settings(self.default_timing.clone()))
-            .insert_resource(load_player_settings(self.default_options.clone()))
+        let defaults = app.world().resource::<GameConfig>().defaults.clone();
+        app.insert_resource(load_machine_settings(&defaults))
+            .insert_resource(load_player_settings(&defaults))
             .add_systems(Update, (save_machine_settings, save_player_settings));
     }
 }
 
-/// The on-disk shape: every section optional, so files written by older
-/// versions still load.
+/// The on-disk shape: every field optional, so files written by older
+/// versions still load — absent fields resolve to the config defaults.
 #[derive(Default, Deserialize)]
 #[serde(default)]
 struct MachineSettingsFile {
-    keymap: Keymap,
-    timing: Option<TimingSettings>,
+    keymap: Option<Keymap>,
+    timing: TimingSettingsFile,
+    volume: VolumeSettingsFile,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct TimingSettingsFile {
+    machine_offset: Option<Millis>,
+    visual_delay: Option<Millis>,
+    audio_latency: Option<Millis>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct VolumeSettingsFile {
+    master: Option<f32>,
+    sfx: Option<f32>,
+    music: Option<f32>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct PlayerOptionsFile {
+    note_skin: Option<String>,
+    note_speed: Option<NoteSpeed>,
+    perspective: Option<Perspective>,
 }
 
 const MACHINE_SETTINGS_FILE: &str = "machine_settings.json";
@@ -120,18 +179,48 @@ fn player_settings_file(player: PlayerId) -> &'static str {
     }
 }
 
-fn load_machine_settings(default_timing: TimingSettings) -> MachineSettings {
+fn load_machine_settings(defaults: &SettingsDefaults) -> MachineSettings {
     let file: MachineSettingsFile = load_user_data(MACHINE_SETTINGS_FILE);
     MachineSettings {
-        keymap: file.keymap,
-        timing: file.timing.unwrap_or(default_timing),
+        // The keymap holds overrides on top of `defaults.keymap`; a fresh
+        // install simply has none.
+        keymap: file.keymap.unwrap_or_default(),
+        timing: TimingSettings {
+            machine_offset: file
+                .timing
+                .machine_offset
+                .unwrap_or(defaults.timing_options.machine_offset),
+            visual_delay: file
+                .timing
+                .visual_delay
+                .unwrap_or(defaults.timing_options.visual_delay),
+            audio_latency: file
+                .timing
+                .audio_latency
+                .or(defaults.timing_options.audio_latency),
+        },
+        volume: VolumeSettings {
+            master: file.volume.master.unwrap_or(defaults.volume_options.master),
+            sfx: file.volume.sfx.unwrap_or(defaults.volume_options.sfx),
+            music: file.volume.music.unwrap_or(defaults.volume_options.music),
+        },
     }
 }
 
-fn load_player_settings(default_options: PlayerOptions) -> PlayerSettings {
+fn load_player_settings(defaults: &SettingsDefaults) -> PlayerSettings {
     let load = |player: PlayerId| {
-        load_user_data::<Option<PlayerOptions>>(player_settings_file(player))
-            .unwrap_or_else(|| default_options.clone())
+        let file: PlayerOptionsFile = load_user_data(player_settings_file(player));
+        PlayerOptions {
+            note_skin: file
+                .note_skin
+                .unwrap_or_else(|| defaults.player_options.note_skin.clone()),
+            note_speed: file
+                .note_speed
+                .unwrap_or(defaults.player_options.note_speed),
+            perspective: file
+                .perspective
+                .unwrap_or(defaults.player_options.perspective),
+        }
     };
     PlayerSettings(PerPlayer {
         p1: load(PlayerId::P1),

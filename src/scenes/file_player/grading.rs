@@ -1,24 +1,19 @@
 use super::{HoldOutcome, MineOutcome, PlaySession, PlaySet, RowGraded, Stage};
-use crate::core::at;
 use crate::core::config::{FixedGradeDef, GameConfig, Grade, RowOutcome};
 use crate::core::font::game_font;
 use crate::core::input::Actions;
 use crate::core::note_field::{
-    FadeOut, HOLD_OK_FADE_SECONDS, NoteField, NoteFieldClock, spawn_arrow_flash,
-    spawn_mine_explosion,
+    FadeOut, HOLD_OK_FADE_SECONDS, LaneEffects, NoteField, NoteFieldClock,
 };
 use crate::core::note_skin::ActiveNoteSkins;
 use crate::core::scene_flow::SpawnScoped;
 use crate::core::settings::MachineSettings;
+use crate::core::{OVERLAY_LAYER, at};
 use crate::scenes::{GameScene, scene_accepts_input};
+use bevy::camera::visibility::RenderLayers;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
-/// Hold let-go grace: life drains from full to dropped over this long once
-/// the panel is released.
-const HOLD_GRACE_SECONDS: f32 = 0.25;
-/// Roll window: rolls drain constantly and each fresh step refills them.
-const ROLL_GRACE_SECONDS: f32 = 0.5;
 const HOLD_POPUP_SECONDS: f32 = 0.6;
 
 /// The row is the unit the game grades, independently per stage. Presses
@@ -47,6 +42,7 @@ struct GradingContext<'w, 's> {
     settings: Res<'w, MachineSettings>,
     config: Res<'w, GameConfig>,
     skins: Res<'w, ActiveNoteSkins>,
+    asset_server: Res<'w, AssetServer>,
     clock: Res<'w, NoteFieldClock>,
     fields: Query<'w, 's, &'static NoteField>,
 }
@@ -154,22 +150,20 @@ fn resolve_row(
         return;
     };
     let bright = stage.combo >= ctx.config.bright_arrow_flash_combo;
-    let skin = ctx.skins.get(field.player);
+    let mut effects = LaneEffects {
+        commands,
+        asset_server: &ctx.asset_server,
+        skin: ctx.skins.get(field.player),
+        layout: field,
+    };
     for arrow in &stage.rows[index].arrows {
-        let flash = spawn_arrow_flash(
-            commands,
-            skin,
-            field,
-            arrow.column,
-            ctx.clock.target_y,
-            color,
-            bright,
-        );
-        commands
+        let flash = effects.arrow_flash(arrow.column, ctx.clock.target_y, color, bright);
+        effects
+            .commands
             .entity(flash)
             .insert(DespawnOnExit(GameScene::FilePlayer));
         if arrow.hold.is_none() {
-            commands.entity(arrow.entity).despawn();
+            effects.commands.entity(arrow.entity).despawn();
         }
     }
 }
@@ -274,13 +268,13 @@ fn update_holds(
                     hold.life = 1.0;
                 }
                 hold.held_now = actions.pressed(action);
-                hold.life -= delta / ROLL_GRACE_SECONDS;
+                hold.life -= delta / config.grading.roll_grace_seconds;
             } else if actions.pressed(action) {
                 hold.held_now = true;
                 hold.life = 1.0;
             } else {
                 hold.held_now = false;
-                hold.life -= delta / HOLD_GRACE_SECONDS;
+                hold.life -= delta / config.grading.hold_grace_seconds;
             }
             hold.life = hold.life.clamp(0.0, 1.0);
 
@@ -325,6 +319,7 @@ fn update_mines(
     let GradingContext {
         settings,
         skins,
+        asset_server,
         clock,
         fields,
         ..
@@ -347,13 +342,13 @@ fn update_mines(
             }
             mine.outcome = Some(MineOutcome::Exploded);
             commands.entity(mine.entity).despawn();
-            let explosion = spawn_mine_explosion(
-                &mut commands,
-                skins.get(field.player),
-                field,
-                mine.column,
-                clock.target_y,
-            );
+            let mut effects = LaneEffects {
+                commands: &mut commands,
+                asset_server,
+                skin: skins.get(field.player),
+                layout: field,
+            };
+            let explosion = effects.mine_explosion(mine.column, clock.target_y);
             commands
                 .entity(explosion)
                 .insert(DespawnOnExit(GameScene::FilePlayer));
@@ -424,5 +419,8 @@ fn spawn_hold_popup(
                 at(field.column_x(column), target_y - 54.0, 21.0)
             },
         )
-        .insert(FadeOut::growing(HOLD_POPUP_SECONDS, 0.25));
+        .insert((
+            FadeOut::growing(HOLD_POPUP_SECONDS, 0.25),
+            RenderLayers::layer(OVERLAY_LAYER),
+        ));
 }

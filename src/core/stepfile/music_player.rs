@@ -1,8 +1,8 @@
 use crate::core::assets::asset_server_path;
 use crate::core::audio::Sound;
 use crate::core::platform::{AudioChannel, SoundOptions, platform};
-use crate::core::settings::TimingSettings;
-use crate::core::stepfile::{Stepfile, StepfileClock};
+use crate::core::settings::{MachineSettings, TimingSettings};
+use crate::core::stepfile::{Stepfile, StepfileClock, StepfileTiming};
 use crate::core::units::{Beat, Seconds};
 use bevy::prelude::*;
 use std::path::PathBuf;
@@ -59,6 +59,14 @@ impl MusicPlayer {
         let playing = self.playing.as_ref()?;
         Some(playing.clock.as_ref()?.visible_beat(settings))
     }
+
+    /// The visible moment on the playing stepfile's timeline together with
+    /// its timing, for visuals that animate on the music's own clock.
+    pub fn visible_now(&self, settings: &TimingSettings) -> Option<(Seconds, &StepfileTiming)> {
+        let playing = self.playing.as_ref()?;
+        let clock = playing.clock.as_ref()?;
+        Some((clock.visible_now(settings), &playing.bgm.stepfile.timing))
+    }
 }
 
 pub struct MusicPlayerPlugin;
@@ -72,11 +80,12 @@ impl Plugin for MusicPlayerPlugin {
 
 /// Opens the audio for the current stepfile once its bytes load — looping
 /// the preview sample window — and keeps the shared clock servo'd onto
-/// the channel's position reports.
+/// the channel's position reports and the volume on the music setting.
 fn drive_music_player(
     time: Res<Time>,
     asset_server: Res<AssetServer>,
     sounds: Res<Assets<Sound>>,
+    settings: Res<MachineSettings>,
     mut player: ResMut<MusicPlayer>,
 ) {
     let Some(playing) = &mut player.playing else {
@@ -99,6 +108,7 @@ fn drive_music_player(
         };
         let options = SoundOptions {
             window: Some((bgm.stepfile.sample_start, bgm.stepfile.sample_length)),
+            volume: settings.volume.music_gain(),
             ..default()
         };
         match platform().open_audio(sound.bytes.clone(), options) {
@@ -111,6 +121,9 @@ fn drive_music_player(
         return;
     };
 
+    if settings.is_changed() {
+        active.set_volume(settings.volume.music_gain());
+    }
     if !active.is_ready() {
         return;
     }

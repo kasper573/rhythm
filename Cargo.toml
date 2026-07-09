@@ -17,6 +17,8 @@ bevy = { version = "0.19", default-features = false, features = [
     "bevy_winit",
     "default_font",
     "2d_bevy_render",
+    # 3D note skins: gltf meshes rendered unlit through the pbr pipeline.
+    "3d_bevy_render",
     "scene",
     "picking",
     "ui_api",

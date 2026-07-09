@@ -44,7 +44,7 @@ pub trait Platform: Send + Sync {
     ) -> Result<Box<dyn AudioChannel>, String>;
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub struct SoundOptions {
     /// Loop this `(start, length)` window of the sound's timeline forever.
     /// A window never finishes; it plays whole-file from `start` when
@@ -52,6 +52,19 @@ pub struct SoundOptions {
     pub window: Option<(Seconds, Seconds)>,
     pub paused: bool,
     pub muted: bool,
+    /// Playback gain, `0..=1`; muting silences without forgetting it.
+    pub volume: f32,
+}
+
+impl Default for SoundOptions {
+    fn default() -> SoundOptions {
+        SoundOptions {
+            window: None,
+            paused: false,
+            muted: false,
+            volume: 1.0,
+        }
+    }
 }
 
 /// One playing sound; dropping the channel stops it.
@@ -65,6 +78,9 @@ pub trait AudioChannel: Send + Sync {
     fn set_muted(&mut self, muted: bool);
 
     fn is_muted(&self) -> bool;
+
+    /// Playback gain, `0..=1`, taking effect even while muted.
+    fn set_volume(&mut self, volume: f32);
 
     /// Seconds into the sound's own timeline.
     fn position(&self) -> Seconds;

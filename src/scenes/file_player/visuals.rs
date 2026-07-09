@@ -5,7 +5,8 @@ use crate::core::config::{GameConfig, Grade, RowOutcome, TimingFeedback};
 use crate::core::health_vial::HealthVial;
 use crate::core::input::Actions;
 use crate::core::note_field::{
-    HoldVisual, HoldVisualState, InField, NoteField, NoteFieldClock, Receptor,
+    HoldVisual, HoldVisualState, InColumn, InField, NoteField, NoteFieldClock, Receptor,
+    visible_world_size,
 };
 use crate::core::settings::MachineSettings;
 use crate::core::units::Seconds;
@@ -15,7 +16,7 @@ pub(super) fn plugin(app: &mut App) {
     app.add_message::<OffsetOsdLine>()
         .add_systems(
             Update,
-            (sync_note_field, sync_health_vials).in_set(PlaySet::Sync),
+            (sync_note_field, anchor_stage_to_window, sync_health_vials).in_set(PlaySet::Sync),
         )
         .add_systems(
             Update,
@@ -28,6 +29,28 @@ pub(super) fn plugin(app: &mut App) {
 /// A line to flash on the timing-offset OSD.
 #[derive(Message)]
 pub(super) struct OffsetOsdLine(pub(super) String);
+
+/// Keeps the receptor arrows' top edge the configured screen-edge padding
+/// below the window's top edge — the same breathing room the health vials
+/// keep to their side — whatever extra world a non-16:9 window reveals
+/// and whatever size the arrows were fitted to. Headless renderers have
+/// no window and keep the design-canvas default.
+fn anchor_stage_to_window(
+    config: Res<GameConfig>,
+    windows: Query<&Window>,
+    fields: Query<&NoteField>,
+    mut clock: ResMut<NoteFieldClock>,
+) {
+    let Ok(window) = windows.single() else { return };
+    let Some(arrow_size) = fields.iter().map(|field| field.arrow_size).reduce(f32::max) else {
+        return;
+    };
+    let visible_top = visible_world_size(window).y / 2.0;
+    let target_y = visible_top - config.stage.screen_edge_padding - arrow_size / 2.0;
+    if clock.target_y != target_y {
+        clock.target_y = target_y;
+    }
+}
 
 fn sync_health_vials(
     session: Res<PlaySession>,
@@ -51,16 +74,16 @@ fn sync_note_field(
     settings: Res<MachineSettings>,
     mut clock: ResMut<NoteFieldClock>,
     fields: Query<&NoteField>,
-    mut receptors: Query<(&mut Receptor, &InField)>,
+    mut receptors: Query<(&mut Receptor, &InColumn, &InField)>,
     mut holds: Query<&mut HoldVisual>,
 ) {
     clock.visible = session.visible_now(&settings.timing);
 
-    for (mut receptor, in_field) in &mut receptors {
+    for (mut receptor, anchor, in_field) in &mut receptors {
         let Ok(field) = fields.get(in_field.0) else {
             continue;
         };
-        let held = actions.pressed(field.step_action(receptor.column));
+        let held = actions.pressed(field.step_action(anchor.column));
         if receptor.held != held {
             receptor.held = held;
         }

@@ -12,14 +12,15 @@ use crate::core::health_vial::{HealthVialMaterial, VialSide, spawn_health_vial};
 use crate::core::input::{Actions, GameAction};
 use crate::core::library::{StepfileEntry, StepfileId, StepfileLibrary};
 use crate::core::note_field::{
-    FadeOut, InField, NoteField, NoteFieldClock, NoteFieldSystems, NoteSpawn, TARGET_Y,
-    fitted_arrow_size, spawn_mine, spawn_note, spawn_note_field, spawn_receptors,
+    FadeOut, InField, NoteField, NoteFieldClock, NoteFieldSystems, NoteSpawn, NoteSpeed, NoteTail,
+    TARGET_Y, fitted_arrow_size, max_arrow_size, spawn_mine, spawn_note, spawn_note_field,
+    spawn_receptors, visible_world_size,
 };
 use crate::core::note_skin::{ActiveNoteSkin, ActiveNoteSkins};
 use crate::core::platform::SoundOptions;
 use crate::core::player::PlayerId;
 use crate::core::scene_flow::SpawnScoped;
-use crate::core::settings::{PlayerSettings, TimingSettings};
+use crate::core::settings::{MachineSettings, PlayerSettings, TimingSettings};
 use crate::core::sfx::{PlaySfx, Sfx};
 use crate::core::stepfile::{Chart, MusicPlayer, StepfileClock, StepfileTiming};
 use crate::core::tick_track::render_tick_track;
@@ -86,6 +87,12 @@ impl Plugin for FilePlayerPlugin {
             .add_systems(OnExit(GameScene::FilePlayer), exit)
             .add_systems(
                 Update,
+                refit_stages_to_window
+                    .before(NoteFieldSystems)
+                    .run_if(in_state(GameScene::FilePlayer)),
+            )
+            .add_systems(
+                Update,
                 (
                     fail_drained_stages,
                     finish_when_complete,
@@ -109,23 +116,17 @@ enum PlaySet {
     Present,
 }
 
-/// The sources everything on stage is materialized from.
+/// The sources everything on stage is materialized from, and the window
+/// the stage is fitted to.
 #[derive(SystemParam)]
-struct StageAssets<'w> {
+struct StageAssets<'w, 's> {
     skins: Res<'w, ActiveNoteSkins>,
     asset_server: Res<'w, AssetServer>,
     sounds: ResMut<'w, Assets<Sound>>,
     vial_materials: ResMut<'w, Assets<HealthVialMaterial>>,
+    machine: Res<'w, MachineSettings>,
+    windows: Query<'w, 's, &'static Window>,
 }
-
-const LEAD_IN: Seconds = Seconds(2.0);
-
-/// Width reserved on each screen edge that fields never enter: the health
-/// vials plus breathing room.
-const STAGE_MARGIN_X: f32 = 150.0;
-
-/// Gap between adjacent fields, in column spacings.
-const FIELD_GAP_COLUMNS: f32 = 2.0;
 
 #[derive(Resource)]
 pub(super) struct PlaySession {
@@ -325,7 +326,15 @@ fn enter(
         fade.begin(GameScene::FileSelect);
         return;
     };
-    let layouts = stage_layouts(&charts, &player_settings);
+    let specs: Vec<FieldSpec> = charts
+        .iter()
+        .map(|(player, chart)| FieldSpec {
+            player: *player,
+            columns: chart.columns,
+            speed: player_settings[*player].note_speed,
+        })
+        .collect();
+    let layouts = pack_stage_fields(&specs, &config, assets.windows.single().ok());
 
     let mut stages = Vec::new();
     let mut last_note_time = Seconds::ZERO;
@@ -345,14 +354,30 @@ fn enter(
             PlayerId::P1 => VialSide::Left,
             PlayerId::P2 => VialSide::Right,
         };
-        let vial = spawn_health_vial(&mut commands, &mut assets.vial_materials, 1.0, side);
+        let vial = spawn_health_vial(
+            &mut commands,
+            &mut assets.vial_materials,
+            1.0,
+            side,
+            config.stage.screen_edge_padding,
+        );
         commands
             .entity(vial)
             .insert((ForPlayer(player), DespawnOnExit(GameScene::FilePlayer)));
         spawn_stage_hud(&mut commands, player, origin_x);
 
-        let (rows, mines, stage_last) =
-            spawn_chart(&mut commands, skin, field, &layout, &config, chart, &timing);
+        let (rows, mines, stage_last) = spawn_chart(
+            &mut commands,
+            &assets.asset_server,
+            &StageSpawn {
+                field,
+                layout: &layout,
+                skin,
+            },
+            &config,
+            chart,
+            &timing,
+        );
         last_note_time = last_note_time.max(stage_last);
         stages.push(Stage {
             player,
@@ -376,8 +401,9 @@ fn enter(
     background::spawn_background(&mut commands, entry, &timing);
     spawn_shared_hud(&mut commands);
 
+    let lead_in = Seconds(config.stage.lead_in_seconds);
     commands.insert_resource(NoteFieldClock {
-        visible: -LEAD_IN,
+        visible: -lead_in,
         timing: timing.clone(),
         target_y: TARGET_Y,
     });
@@ -385,8 +411,8 @@ fn enter(
         title: entry.display_title(),
         stages,
         clock: PlaybackClock {
-            phase: PlayPhase::LeadIn { remaining: LEAD_IN },
-            music: StepfileClock::start_at(timing, -LEAD_IN),
+            phase: PlayPhase::LeadIn { remaining: lead_in },
+            music: StepfileClock::start_at(timing, -lead_in),
             wall_since_play: Seconds::ZERO,
             latency_samples: Vec::new(),
         },
@@ -403,33 +429,48 @@ fn exit(mut commands: Commands, mut music: ResMut<MusicPlayer>) {
     commands.remove_resource::<SelectedStepfile>();
 }
 
-/// Sizes and places one field per chart: arrows grow to
-/// [`MAX_ARROW_SIZE`](crate::core::note_field::MAX_ARROW_SIZE) when the
-/// screen has room and shrink until every column — plus the gaps between
-/// fields — fits between the reserved screen edges. The fields pack
-/// left-to-right, centered as a block.
-fn stage_layouts(
-    charts: &[(PlayerId, &Chart)],
-    player_settings: &PlayerSettings,
+/// What a stage field is packed from, independent of whether it exists yet.
+struct FieldSpec {
+    player: PlayerId,
+    columns: usize,
+    speed: NoteSpeed,
+}
+
+/// Sizes and places one field per stage: arrows grow to the configured
+/// pixel cap (`stage.max_arrow_size`) when the window has room and shrink
+/// until every column — plus the gaps between fields — fits between the
+/// reserved screen edges. The fields pack left-to-right, centered as a
+/// block, across the window's visible world width. Headless callers (no
+/// window) pack on the design canvas.
+fn pack_stage_fields(
+    specs: &[FieldSpec],
+    config: &GameConfig,
+    window: Option<&Window>,
 ) -> Vec<NoteField> {
-    let columns: usize = charts.iter().map(|(_, chart)| chart.columns).sum();
-    let gap_units = FIELD_GAP_COLUMNS * (charts.len() - 1) as f32;
+    let visible_width = window
+        .map(|window| visible_world_size(window).x)
+        .unwrap_or(SCREEN_SIZE.x);
+    let columns: usize = specs.iter().map(|spec| spec.columns).sum();
+    let gap_units = config.stage.field_gap_columns * (specs.len() - 1) as f32;
     let arrow_size = fitted_arrow_size(
         columns as f32 + gap_units,
-        SCREEN_SIZE.x - 2.0 * STAGE_MARGIN_X,
+        visible_width - 2.0 * config.stage.margin_x,
+        max_arrow_size(config, window),
     );
 
-    let mut layouts: Vec<NoteField> = charts
+    let mut layouts: Vec<NoteField> = specs
         .iter()
-        .map(|(player, chart)| NoteField {
-            player: *player,
+        .enumerate()
+        .map(|(lane, spec)| NoteField {
+            player: spec.player,
+            lane,
             origin_x: 0.0,
-            columns: chart.columns,
-            speed: player_settings[*player].note_speed,
+            columns: spec.columns,
+            speed: spec.speed,
             arrow_size,
         })
         .collect();
-    let gap = FIELD_GAP_COLUMNS * layouts[0].spacing();
+    let gap = config.stage.field_gap_columns * layouts[0].spacing();
     let total: f32 =
         layouts.iter().map(NoteField::width).sum::<f32>() + gap * (layouts.len() - 1) as f32;
     let mut x = -total / 2.0;
@@ -440,14 +481,53 @@ fn stage_layouts(
     layouts
 }
 
+/// Re-packs the stage whenever the window changes: the arrow-size cap is
+/// a screen-pixel budget, so a resize re-derives every field's arrow size
+/// and origin, and the note-field systems move the lanes accordingly.
+fn refit_stages_to_window(
+    config: Res<GameConfig>,
+    windows: Query<&Window, Changed<Window>>,
+    mut fields: Query<&mut NoteField>,
+) {
+    let Ok(window) = windows.single() else { return };
+    let mut current: Vec<Mut<NoteField>> = fields.iter_mut().collect();
+    current.sort_by_key(|field| field.lane);
+    let specs: Vec<FieldSpec> = current
+        .iter()
+        .map(|field| FieldSpec {
+            player: field.player,
+            columns: field.columns,
+            speed: field.speed,
+        })
+        .collect();
+    if specs.is_empty() {
+        return;
+    }
+    for (field, packed) in current
+        .iter_mut()
+        .zip(pack_stage_fields(&specs, &config, Some(window)))
+    {
+        if field.arrow_size != packed.arrow_size || field.origin_x != packed.origin_x {
+            field.arrow_size = packed.arrow_size;
+            field.origin_x = packed.origin_x;
+        }
+    }
+}
+
 /// Spawns every note and mine of the chart into the stage's field, scoped
 /// to the scene, and returns the session records tracking them plus the
 /// time the chart is over.
+/// One stage's field being filled with notes.
+struct StageSpawn<'a> {
+    field: Entity,
+    layout: &'a NoteField,
+    skin: &'a ActiveNoteSkin,
+}
+
 fn spawn_chart(
     commands: &mut Commands,
-    skin: &ActiveNoteSkin,
-    field: Entity,
-    layout: &NoteField,
+    asset_server: &AssetServer,
+    stage: &StageSpawn,
     config: &GameConfig,
     chart: &Chart,
     timing: &StepfileTiming,
@@ -457,7 +537,15 @@ fn spawn_chart(
     for mine in &chart.mines {
         let time = timing.seconds_at_beat(mine.beat);
         last_note_time = last_note_time.max(time);
-        let entity = spawn_mine(commands, skin, field, layout, time, mine.beat, mine.column);
+        let entity = spawn_mine(
+            commands,
+            stage.skin,
+            stage.field,
+            stage.layout,
+            time,
+            mine.beat,
+            mine.column,
+        );
         commands
             .entity(entity)
             .insert(DespawnOnExit(GameScene::FilePlayer));
@@ -475,21 +563,25 @@ fn spawn_chart(
         let quant = config.recognized_quant(row.quant);
         let mut arrows = Vec::new();
         for arrow in &row.arrows {
-            let end = arrow
-                .tail
-                .map(|tail| (timing.seconds_at_beat(tail.end), tail.end));
-            last_note_time = last_note_time.max(end.map(|(end, _)| end).unwrap_or(time));
+            let tail = arrow.tail.map(|tail| NoteTail {
+                time: timing.seconds_at_beat(tail.end),
+                beat: tail.end,
+                roll: tail.roll,
+            });
+            last_note_time =
+                last_note_time.max(tail.as_ref().map(|tail| tail.time).unwrap_or(time));
             let spawned = spawn_note(
                 commands,
-                skin,
-                field,
-                layout,
+                asset_server,
+                stage.skin,
+                stage.field,
+                stage.layout,
                 &NoteSpawn {
                     time,
                     beat: row.beat,
                     column: arrow.column,
                     quant,
-                    end,
+                    tail,
                 },
             );
             for entity in spawned.entities() {
@@ -546,6 +638,7 @@ fn spawn_audio_tracks(
                 sound: music,
                 options: SoundOptions {
                     paused: true,
+                    volume: assets.machine.volume.music_gain(),
                     ..default()
                 },
             });
@@ -581,6 +674,7 @@ fn spawn_audio_tracks(
                     options: SoundOptions {
                         paused: true,
                         muted: true,
+                        volume: assets.machine.volume.sfx_gain(),
                         ..default()
                     },
                 });
@@ -702,12 +796,13 @@ fn fail_drained_stages(
         }
         stage.failed = true;
         sfx.write(PlaySfx(Sfx::Fail));
-        // The whole side shuts down: notes, mines, and receptors fade away.
+        // The whole side shuts down: notes, mines, and receptors shrink
+        // and fade away.
         for (entity, in_field) in &staged {
             if in_field.0 == stage.field {
                 commands
                     .entity(entity)
-                    .insert(FadeOut::over(FAIL_FADE_SECONDS));
+                    .insert(FadeOut::growing(FAIL_FADE_SECONDS, -1.0));
             }
         }
     }

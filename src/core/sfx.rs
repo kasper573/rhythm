@@ -1,5 +1,6 @@
 use crate::core::audio::Sound;
 use crate::core::platform::{AudioChannel, SoundOptions, platform};
+use crate::core::settings::MachineSettings;
 use bevy::prelude::*;
 use std::collections::HashMap;
 use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
@@ -53,6 +54,7 @@ fn play_requested_sfx(
     mut requests: MessageReader<PlaySfx>,
     library: Res<SfxLibrary>,
     sounds: Res<Assets<Sound>>,
+    settings: Res<MachineSettings>,
     mut live: Local<Vec<Box<dyn AudioChannel>>>,
 ) {
     live.retain(|channel| !channel.is_finished());
@@ -60,7 +62,11 @@ fn play_requested_sfx(
         let Some(sound) = sounds.get(&library.0[sfx]) else {
             continue;
         };
-        match platform().open_audio(sound.bytes.clone(), SoundOptions::default()) {
+        let options = SoundOptions {
+            volume: settings.volume.sfx_gain(),
+            ..default()
+        };
+        match platform().open_audio(sound.bytes.clone(), options) {
             Ok(channel) => live.push(channel),
             Err(error) => warn!("sfx cannot play: {error}"),
         }

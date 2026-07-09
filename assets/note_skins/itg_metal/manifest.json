@@ -1,0 +1,61 @@
+{
+  "display_name": "ITG Metal",
+  "dropped_brightness": 0.25,
+  "note": {
+    "Model": {
+      "mesh": "note.glb",
+      "texture": "note.png",
+      "quant_offsets": [
+        [4, 0.0],
+        [8, 0.0625],
+        [12, 0.125],
+        [16, 0.1875],
+        [24, 0.125],
+        [32, 0.25],
+        [48, 0.125],
+        [64, 0.3125]
+      ],
+      "uv_scroll": [0.0, -1.0],
+      "static_shell": true
+    }
+  },
+  "receptor": {
+    "image": "receptor.png",
+    "frames": [1.0, 1.0, 1.0, 1.0],
+    "pulse": 0.4
+  },
+  "hold": {
+    "body_active": "hold_body_active.png",
+    "body_inactive": "hold_body_inactive.png",
+    "body_size": [64, 128],
+    "stop_above_tail": 0,
+    "cap_active": "hold_cap_active.png",
+    "cap_inactive": "hold_cap_inactive.png",
+    "cap_size": [64, 32]
+  },
+  "roll": {
+    "body_active": "roll_body_active.png",
+    "body_inactive": "roll_body_inactive.png",
+    "body_size": [64, 256],
+    "stop_above_tail": 0,
+    "cap_active": "roll_cap_active.png",
+    "cap_inactive": "roll_cap_inactive.png",
+    "cap_size": [64, 32]
+  },
+  "mine": {
+    "art": {
+      "Model": {
+        "mesh": "mine.glb",
+        "texture": "mine.png",
+        "uv_scroll": [1.0, 0.0],
+        "static_shell": true
+      }
+    },
+    "spin_beats": 2
+  },
+  "mine_explosion": { "image": "mine_explosion.png", "size": [128, 128] },
+  "flash": {
+    "bright": { "image": "flash.png", "size": [106, 106] },
+    "dim": { "image": "flash.png", "size": [106, 106] }
+  }
+}

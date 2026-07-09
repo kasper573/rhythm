@@ -147,16 +147,21 @@ impl GameAction {
     }
 }
 
-/// The players' key overrides; actions without one use the config's default.
+/// A set of key bindings. The machine settings hold the players'
+/// overrides; actions without one resolve through the config's
+/// `defaults.keymap`, which binds everything.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Keymap(BTreeMap<GameAction, KeyCode>);
 
 impl Keymap {
     pub fn key(&self, action: GameAction, config: &GameConfig) -> KeyCode {
-        self.0
-            .get(&action)
-            .copied()
-            .unwrap_or(config.default_keymap[&action])
+        self.binding(action)
+            .or_else(|| config.defaults.keymap.binding(action))
+            .expect("validated: defaults.keymap binds every action")
+    }
+
+    pub fn binding(&self, action: GameAction) -> Option<KeyCode> {
+        self.0.get(&action).copied()
     }
 
     /// For systems that need mutable [`MachineSettings`] access and

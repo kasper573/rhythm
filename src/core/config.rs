@@ -1,12 +1,11 @@
 use crate::core::assets::asset_root;
-use crate::core::input::GameAction;
+use crate::core::input::{GameAction, Keymap};
 use crate::core::note_field::NoteSpeed;
-use crate::core::settings::{PlayerOptions, TimingSettings};
+use crate::core::settings::{PlayerOptions, TimingSettings, VolumeSettings};
 use crate::core::units::{Percent, Seconds};
 use bevy::math::cubic_splines::CubicSegment;
 use bevy::prelude::*;
 use serde::{Deserialize, Deserializer};
-use std::collections::BTreeMap;
 use strum::IntoEnumIterator;
 
 #[derive(Resource, Debug, Clone, Deserialize)]
@@ -15,6 +14,7 @@ pub struct GameConfig {
     /// wheel's default active row and expanded group. When nothing matches,
     /// the wheel defaults to the first stepfile of the first group.
     pub wheel_default: (String, String),
+    pub defaults: SettingsDefaults,
     pub grading: GradingConfig,
     /// Tick track volume: `0..=1` attenuates, `1..=2` boosts. Capped at 2 so
     /// a config typo can never blow anyone's eardrums out.
@@ -22,12 +22,9 @@ pub struct GameConfig {
     /// The note denominations the game recognizes; notes on finer grids
     /// snap to the last entry. Note skins are cross-referenced by these.
     pub note_quants: Vec<u32>,
-    /// Must bind every action; the settings hold the player's overrides.
-    pub default_keymap: BTreeMap<GameAction, KeyCode>,
     pub speed_modifiers: SpeedModifiers,
-    pub default_player_options: PlayerOptions,
-    /// Timing for fresh installs and settings files that predate it.
-    pub timing_defaults: TimingSettings,
+    pub stage: StageConfig,
+    pub lane_camera: LaneCameraConfig,
     /// Combo at which the arrow flash switches to its brighter, snappier
     /// variant.
     pub bright_arrow_flash_combo: u32,
@@ -38,6 +35,50 @@ pub struct GameConfig {
     /// Rating rules tried in order: the first match wins, so earlier
     /// entries take priority.
     pub ratings: Vec<RatingDef>,
+}
+
+/// Default values for the user settings, in the settings' own types.
+/// Fresh installs and settings files that predate a field resolve here —
+/// user-configurable values have no defaults hardcoded in the code.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SettingsDefaults {
+    /// Must bind every action; the machine settings' keymap holds the
+    /// players' overrides on top of it.
+    pub keymap: Keymap,
+    pub player_options: PlayerOptions,
+    pub timing_options: TimingSettings,
+    pub volume_options: VolumeSettings,
+}
+
+/// How play stages are fitted onto the screen.
+#[derive(Debug, Clone, Deserialize)]
+pub struct StageConfig {
+    /// The largest arrow the game draws, in screen pixels; fields shrink
+    /// below this only when the screen cannot fit their columns.
+    pub max_arrow_size: f32,
+    /// Width reserved on each screen edge that fields never enter: the
+    /// health vials plus breathing room.
+    pub margin_x: f32,
+    /// Gap between adjacent fields, in column spacings.
+    pub field_gap_columns: f32,
+    /// Silence before the chart starts, giving the first notes room to
+    /// scroll in.
+    pub lead_in_seconds: f64,
+    /// Padding between the screen edges and anchored stage furniture —
+    /// the health vials keep this to their side edge and the note fields
+    /// to the top edge, so everything hugging the frame lines up.
+    pub screen_edge_padding: f32,
+}
+
+/// The perspective lane cameras (see `core::note_field`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct LaneCameraConfig {
+    /// Vertical field of view; the camera distance derives from it so the
+    /// lane plane renders 1:1 with the 2D world.
+    pub fov_degrees: f32,
+    /// How far the Above/Below perspectives pitch the camera around the
+    /// receptor row.
+    pub tilt_degrees: f32,
 }
 
 /// One `{ image, point_percentage | all_grades_gte }` config entry; the
@@ -114,6 +155,11 @@ pub struct GradingConfig {
     /// The timed grades, ordered best to worst (smallest window first).
     pub dynamic: Vec<DynamicGradeDef>,
     pub fixed: FixedGrades,
+    /// Hold let-go grace: life drains from full to dropped over this long
+    /// once the panel is released.
+    pub hold_grace_seconds: f32,
+    /// Roll window: rolls drain constantly and each fresh step refills them.
+    pub roll_grace_seconds: f32,
 }
 
 /// The built-in grades: rows that expired unstepped (miss), and holds
@@ -530,10 +576,35 @@ impl GameConfig {
         );
         for action in GameAction::iter() {
             assert!(
-                self.default_keymap.contains_key(&action),
-                "{source}: default_keymap must bind {action:?}"
+                self.defaults.keymap.binding(action).is_some(),
+                "{source}: defaults.keymap must bind {action:?}"
             );
         }
+        assert!(
+            self.stage.max_arrow_size > 0.0
+                && self.stage.margin_x >= 0.0
+                && self.stage.field_gap_columns >= 0.0
+                && self.stage.lead_in_seconds >= 0.0
+                && self.stage.screen_edge_padding >= 0.0,
+            "{source}: stage values must not be negative (and max_arrow_size positive)"
+        );
+        assert!(
+            (0.0..180.0).contains(&self.lane_camera.fov_degrees)
+                && self.lane_camera.fov_degrees > 0.0
+                && (0.0..90.0).contains(&self.lane_camera.tilt_degrees),
+            "{source}: lane_camera needs fov in (0, 180) and tilt in [0, 90)"
+        );
+        assert!(
+            self.grading.hold_grace_seconds > 0.0 && self.grading.roll_grace_seconds > 0.0,
+            "{source}: hold grace windows must be positive"
+        );
+        let volumes = &self.defaults.volume_options;
+        assert!(
+            [volumes.master, volumes.sfx, volumes.music]
+                .iter()
+                .all(|volume| (0.0..=1.0).contains(volume)),
+            "{source}: defaults.volume_options must be within 0..=1"
+        );
     }
 }
 

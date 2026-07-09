@@ -1,4 +1,3 @@
-use crate::core::SCREEN_EDGE_PADDING;
 use crate::core::config::{GameConfig, HealthColorStop};
 use crate::core::note_field::NoteFieldClock;
 use crate::core::units::Percent;
@@ -54,11 +53,14 @@ pub enum VialSide {
     Right,
 }
 
+/// `edge_padding` is the configured screen-edge padding (see
+/// `StageConfig::screen_edge_padding`).
 pub fn spawn_health_vial(
     commands: &mut Commands,
     materials: &mut Assets<HealthVialMaterial>,
     fill: f32,
     side: VialSide,
+    edge_padding: f32,
 ) -> Entity {
     let material = materials.add(HealthVialMaterial {
         params: Vec4::ZERO,
@@ -66,8 +68,8 @@ pub fn spawn_health_vial(
         colors: [Vec4::ZERO; GRADIENT_SAMPLES],
     });
     let (left, right) = match side {
-        VialSide::Left => (Val::Px(SCREEN_EDGE_PADDING), Val::Auto),
-        VialSide::Right => (Val::Auto, Val::Px(SCREEN_EDGE_PADDING)),
+        VialSide::Left => (Val::Px(edge_padding), Val::Auto),
+        VialSide::Right => (Val::Auto, Val::Px(edge_padding)),
     };
     // The outer node is the vial's spec rect and carries the [`HealthVial`]
     // the owner drives — on the returned entity, so callers can attach

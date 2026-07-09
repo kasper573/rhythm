@@ -1,20 +1,26 @@
+use crate::core::config::GameConfig;
 use crate::core::input::{GameAction, StepDirection};
-use crate::core::note_skin::{ActiveNoteSkin, ActiveNoteSkins};
+use crate::core::note_skin::{
+    ActiveNoteSkin, ActiveNoteSkins, ElementVisual, NOTE_CELL, NoteArt, effect_material,
+    tail_material,
+};
 use crate::core::player::PlayerId;
+use crate::core::settings::PlayerSettings;
 use crate::core::stepfile::StepfileTiming;
 use crate::core::units::{Beat, Seconds};
-use crate::core::{SCREEN_EDGE_PADDING, SCREEN_SIZE, at, oriented};
+use crate::core::{LANE_LAYER_BASE, SCREEN_SIZE};
+use bevy::camera::visibility::RenderLayers;
+use bevy::camera::{CameraProjection, ClearColorConfig, RenderTarget};
+use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::ecs::query::QueryData;
+use bevy::math::{Affine2, Vec3A};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
+use strum::{EnumIter, EnumString, IntoEnumIterator, IntoStaticStr};
 
 /// The receptor row's y where no window overrides it (headless renderers);
 /// live sessions re-anchor every frame through [`anchor_to_window_top`].
 pub const TARGET_Y: f32 = 260.0;
-
-/// The largest arrow the game draws; fields shrink below this only when
-/// the screen cannot fit their columns (see [`fitted_arrow_size`]).
-pub const MAX_ARROW_SIZE: f32 = 192.0;
 
 /// Columns sit slightly further apart than the arrows are wide, keeping
 /// the classic gap whatever size a field is scaled to.
@@ -23,10 +29,44 @@ const COLUMN_SPACING_RATIO: f32 = 100.0 / 88.0;
 /// Columns on one physical pad; wider fields span several pads.
 const PAD_COLUMNS: usize = 4;
 
-/// The largest arrow size — capped at [`MAX_ARROW_SIZE`] — whose columns
-/// fit `spacing_units` column spacings into `available` width.
-pub fn fitted_arrow_size(spacing_units: f32, available: f32) -> f32 {
-    (available / spacing_units / COLUMN_SPACING_RATIO).min(MAX_ARROW_SIZE)
+/// The largest arrow size — capped at `max_size` (see [`max_arrow_size`])
+/// — whose columns fit `spacing_units` column spacings into `available`
+/// world width.
+pub fn fitted_arrow_size(spacing_units: f32, available: f32, max_size: f32) -> f32 {
+    (available / spacing_units / COLUMN_SPACING_RATIO).min(max_size)
+}
+
+/// The world rect the AutoMin canvas camera shows in `window`: the whole
+/// design canvas plus whatever extra the window's aspect reveals.
+pub fn visible_world_size(window: &Window) -> Vec2 {
+    let size = Vec2::new(window.width().max(1.0), window.height().max(1.0));
+    size * (SCREEN_SIZE.x / size.x).max(SCREEN_SIZE.y / size.y)
+}
+
+/// The configured arrow-size cap — a *screen pixel* budget — as world
+/// units on `window`: the world-to-pixel scale grows with the window, so
+/// the world-unit cap shrinks to keep arrows at most the configured pixel
+/// size on screen. Headless renderers (no window) keep the design
+/// canvas's 1:1 scale.
+pub fn max_arrow_size(config: &GameConfig, window: Option<&Window>) -> f32 {
+    let pixels_per_world = window
+        .map(|window| window.width().max(1.0) / visible_world_size(window).x)
+        .unwrap_or(1.0);
+    config.stage.max_arrow_size / pixels_per_world
+}
+
+/// Where a player's lane camera watches their arrows from. The receptor
+/// row stays put on screen; the rest of the lane foreshortens around it.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, EnumIter, EnumString, IntoStaticStr,
+)]
+pub enum Perspective {
+    /// Head on: no perspective.
+    None,
+    /// From above: notes rise out of the distance below.
+    Above,
+    /// From below: the lane recedes upward.
+    Below,
 }
 
 /// One lane group on stage: a player's columns, centered on `origin_x`,
@@ -34,9 +74,15 @@ pub fn fitted_arrow_size(spacing_units: f32, available: f32) -> f32 {
 /// field's arrow size. Receptors, notes, and mines belong to a field
 /// through [`InField`]; a play session spawns one field per player
 /// (doubles is one player's single 8-column field).
+///
+/// Every field is a little 3D scene: its entities live on the lane's own
+/// render layer, drawn by a matching lane camera whose pitch applies the
+/// player's [`Perspective`] (see [`sync_lane_cameras`]).
 #[derive(Component, Clone)]
 pub struct NoteField {
     pub player: PlayerId,
+    /// The field's index on stage: picks its render layer and camera order.
+    pub lane: usize,
     pub origin_x: f32,
     pub columns: usize,
     pub speed: NoteSpeed,
@@ -67,10 +113,14 @@ impl NoteField {
         };
         GameAction::step(side, StepDirection::of_column(column % PAD_COLUMNS))
     }
+
+    fn render_layers(&self) -> RenderLayers {
+        RenderLayers::layer(LANE_LAYER_BASE + self.lane)
+    }
 }
 
 /// The field an on-stage entity belongs to.
-#[derive(Component, Clone, Copy, FromTemplate)]
+#[derive(Component, Clone, Copy)]
 pub struct InField(pub Entity);
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -95,14 +145,14 @@ impl NoteSpeed {
 /// drawn timeline and `timing` converts it to beats — shared by every field
 /// on stage, while speed and skin vary per field. The field systems run
 /// only while this resource exists. The owner of the stage inserts it,
-/// advances `visible`, and flips the state components ([`Receptor::held`],
-/// [`HoldVisual`], [`FadeOut`]) — gameplay rules stay with the owner.
+/// advances `visible`, anchors `target_y`, and flips the state components
+/// ([`Receptor::held`], [`HoldVisual`], [`FadeOut`]) — gameplay rules stay
+/// with the owner.
 #[derive(Resource)]
 pub struct NoteFieldClock {
     pub visible: Seconds,
     pub timing: StepfileTiming,
-    /// World y of the receptor row, kept a padded distance below the
-    /// window's top edge by [`anchor_to_window_top`].
+    /// World y of the receptor row, where scrolling arrows arrive.
     pub target_y: f32,
 }
 
@@ -116,6 +166,26 @@ impl NoteFieldClock {
             now: self.visible,
             now_beat: self.beat(),
             target_y: self.target_y,
+        }
+    }
+}
+
+/// What the lane cameras must line up with: where they draw, and the
+/// design canvas the world camera keeps visible there (`AutoMin`), so the
+/// lane plane renders 1:1 with the 2D world. The game's default is the
+/// primary window and its 1280x720 canvas; headless renderers point it at
+/// their capture image, whose world is the image itself.
+#[derive(Resource)]
+pub struct LaneView {
+    pub target: RenderTarget,
+    pub canvas: Vec2,
+}
+
+impl Default for LaneView {
+    fn default() -> LaneView {
+        LaneView {
+            target: RenderTarget::default(),
+            canvas: SCREEN_SIZE,
         }
     }
 }
@@ -144,34 +214,37 @@ impl NoteScroll {
     }
 }
 
-#[derive(Component, Default, Clone)]
-pub struct Receptor {
+/// Lane-space placement of a field element: the column it sits on and its
+/// mesh's authored cell size. [`place_field_elements`] keeps world x and
+/// footprint derived from these and the field, so a refit (the window
+/// rescaling the pixel budget) moves whole lanes without respawning them.
+#[derive(Component)]
+pub struct InColumn {
     pub column: usize,
+    cell: f32,
+}
+
+#[derive(Component, Default)]
+pub struct Receptor {
     /// The press tween follows this.
     pub held: bool,
     press: f32,
 }
 
-#[derive(Component, Clone, FromTemplate)]
+#[derive(Component, Clone)]
 pub struct NoteArrow {
     pub time: Seconds,
     pub beat: Beat,
 }
 
-/// An arrow cycling through its quant row's animation frames.
-#[derive(Component, Clone, FromTemplate)]
-pub struct TapAnimation {
-    pub first_frame: usize,
-}
-
 /// An arrow drawn as the skin's hold head, switching with the hold's state.
-#[derive(Component, Clone, FromTemplate)]
-pub struct HoldHeadSprite {
-    pub skin_row: usize,
+#[derive(Component, Clone)]
+pub struct HoldHead {
+    pub row: usize,
 }
 
 /// Render state of a hold, on the same entity as its head arrow.
-#[derive(Component, Clone, FromTemplate)]
+#[derive(Component, Clone)]
 pub struct HoldVisual {
     pub end: Seconds,
     pub end_beat: Beat,
@@ -203,29 +276,20 @@ impl HoldVisualState {
     }
 }
 
-#[derive(Component, Clone, FromTemplate)]
+#[derive(Component, Clone)]
 pub struct HoldPart {
     pub head: Entity,
     pub piece: HoldPiece,
+    pub roll: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, FromTemplate)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HoldPiece {
-    #[default]
     Body,
     Cap,
 }
 
-impl From<HoldPiece> for HoldPieceTemplate {
-    fn from(piece: HoldPiece) -> Self {
-        match piece {
-            HoldPiece::Body => HoldPieceTemplate::Body,
-            HoldPiece::Cap => HoldPieceTemplate::Cap,
-        }
-    }
-}
-
-#[derive(Component, Clone, FromTemplate)]
+#[derive(Component, Clone)]
 pub struct MineNote {
     pub time: Seconds,
     pub beat: Beat,
@@ -234,13 +298,22 @@ pub struct MineNote {
 pub const HOLD_OK_FADE_SECONDS: f32 = 0.05;
 const MINE_EXPLOSION_SECONDS: f32 = 0.4;
 
+/// Marks a fading entity whose material is exclusively its own, letting
+/// [`fade_out`] drive the material's alpha. Entities on shared skin
+/// materials must not carry this — they rely on the scale change instead.
+#[derive(Component)]
+pub struct FadesMaterial;
+
 /// Fades the entity out where it stands, then despawns it; fading arrows
-/// stop scrolling because [`scroll_arrows`] skips them.
+/// stop scrolling because [`scroll_arrows`] skips them. Sprites, text,
+/// and [`FadesMaterial`] entities fade their alpha; everything else
+/// relies on the scale change (`growth` of -1 shrinks to nothing).
 #[derive(Component)]
 pub struct FadeOut {
     remaining: f32,
     total: f32,
     growth: f32,
+    base_scale: Option<Vec3>,
 }
 
 impl FadeOut {
@@ -249,6 +322,7 @@ impl FadeOut {
             remaining: seconds,
             total: seconds,
             growth: 0.0,
+            base_scale: None,
         }
     }
 
@@ -267,8 +341,14 @@ pub struct NoteSpawn {
     pub column: usize,
     /// Recognized quantization (see `GameConfig::recognized_quant`).
     pub quant: u32,
-    /// Hold or roll tail position.
-    pub end: Option<(Seconds, Beat)>,
+    pub tail: Option<NoteTail>,
+}
+
+/// A hold or roll note's tail.
+pub struct NoteTail {
+    pub time: Seconds,
+    pub beat: Beat,
+    pub roll: bool,
 }
 
 pub struct SpawnedNote {
@@ -295,79 +375,107 @@ pub fn spawn_receptors(
 ) -> Vec<Entity> {
     (0..layout.columns)
         .map(|column| {
+            let entity = spawn_element(
+                commands,
+                skin.receptor_visual(),
+                layout,
+                column,
+                TARGET_Y,
+                10.0,
+                column_rotation(column),
+            );
             commands
-                .spawn_scene(bsn! {
-                    Receptor { column: column }
-                    InField({field})
-                    skin_sprite(skin, skin.receptor_frames[1], layout.arrow_size)
-                    oriented(layout.column_x(column), TARGET_Y, 10.0, column_rotation(column))
-                })
-                .id()
+                .entity(entity)
+                .insert((Receptor::default(), InField(field)));
+            entity
         })
         .collect()
 }
 
 pub fn spawn_note(
     commands: &mut Commands,
+    asset_server: &AssetServer,
     skin: &ActiveNoteSkin,
     field: Entity,
     layout: &NoteField,
     note: &NoteSpawn,
 ) -> SpawnedNote {
-    let row = skin.quant_row(note.quant);
-    let time = note.time;
-    let beat = note.beat;
-    let translation = Vec3::new(layout.column_x(note.column), OFFSCREEN_Y, 20.0);
+    let row = skin.note.quant_row(note.quant);
+    let arrow = NoteArrow {
+        time: note.time,
+        beat: note.beat,
+    };
     let rotation = column_rotation(note.column);
-    let head = match note.end {
+
+    let nudge = beat_z_nudge(note.beat);
+    let head = match &note.tail {
         None => {
-            let first_frame = skin.tap_base(row);
-            commands
-                .spawn_scene(bsn! {
-                    NoteArrow { time: time, beat: beat }
-                    InField({field})
-                    TapAnimation { first_frame: first_frame }
-                    skin_sprite(skin, first_frame, layout.arrow_size)
-                    oriented(translation.x, translation.y, translation.z, rotation)
-                })
-                .id()
+            let visual = skin.tap_visual(row);
+            let head = spawn_element(
+                commands,
+                visual,
+                layout,
+                note.column,
+                OFFSCREEN_Y,
+                20.0 - nudge,
+                rotation,
+            );
+            commands.entity(head).insert((arrow, InField(field)));
+            head
         }
-        Some((end, end_beat)) => commands
-            .spawn_scene(bsn! {
-                NoteArrow { time: time, beat: beat }
-                InField({field})
-                HoldHeadSprite { skin_row: row }
-                HoldVisual { end: {end}, end_beat: {end_beat} }
-                skin_sprite(skin, skin.hold_head(row, false), layout.arrow_size)
-                oriented(translation.x, translation.y, translation.z, rotation)
-            })
-            .id(),
+        Some(tail) => {
+            let visual = skin.head_visual(row, false);
+            let head = spawn_element(
+                commands,
+                visual,
+                layout,
+                note.column,
+                OFFSCREEN_Y,
+                20.0 - nudge,
+                rotation,
+            );
+            commands.entity(head).insert((
+                arrow,
+                InField(field),
+                HoldHead { row },
+                HoldVisual {
+                    end: tail.time,
+                    end_beat: tail.beat,
+                    state: HoldVisualState::default(),
+                },
+            ));
+            head
+        }
     };
 
     let mut parts = Vec::new();
-    if note.end.is_some() {
-        let x = layout.column_x(note.column);
-        let body = skin.hold_body_inactive.clone();
-        parts.push(
-            commands
-                .spawn_scene(bsn! {
-                    HoldPart { head: {head}, piece: HoldPiece::Body }
-                    InField({field})
-                    Sprite { image: {body}, custom_size: {Some(Vec2::ZERO)} }
-                    at(x, OFFSCREEN_Y, 18.0)
-                })
-                .id(),
-        );
-        parts.push(
-            commands
-                .spawn_scene(bsn! {
-                    HoldPart { head: {head}, piece: HoldPiece::Cap }
-                    InField({field})
-                    skin_sprite(skin, skin.hold_cap_inactive, layout.arrow_size)
-                    at(x, OFFSCREEN_Y, 18.2)
-                })
-                .id(),
-        );
+    if let Some(tail) = &note.tail {
+        let art = if tail.roll { &skin.roll } else { &skin.hold };
+        for (piece, texture, z) in [
+            (HoldPiece::Body, &art.body_inactive, 18.0),
+            (HoldPiece::Cap, &art.cap_inactive, 18.2),
+        ] {
+            let material = asset_server.add(tail_material(texture.clone()));
+            let entity = spawn_element(
+                commands,
+                skin.quad_visual(material),
+                layout,
+                note.column,
+                OFFSCREEN_Y,
+                z - nudge,
+                Quat::IDENTITY,
+            );
+            commands.entity(entity).insert((
+                HoldPart {
+                    head,
+                    piece,
+                    roll: tail.roll,
+                },
+                InField(field),
+                Visibility::Hidden,
+            ));
+            parts.push(entity);
+        }
     }
 
     SpawnedNote { head, parts }
@@ -382,73 +490,105 @@ pub fn spawn_mine(
     beat: Beat,
     column: usize,
 ) -> Entity {
+    let entity = spawn_element(
+        commands,
+        skin.mine_visual(),
+        layout,
+        column,
+        OFFSCREEN_Y,
+        20.0 - beat_z_nudge(beat),
+        Quat::IDENTITY,
+    );
     commands
-        .spawn_scene(bsn! {
-            MineNote { time: time, beat: beat }
-            InField({field})
-            skin_sprite(skin, skin.mine, layout.arrow_size)
-            at(layout.column_x(column), OFFSCREEN_Y, 20.0)
-        })
-        .id()
+        .entity(entity)
+        .insert((MineNote { time, beat }, InField(field)));
+    entity
 }
 
-/// The arrow flash at a receptor when a step's arrows vanish, growing
-/// while it fades. The bright variant plays at high combo: larger art,
-/// snappier, starting smaller.
-pub fn spawn_arrow_flash(
-    commands: &mut Commands,
-    skin: &ActiveNoteSkin,
-    layout: &NoteField,
-    column: usize,
-    target_y: f32,
-    color: Color,
-    bright: bool,
-) -> Entity {
-    let (flash, seconds, base_zoom, growth) = if bright {
-        (skin.arrow_flash_bright, 0.13, 0.8, 0.5)
-    } else {
-        (skin.arrow_flash_dim, 0.18, 1.0, 0.4)
-    };
-    let size = flash.size * (layout.arrow_size / 64.0) * base_zoom;
-    commands
-        .spawn_scene(bsn! {
-            skin_sprite(skin, flash.frame, size)
-            Sprite { color: {color} }
-            oriented(layout.column_x(column), target_y, 22.0, column_rotation(column))
-        })
-        .insert(FadeOut::growing(seconds, growth))
-        .id()
+/// Overlapping lane elements at one depth would tie in the transparent
+/// sort and flicker as their draw order swaps between frames — under a
+/// flat camera, every note shares a single view depth. Each note sits
+/// slightly deeper the later its beat, so an earlier note always draws
+/// over the ones scrolling in behind it.
+fn beat_z_nudge(beat: Beat) -> f32 {
+    beat.0 as f32 * 0.005
 }
 
-pub fn spawn_mine_explosion(
-    commands: &mut Commands,
-    skin: &ActiveNoteSkin,
-    layout: &NoteField,
-    column: usize,
-    target_y: f32,
-) -> Entity {
-    commands
-        .spawn_scene(bsn! {
-            skin_sprite(skin, skin.mine_explosion, layout.arrow_size * 1.7)
-            at(layout.column_x(column), target_y, 21.0)
-        })
-        .insert(FadeOut::growing(MINE_EXPLOSION_SECONDS, 0.25))
-        .id()
+/// Spawns transient effects into a field's lane scene: tinted quads whose
+/// own materials fade with their [`FadeOut`], drawn above everything in
+/// the lane.
+pub struct LaneEffects<'a, 'w, 's> {
+    pub commands: &'a mut Commands<'w, 's>,
+    pub asset_server: &'a AssetServer,
+    pub skin: &'a ActiveNoteSkin,
+    pub layout: &'a NoteField,
 }
 
-fn skin_sprite(skin: &ActiveNoteSkin, index: usize, size: f32) -> impl Scene {
-    let image = skin.sheet.clone();
-    let rect = Some(skin.frame(index));
-    bsn! {
-        Sprite {
-            image: {image},
-            rect: {rect},
-            custom_size: {Some(Vec2::splat(size))},
-        }
+impl LaneEffects<'_, '_, '_> {
+    /// The arrow flash at a receptor when a step's arrows vanish, growing
+    /// while it fades. The bright variant plays at high combo: larger
+    /// art, snappier, starting smaller.
+    pub fn arrow_flash(
+        &mut self,
+        column: usize,
+        target_y: f32,
+        color: Color,
+        bright: bool,
+    ) -> Entity {
+        let (flash, seconds, base_zoom, growth) = if bright {
+            (&self.skin.flash_bright, 0.13, 0.8, 0.5)
+        } else {
+            (&self.skin.flash_dim, 0.18, 1.0, 0.4)
+        };
+        let size = flash.size * (self.layout.arrow_size / NOTE_CELL) * base_zoom;
+        self.effect(
+            flash.image.clone(),
+            color,
+            Transform {
+                translation: Vec3::new(self.layout.column_x(column), target_y, 22.0),
+                rotation: column_rotation(column),
+                scale: size.extend(1.0),
+            },
+            FadeOut::growing(seconds, growth),
+        )
+    }
+
+    pub fn mine_explosion(&mut self, column: usize, target_y: f32) -> Entity {
+        self.effect(
+            self.skin.mine_explosion.image.clone(),
+            Color::WHITE,
+            Transform {
+                translation: Vec3::new(self.layout.column_x(column), target_y, 21.0),
+                scale: Vec3::splat(self.layout.arrow_size * 1.7),
+                ..default()
+            },
+            FadeOut::growing(MINE_EXPLOSION_SECONDS, 0.25),
+        )
+    }
+
+    fn effect(
+        &mut self,
+        image: Handle<Image>,
+        color: Color,
+        transform: Transform,
+        fade: FadeOut,
+    ) -> Entity {
+        let material = self.asset_server.add(effect_material(image, color));
+        let visual = self.skin.quad_visual(material);
+        self.commands
+            .spawn((
+                Mesh3d(visual.mesh),
+                MeshMaterial3d(visual.material),
+                self.layout.render_layers(),
+                transform,
+                fade,
+                FadesMaterial,
+            ))
+            .id()
     }
 }
 
-/// The skin's sprites point down; rotate per pad-local column so every
+/// The skin's arrows point down; rotate per pad-local column so every
 /// group of four reads Left, Down, Up, Right (doubles repeats the cycle
 /// on the second pad).
 pub fn column_rotation(column: usize) -> Quat {
@@ -470,24 +610,26 @@ pub struct NoteFieldPlugin;
 
 impl Plugin for NoteFieldPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
-            Update,
-            (
-                anchor_to_window_top,
-                position_receptors,
-                scroll_arrows,
-                animate_tap_frames,
-                animate_hold_heads,
-                animate_receptor_frames,
-                animate_receptor_press,
-                animate_hold_parts,
-                animate_mines,
-                fade_out,
+        app.init_resource::<LaneView>()
+            .add_systems(
+                Update,
+                (
+                    place_field_elements,
+                    position_receptors,
+                    scroll_arrows,
+                    animate_sheet_taps,
+                    animate_hold_heads,
+                    animate_receptor_frames,
+                    animate_receptor_press,
+                    animate_hold_parts,
+                    animate_mines,
+                    fade_out,
+                )
+                    .chain()
+                    .in_set(NoteFieldSystems)
+                    .run_if(resource_exists::<NoteFieldClock>),
             )
-                .chain()
-                .in_set(NoteFieldSystems)
-                .run_if(resource_exists::<NoteFieldClock>),
-        );
+            .add_systems(Update, sync_lane_cameras);
     }
 }
 
@@ -495,26 +637,200 @@ impl Plugin for NoteFieldPlugin {
 /// first frame.
 const OFFSCREEN_Y: f32 = -10_000.0;
 
-/// Keeps the receptor arrows' top edge [`SCREEN_EDGE_PADDING`] below the
-/// window's top edge — the same breathing room the health vials keep to
-/// their side — whatever extra world a non-16:9 window reveals and
-/// whatever size the arrows were fitted to. Headless renderers have no
-/// window and keep the design-canvas default.
-fn anchor_to_window_top(
-    windows: Query<&Window>,
-    fields: Query<&NoteField>,
-    mut clock: ResMut<NoteFieldClock>,
+fn spawn_element(
+    commands: &mut Commands,
+    visual: ElementVisual,
+    layout: &NoteField,
+    column: usize,
+    y: f32,
+    z: f32,
+    rotation: Quat,
+) -> Entity {
+    let entity = commands
+        .spawn((
+            Mesh3d(visual.mesh),
+            MeshMaterial3d(visual.material),
+            layout.render_layers(),
+            InColumn {
+                column,
+                cell: visual.cell,
+            },
+            Transform {
+                translation: Vec3::new(layout.column_x(column), y, z),
+                rotation,
+                scale: Vec3::splat(layout.arrow_size / visual.cell),
+            },
+        ))
+        .id();
+    if let Some((mesh, material)) = visual.shell {
+        // The nudge mirrors the mesh layering (the shell's front face sits
+        // above the fill plate), so the shell also blend-sorts right after
+        // its own fill under any camera.
+        commands.spawn((
+            Mesh3d(mesh),
+            MeshMaterial3d(material),
+            layout.render_layers(),
+            Transform::from_xyz(0.0, 0.0, 0.05),
+            ChildOf(entity),
+        ));
+    }
+    entity
+}
+
+/// A note field's own perspective camera, pivoting around the receptor row
+/// per its player's [`Perspective`].
+#[derive(Component)]
+struct LaneCamera {
+    field: Entity,
+}
+
+/// The lane cameras' projection: a perspective whose window is shifted
+/// sideways, so a camera hovering over its own field still shows the same
+/// screen rect as the main camera. Every field gets its own vanishing
+/// point — off-center fields (versus lanes, the options previews) face
+/// the viewer head on instead of leaning toward the screen center.
+#[derive(Debug, Clone)]
+struct LanePerspective {
+    perspective: PerspectiveProjection,
+    /// Horizontal window shift in NDC units (+1 is half a screen).
+    shift: f32,
+}
+
+impl CameraProjection for LanePerspective {
+    fn get_clip_from_view(&self) -> Mat4 {
+        let mut matrix = self.perspective.get_clip_from_view();
+        // The off-center window term of a frustum, `(right+left)/(right-left)`.
+        matrix.col_mut(2)[0] = self.shift;
+        matrix
+    }
+
+    fn get_clip_from_view_for_sub(&self, sub_view: &bevy::camera::SubCameraView) -> Mat4 {
+        self.perspective.get_clip_from_view_for_sub(sub_view)
+    }
+
+    fn update(&mut self, width: f32, height: f32) {
+        self.perspective.update(width, height);
+    }
+
+    fn far(&self) -> f32 {
+        self.perspective.far()
+    }
+
+    fn get_frustum_corners(&self, z_near: f32, z_far: f32) -> [Vec3A; 8] {
+        self.perspective.get_frustum_corners(z_near, z_far)
+    }
+}
+
+/// Keeps one lane camera per note field: spawned when the field appears,
+/// culled when it goes, and re-aimed every frame. The camera hovers over
+/// its field's center where a flat view reproduces the 2D world 1:1 on
+/// the lane plane, then pitches around the receptor row, so the receptors
+/// stay put while the lane foreshortens.
+fn sync_lane_cameras(
+    mut commands: Commands,
+    config: Res<GameConfig>,
+    fields: Query<(Entity, &NoteField)>,
+    settings: Res<PlayerSettings>,
+    clock: Option<Res<NoteFieldClock>>,
+    view: Res<LaneView>,
+    mut cameras: Query<(
+        Entity,
+        &LaneCamera,
+        &Camera,
+        &mut Transform,
+        &mut Projection,
+    )>,
 ) {
-    let Ok(window) = windows.single() else { return };
-    let Some(arrow_size) = fields.iter().map(|field| field.arrow_size).reduce(f32::max) else {
-        return;
-    };
-    let width = window.width().max(1.0);
-    let height = window.height().max(1.0);
-    let visible_top = height * (SCREEN_SIZE.x / width).max(SCREEN_SIZE.y / height) / 2.0;
-    let target_y = visible_top - SCREEN_EDGE_PADDING - arrow_size / 2.0;
-    if clock.target_y != target_y {
-        clock.target_y = target_y;
+    let fov = config.lane_camera.fov_degrees.to_radians();
+    for (entity, lane_camera, ..) in &cameras {
+        if fields.get(lane_camera.field).is_err() {
+            commands.entity(entity).despawn();
+        }
+    }
+    let Some(clock) = clock else { return };
+    for (field_entity, field) in &fields {
+        let Some((_, _, camera, mut transform, mut projection)) = cameras
+            .iter_mut()
+            .find(|(_, lane_camera, ..)| lane_camera.field == field_entity)
+        else {
+            commands.spawn((
+                LaneCamera {
+                    field: field_entity,
+                },
+                Camera3d::default(),
+                Camera {
+                    order: (LANE_LAYER_BASE + field.lane) as isize,
+                    clear_color: ClearColorConfig::None,
+                    ..default()
+                },
+                view.target.clone(),
+                Tonemapping::None,
+                field.render_layers(),
+                Projection::custom(LanePerspective {
+                    perspective: PerspectiveProjection { fov, ..default() },
+                    shift: 0.0,
+                }),
+            ));
+            continue;
+        };
+        let Some(size) = camera.logical_target_size() else {
+            continue;
+        };
+        let perspective = settings[field.player].perspective;
+
+        // The world rect the main ortho camera shows, covering the canvas.
+        let visible = Vec2::new(
+            size.x * (view.canvas.x / size.x).max(view.canvas.y / size.y),
+            size.y * (view.canvas.x / size.x).max(view.canvas.y / size.y),
+        );
+        let distance = visible.y * 0.5 / (fov * 0.5).tan();
+        let tilt_magnitude = config.lane_camera.tilt_degrees.to_radians();
+        let tilt = match perspective {
+            Perspective::None => 0.0,
+            Perspective::Above => -tilt_magnitude,
+            Perspective::Below => tilt_magnitude,
+        };
+        let mut wanted = Transform::from_xyz(field.origin_x, 0.0, distance);
+        wanted.rotate_around(
+            Vec3::new(field.origin_x, clock.target_y, 0.0),
+            Quat::from_rotation_x(tilt),
+        );
+        if *transform != wanted {
+            *transform = wanted;
+        }
+        if let Projection::Custom(custom) = &mut *projection
+            && let Some(lane) = custom.get_mut::<LanePerspective>()
+        {
+            lane.perspective.near = distance * 0.05;
+            lane.perspective.far = distance * 4.0;
+            // Shift the projection window back over the screen rect the
+            // main camera shows.
+            lane.shift = -field.origin_x / (visible.x * 0.5);
+        }
+    }
+}
+
+/// Keeps every element's x and footprint derived from its field, so a
+/// refit — the window rescaling the arrow pixel budget — moves whole
+/// lanes without respawning them. The receptor press and hold-part
+/// systems run later in the chain and refine the scales they own;
+/// fading entities are left to die at their size.
+fn place_field_elements(
+    fields: Query<&NoteField>,
+    mut elements: Query<(&InColumn, &InField, &mut Transform), Without<FadeOut>>,
+) {
+    for (anchor, in_field, mut transform) in &mut elements {
+        let Ok(field) = fields.get(in_field.0) else {
+            continue;
+        };
+        let x = field.column_x(anchor.column);
+        if transform.translation.x != x {
+            transform.translation.x = x;
+        }
+        let scale = Vec3::splat(field.arrow_size / anchor.cell);
+        if transform.scale != scale {
+            transform.scale = scale;
+        }
     }
 }
 
@@ -553,65 +869,93 @@ fn scroll_arrows(
     }
 }
 
-fn animate_tap_frames(
+/// Slides every sheet skin's tap materials to the frame of the current
+/// beat — all taps of a quant share one material, animating in unison.
+fn animate_sheet_taps(
     clock: Res<NoteFieldClock>,
     skins: Res<ActiveNoteSkins>,
-    fields: Query<&NoteField>,
-    mut taps: Query<(&TapAnimation, &InField, &mut Sprite)>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let beat = clock.beat();
-    for (tap, in_field, mut sprite) in &mut taps {
-        let Ok(field) = fields.get(in_field.0) else {
+    for player in PlayerId::iter() {
+        let NoteArt::Sheet(sheet) = &skins.get(player).note else {
             continue;
         };
-        let skin = skins.get(field.player);
-        let cycle = beat.rem_euclid(skin.tap_beats_per_cycle) / skin.tap_beats_per_cycle;
-        let frame = ((cycle * skin.tap_frames as f64) as usize).min(skin.tap_frames - 1);
-        set_rect(&mut sprite, Some(skin.frame(tap.first_frame + frame)));
+        let x = sheet.frame_x_at(beat);
+        for handle in sheet.tap_materials() {
+            let Some(material) = materials.get(handle) else {
+                continue;
+            };
+            if material.uv_transform.translation.x != x {
+                materials
+                    .get_mut(handle)
+                    .expect("material existed just above")
+                    .uv_transform
+                    .translation
+                    .x = x;
+            }
+        }
     }
 }
 
 fn animate_hold_heads(
     skins: Res<ActiveNoteSkins>,
     fields: Query<&NoteField>,
-    mut heads: Query<(&HoldHeadSprite, &HoldVisual, &InField, &mut Sprite)>,
+    mut heads: Query<(
+        &HoldHead,
+        &HoldVisual,
+        &InField,
+        &mut MeshMaterial3d<StandardMaterial>,
+    )>,
 ) {
-    for (head, hold, in_field, mut sprite) in &mut heads {
+    for (head, hold, in_field, mut material) in &mut heads {
         let Ok(field) = fields.get(in_field.0) else {
             continue;
         };
         let skin = skins.get(field.player);
-        let index = skin.hold_head(head.skin_row, hold.state.active());
-        set_rect(&mut sprite, Some(skin.frame(index)));
+        let visual = skin.head_visual(head.row, hold.state.active());
+        if material.0 != visual.material {
+            material.0 = visual.material;
+        }
     }
 }
 
 fn animate_receptor_frames(
     clock: Res<NoteFieldClock>,
     skins: Res<ActiveNoteSkins>,
-    fields: Query<&NoteField>,
-    mut receptors: Query<(&InField, &mut Sprite), With<Receptor>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let beat = clock.beat();
-    for (in_field, mut sprite) in &mut receptors {
-        let Ok(field) = fields.get(in_field.0) else {
+    for player in PlayerId::iter() {
+        let receptor = &skins.get(player).receptor;
+        let x = receptor.frame_x_at(beat);
+        let brightness = receptor.brightness_at(beat);
+        let color = Color::srgb(brightness, brightness, brightness);
+        let Some(material) = materials.get(&receptor.material) else {
             continue;
         };
-        let skin = skins.get(field.player);
-        let receptor_frame = if beat.rem_euclid(1.0) < skin.receptor_beat_split {
-            skin.receptor_frames[0]
-        } else {
-            skin.receptor_frames[1]
-        };
-        set_rect(&mut sprite, Some(skin.frame(receptor_frame)));
+        if material.uv_transform.translation.x != x || material.base_color != color {
+            let mut material = materials
+                .get_mut(&receptor.material)
+                .expect("material existed just above");
+            material.uv_transform.translation.x = x;
+            material.base_color = color;
+        }
     }
 }
 
 const PRESS_SECONDS: f32 = 0.25;
 
 /// Held receptors tween back along Z with a shrink to sell the depth.
-fn animate_receptor_press(time: Res<Time>, mut receptors: Query<(&mut Receptor, &mut Transform)>) {
-    for (mut receptor, mut transform) in &mut receptors {
+fn animate_receptor_press(
+    time: Res<Time>,
+    fields: Query<&NoteField>,
+    mut receptors: Query<(&mut Receptor, &InColumn, &InField, &mut Transform)>,
+) {
+    for (mut receptor, anchor, in_field, mut transform) in &mut receptors {
+        let Ok(field) = fields.get(in_field.0) else {
+            continue;
+        };
         if !receptor.held && receptor.press == 0.0 {
             continue;
         }
@@ -619,8 +963,9 @@ fn animate_receptor_press(time: Res<Time>, mut receptors: Query<(&mut Receptor, 
         let step = if receptor.held { step } else { -step };
         receptor.press = (receptor.press + step).clamp(0.0, 1.0);
         let eased = EaseFunction::CubicInOut.sample_clamped(receptor.press);
+        let base = field.arrow_size / anchor.cell;
         transform.translation.z = 10.0 - 6.0 * eased;
-        transform.scale = Vec3::splat(1.0 - 0.22 * eased);
+        transform.scale = Vec3::splat(base * (1.0 - 0.22 * eased));
     }
 }
 
@@ -631,15 +976,16 @@ const BODY_CAP_OVERLAP: f32 = 1.0;
 /// Positions and styles the hold tail: the body is one quad whose texture
 /// wraps vertically, anchored to the tail so the pattern always meets the
 /// cap at a tile boundary, and the cap sits centered on the tail below it —
-/// clipped so nothing draws above the head's center. Textures switch
-/// between active and inactive with the hold's state, and dropped holds dim
-/// to the skin's NG brightness.
+/// clipped so nothing draws above the head's center. Each part owns its
+/// material: the texture switches between active and inactive with the
+/// hold's state, the texture window drives the tiling and clipping, and
+/// dropped holds dim to the skin's NG brightness.
 #[derive(QueryData)]
 #[query_data(mutable)]
-struct HoldPartSprite {
+struct HoldPartVisual {
     part: &'static HoldPart,
     transform: &'static mut Transform,
-    sprite: &'static mut Sprite,
+    material: &'static MeshMaterial3d<StandardMaterial>,
     visibility: &'static mut Visibility,
 }
 
@@ -648,14 +994,15 @@ fn animate_hold_parts(
     skins: Res<ActiveNoteSkins>,
     fields: Query<&NoteField>,
     heads: Query<(&NoteArrow, &HoldVisual, &InField)>,
-    mut parts: Query<HoldPartSprite, Without<NoteArrow>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut parts: Query<HoldPartVisual, Without<NoteArrow>>,
 ) {
     let scroll = clock.scroll();
     for item in &mut parts {
-        let HoldPartSpriteItem {
+        let HoldPartVisualItem {
             part,
             mut transform,
-            mut sprite,
+            material,
             mut visibility,
         } = item;
         let Ok((arrow, hold, in_field)) = heads.get(part.head) else {
@@ -665,8 +1012,9 @@ fn animate_hold_parts(
             continue;
         };
         let skin = skins.get(field.player);
-        let scale = field.arrow_size / skin.hold_body_size.x;
-        let cap_height = skin.hold_cap_size.y * scale;
+        let art = if part.roll { &skin.roll } else { &skin.hold };
+        let scale = field.arrow_size / art.body_size.x;
+        let cap_height = art.cap_size.y * scale;
         if hold.state == HoldVisualState::Ok {
             visibility.set_if_neq(Visibility::Hidden);
             continue;
@@ -677,7 +1025,7 @@ fn animate_hold_parts(
             head_y = head_y.min(scroll.target_y());
         }
         let end_y = scroll.y_at(field, hold.end, hold.end_beat);
-        let body_bottom = end_y + skin.hold_body_stop_above_tail * scale;
+        let body_bottom = end_y + art.stop_above_tail * scale;
 
         let active = hold.state.active();
         let brightness = if hold.state == HoldVisualState::Dropped {
@@ -686,49 +1034,32 @@ fn animate_hold_parts(
             1.0
         };
         let color = Color::srgb(brightness, brightness, brightness);
-        if sprite.color != color {
-            sprite.color = color;
-        }
 
         match part.piece {
             HoldPiece::Body => {
-                let image = if active {
-                    &skin.hold_body_active
-                } else {
-                    &skin.hold_body_inactive
-                };
-                if sprite.image != *image {
-                    sprite.image = image.clone();
-                }
                 let length = head_y - body_bottom;
                 if length <= 0.5 {
                     visibility.set_if_neq(Visibility::Hidden);
                     continue;
                 }
-                // One quad; the repeat sampler wraps the pattern. The rect
-                // ends on the texture's bottom edge so the pattern is
-                // anchored to the tail, whatever the length.
                 let height = length + BODY_CAP_OVERLAP;
-                set_rect(
-                    &mut sprite,
-                    Some(Rect::new(
-                        0.0,
-                        skin.hold_body_size.y - length / scale,
-                        skin.hold_body_size.x,
-                        skin.hold_body_size.y + BODY_CAP_OVERLAP / scale,
-                    )),
-                );
-                sprite.custom_size = Some(Vec2::new(field.arrow_size, height));
+                // The texture window ends on the texture's bottom edge so
+                // the pattern is anchored to the tail, whatever the length;
+                // the wrap sampler tiles it upward from there.
+                let top = art.body_size.y - length / scale;
+                let bottom = art.body_size.y + BODY_CAP_OVERLAP / scale;
+                let window = uv_window(top, bottom, art.body_size.y);
+                let texture = if active {
+                    &art.body_active
+                } else {
+                    &art.body_inactive
+                };
+                update_part_material(&mut materials, &material.0, texture, window, color);
                 transform.translation.y = head_y - height / 2.0;
+                transform.scale = Vec3::new(field.arrow_size, height, 1.0);
                 visibility.set_if_neq(Visibility::Visible);
             }
             HoldPiece::Cap => {
-                let index = if active {
-                    skin.hold_cap_active
-                } else {
-                    skin.hold_cap_inactive
-                };
-                let frame = skin.frame(index);
                 // Clipped at the head's center; the bottom of the texture
                 // stays, so the tail keeps its tip.
                 let top = body_bottom.min(head_y);
@@ -738,19 +1069,54 @@ fn animate_hold_parts(
                     visibility.set_if_neq(Visibility::Hidden);
                     continue;
                 }
-                let rect = Rect::new(
-                    frame.min.x,
-                    frame.min.y + (skin.hold_cap_size.y - visible / scale).max(0.0),
-                    frame.max.x,
-                    frame.max.y,
-                );
-                set_rect(&mut sprite, Some(rect));
-                sprite.custom_size = Some(Vec2::new(field.arrow_size, visible));
+                let hidden = (art.cap_size.y - visible / scale).max(0.0);
+                let window = uv_window(hidden, art.cap_size.y, art.cap_size.y);
+                let texture = if active {
+                    &art.cap_active
+                } else {
+                    &art.cap_inactive
+                };
+                update_part_material(&mut materials, &material.0, texture, window, color);
                 transform.translation.y = bottom + visible / 2.0;
+                transform.scale = Vec3::new(field.arrow_size, visible, 1.0);
                 visibility.set_if_neq(Visibility::Visible);
             }
         }
     }
+}
+
+/// The vertical texture window `top..bottom` (in texture pixels of a
+/// `texture_height` tall image) as a texture-coordinate transform for a
+/// unit quad.
+fn uv_window(top: f32, bottom: f32, texture_height: f32) -> Affine2 {
+    Affine2 {
+        matrix2: Mat2::from_diagonal(Vec2::new(1.0, (bottom - top) / texture_height)),
+        translation: Vec2::new(0.0, top / texture_height),
+    }
+}
+
+fn update_part_material(
+    materials: &mut Assets<StandardMaterial>,
+    handle: &Handle<StandardMaterial>,
+    texture: &Handle<Image>,
+    window: Affine2,
+    color: Color,
+) {
+    let Some(material) = materials.get(handle) else {
+        return;
+    };
+    if material.base_color_texture.as_ref() == Some(texture)
+        && material.uv_transform == window
+        && material.base_color == color
+    {
+        return;
+    }
+    let mut material = materials
+        .get_mut(handle)
+        .expect("material existed just above");
+    material.base_color_texture = Some(texture.clone());
+    material.uv_transform = window;
+    material.base_color = color;
 }
 
 fn animate_mines(
@@ -782,9 +1148,16 @@ struct FadingVisual {
     transform: &'static mut Transform,
     text_color: Option<&'static mut TextColor>,
     sprite: Option<&'static mut Sprite>,
+    material: Option<&'static MeshMaterial3d<StandardMaterial>>,
+    fades_material: Has<FadesMaterial>,
 }
 
-fn fade_out(time: Res<Time>, mut commands: Commands, mut fading: Query<FadingVisual>) {
+fn fade_out(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut fading: Query<FadingVisual>,
+) {
     for item in &mut fading {
         let FadingVisualItem {
             entity,
@@ -792,6 +1165,8 @@ fn fade_out(time: Res<Time>, mut commands: Commands, mut fading: Query<FadingVis
             mut transform,
             text_color,
             sprite,
+            material,
+            fades_material,
         } = item;
         fade.remaining -= time.delta_secs();
         if fade.remaining <= 0.0 {
@@ -800,7 +1175,8 @@ fn fade_out(time: Res<Time>, mut commands: Commands, mut fading: Query<FadingVis
         }
         let alpha = fade.remaining / fade.total;
         if fade.growth != 0.0 {
-            transform.scale = Vec3::splat(1.0 + fade.growth * (1.0 - alpha));
+            let base = *fade.base_scale.get_or_insert(transform.scale);
+            transform.scale = base * (1.0 + fade.growth * (1.0 - alpha));
         }
         if let Some(mut color) = text_color {
             color.0.set_alpha(alpha);
@@ -808,14 +1184,11 @@ fn fade_out(time: Res<Time>, mut commands: Commands, mut fading: Query<FadingVis
         if let Some(mut sprite) = sprite {
             sprite.color = sprite.color.with_alpha(alpha);
         }
-    }
-}
-
-// The setters below assign only on change, so unchanged entities don't get
-// flagged for re-extraction every frame; `set_if_neq` covers `Visibility`.
-
-fn set_rect(sprite: &mut Mut<Sprite>, rect: Option<Rect>) {
-    if sprite.rect != rect {
-        sprite.rect = rect;
+        if fades_material
+            && let Some(handle) = material
+            && let Some(mut material) = materials.get_mut(&handle.0)
+        {
+            material.base_color.set_alpha(alpha);
+        }
     }
 }

@@ -1,132 +1,36 @@
 {
   "display_name": "DDREx Default",
-  "sheet": "sheet.png",
   "dropped_brightness": 0.25,
-  "taps": {
-    "quants": [
-      4,
-      8,
-      12,
-      16,
-      24,
-      32,
-      48,
-      64
-    ],
-    "frames": 64,
-    "frame_size": [
-      64,
-      64
-    ],
-    "origin": [
-      2,
-      2
-    ],
-    "stride": [
-      68,
-      68
-    ],
-    "beats_per_cycle": 4
+  "note": {
+    "Sheet": {
+      "taps": "taps.png",
+      "quants": [4, 8, 12, 16, 24, 32, 48, 64],
+      "frames": 64,
+      "beats_per_cycle": 4,
+      "hold_head_active": "hold_head_active.png",
+      "hold_head_inactive": "hold_head_inactive.png"
+    }
   },
   "receptor": {
-    "frames": [
-      [
-        2,
-        546
-      ],
-      [
-        70,
-        546
-      ]
-    ],
-    "size": [
-      64,
-      64
-    ],
-    "beat_split": 0.25
+    "image": "receptor.png",
+    "frames": [0.25, 0.75]
   },
-  "hold_head": {
-    "inactive": [
-      [
-        138,
-        546
-      ]
-    ],
-    "active": [
-      [
-        206,
-        546
-      ]
-    ],
-    "size": [
-      64,
-      64
-    ]
-  },
-  "hold_cap": {
-    "inactive": [
-      274,
-      546
-    ],
-    "active": [
-      342,
-      546
-    ],
-    "size": [
-      64,
-      64
-    ]
+  "hold": {
+    "body_active": "hold_body_active.png",
+    "body_inactive": "hold_body_inactive.png",
+    "body_size": [64, 128],
+    "stop_above_tail": 32,
+    "cap_active": "hold_cap_active.png",
+    "cap_inactive": "hold_cap_inactive.png",
+    "cap_size": [64, 64]
   },
   "mine": {
-    "pos": [
-      410,
-      546
-    ],
-    "size": [
-      64,
-      64
-    ],
+    "art": { "Sheet": { "image": "mine.png" } },
     "spin_beats": 2
   },
-  "mine_explosion": {
-    "pos": [
-      170,
-      614
-    ],
-    "size": [
-      128,
-      128
-    ]
-  },
-  "hold_body": {
-    "inactive": "hold_body_inactive.png",
-    "active": "hold_body_active.png",
-    "size": [
-      64,
-      128
-    ],
-    "stop_above_tail": 32
-  },
-  "arrow_flash": {
-    "bright": {
-      "pos": [
-        2,
-        614
-      ],
-      "size": [
-        96,
-        96
-      ]
-    },
-    "dim": {
-      "pos": [
-        102,
-        614
-      ],
-      "size": [
-        64,
-        64
-      ]
-    }
+  "mine_explosion": { "image": "mine_explosion.png", "size": [128, 128] },
+  "flash": {
+    "bright": { "image": "flash_bright.png", "size": [96, 96] },
+    "dim": { "image": "flash_dim.png", "size": [64, 64] }
   }
 }

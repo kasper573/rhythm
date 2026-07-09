@@ -19,17 +19,19 @@ use bevy::time::TimeUpdateStrategy;
 use bevy::window::ExitCondition;
 use bevy::winit::WinitPlugin;
 use clap::Parser;
-use rhythm::core::CLEAR_COLOR;
 use rhythm::core::config::GameConfig;
 use rhythm::core::note_field::{
-    FadeOut, HOLD_OK_FADE_SECONDS, HoldPart, HoldVisual, HoldVisualState, MineNote, NoteArrow,
-    NoteField, NoteFieldClock, NoteFieldPlugin, NoteSpawn, NoteSpeed, Receptor, SpawnedNote,
-    TARGET_Y, spawn_arrow_flash, spawn_mine, spawn_mine_explosion, spawn_note, spawn_receptors,
+    FadeOut, HOLD_OK_FADE_SECONDS, HoldPart, HoldVisual, HoldVisualState, InColumn, LaneEffects,
+    LaneView, MineNote, NoteArrow, NoteField, NoteFieldClock, NoteFieldPlugin, NoteSpawn,
+    NoteSpeed, NoteTail, Perspective, Receptor, SpawnedNote, TARGET_Y, spawn_mine, spawn_note,
+    spawn_receptors,
 };
 use rhythm::core::note_skin::{ActiveNoteSkins, load_note_skin};
 use rhythm::core::player::PlayerId;
+use rhythm::core::settings::{PlayerOptions, PlayerSettings};
 use rhythm::core::stepfile::StepfileTiming;
 use rhythm::core::units::{Beat, Seconds};
+use rhythm::core::{CLEAR_COLOR, OVERLAY_CAMERA_ORDER, OVERLAY_LAYER};
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::PathBuf;
@@ -46,6 +48,9 @@ struct Cli {
     /// Note skin to render; defaults to the game config's default
     #[arg(long)]
     skin: Option<String>,
+    /// Lane camera perspective: None, Above, or Below
+    #[arg(long, default_value = "None")]
+    perspective: String,
     #[arg(long, default_value_t = 120.0)]
     bpm: f64,
     /// Output directory for the mp4 files
@@ -82,14 +87,21 @@ fn main() {
     }
 
     let config = GameConfig::load();
-    let defaults = &config.default_player_options;
-    let skin_name = cli
-        .skin
-        .clone()
-        .unwrap_or_else(|| defaults.note_skin.clone());
+    let defaults = &config.defaults.player_options;
+    let options = PlayerOptions {
+        note_skin: cli
+            .skin
+            .clone()
+            .unwrap_or_else(|| defaults.note_skin.clone()),
+        perspective: cli
+            .perspective
+            .parse::<Perspective>()
+            .expect("--perspective must be None, Above, or Below"),
+        ..defaults.clone()
+    };
     std::fs::create_dir_all(&cli.out).expect("failed to create the output directory");
 
-    let mut renderer = FieldRenderer::new(&skin_name, defaults.note_speed, cli.fps);
+    let mut renderer = FieldRenderer::new(&config, &options, cli.fps);
     for scenario in selected {
         let timing = scenario_timing(scenario, cli.bpm);
         let path = cli.out.join(format!("{}.mp4", scenario.name));
@@ -151,6 +163,7 @@ struct ScenarioNote {
     column: usize,
     quant: u32,
     length_beats: Option<f64>,
+    roll: bool,
 }
 
 struct ScenarioMine {
@@ -263,6 +276,19 @@ fn scenario_matrix() -> Vec<Scenario> {
         vec![note(0.0, 1, 4, Some(2.0))],
         vec![],
         vec![(0.5, Hold(0, Dropped))],
+    );
+    add("roll_two_beats", vec![roll(0.0, 1, 4, 2.0)], vec![], vec![]);
+    add(
+        "roll_held_to_ok",
+        vec![roll(0.0, 1, 4, 2.0)],
+        vec![],
+        vec![
+            (0.0, Press(1, true)),
+            (0.0, Hold(0, Held)),
+            (2.0, Hold(0, Ok)),
+            (2.0, Fade(0)),
+            (2.0, Press(1, false)),
+        ],
     );
     add(
         "hold_chain_one_column",
@@ -390,6 +416,14 @@ fn note(beat: f64, column: usize, quant: u32, length_beats: Option<f64>) -> Scen
         column,
         quant,
         length_beats,
+        roll: false,
+    }
+}
+
+fn roll(beat: f64, column: usize, quant: u32, length_beats: f64) -> ScenarioNote {
+    ScenarioNote {
+        roll: true,
+        ..note(beat, column, quant, Some(length_beats))
     }
 }
 
@@ -410,7 +444,7 @@ struct FieldRenderer {
 }
 
 impl FieldRenderer {
-    fn new(skin_name: &str, speed: NoteSpeed, fps: u32) -> FieldRenderer {
+    fn new(config: &GameConfig, options: &PlayerOptions, fps: u32) -> FieldRenderer {
         let mut app = App::new();
         app.add_plugins(
             DefaultPlugins
@@ -421,7 +455,7 @@ impl FieldRenderer {
                 })
                 .set(RenderPlugin {
                     // Every frame is captured; the first ones must already
-                    // have working sprite pipelines.
+                    // have working render pipelines.
                     synchronous_pipeline_compilation: true,
                     ..default()
                 })
@@ -429,10 +463,12 @@ impl FieldRenderer {
         )
         .add_plugins(NoteFieldPlugin)
         .insert_resource(ClearColor(CLEAR_COLOR))
+        .insert_resource(config.clone())
+        .insert_resource(PlayerSettings::uniform(options.clone()))
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(
             1.0 / fps as f64,
         )));
-        let skin = load_note_skin(app.world().resource::<AssetServer>(), skin_name);
+        let skin = load_note_skin(app.world().resource::<AssetServer>(), &options.note_skin);
         app.insert_resource(ActiveNoteSkins::shared(skin));
         app.finish();
         app.cleanup();
@@ -441,9 +477,10 @@ impl FieldRenderer {
         let world = apps.main.world_mut();
         let layout = NoteField {
             player: PlayerId::P1,
+            lane: 0,
             origin_x: 0.0,
             columns: 4,
-            speed,
+            speed: options.note_speed,
             arrow_size: RENDER_ARROW_SIZE,
         };
         let field = world.spawn(layout.clone()).id();
@@ -451,13 +488,29 @@ impl FieldRenderer {
             Image::new_target_texture(WIDTH, HEIGHT, TextureFormat::Rgba8UnormSrgb, None);
         target.texture_descriptor.usage |= TextureUsages::COPY_SRC;
         let target = world.resource_mut::<Assets<Image>>().add(target);
+        // The world and overlay cameras bracketing the lane camera the
+        // plugin spawns, all drawing into the capture image. Every camera
+        // keeps the default MSAA: cameras sharing a target must agree on it.
+        world.insert_resource(LaneView {
+            target: RenderTarget::Image(target.clone().into()),
+            canvas: Vec2::new(WIDTH as f32, HEIGHT as f32),
+        });
         world
-            .spawn_scene(bsn! {
-                Camera2d
-                Msaa::Off
-            })
+            .spawn_scene(bsn! { Camera2d })
             .expect("static scene resolution cannot fail")
             .insert(RenderTarget::Image(target.clone().into()));
+        world
+            .spawn_scene(bsn! { Camera2d })
+            .expect("static scene resolution cannot fail")
+            .insert((
+                RenderTarget::Image(target.clone().into()),
+                Camera {
+                    order: OVERLAY_CAMERA_ORDER,
+                    clear_color: bevy::camera::ClearColorConfig::None,
+                    ..default()
+                },
+                bevy::camera::visibility::RenderLayers::layer(OVERLAY_LAYER),
+            ));
 
         let (sender, frames) = channel();
         let mut renderer = FieldRenderer {
@@ -469,30 +522,31 @@ impl FieldRenderer {
             layout,
             fps,
         };
-        renderer.wait_for_skin_images();
+        renderer.wait_for_skin_assets();
         renderer
     }
 
-    /// Frames rendered before the skin's images finish loading would show
+    /// Frames rendered before the skin's assets finish loading would show
     /// nothing; pump the app until they are in and uploaded.
-    fn wait_for_skin_images(&mut self) {
+    fn wait_for_skin_assets(&mut self) {
         let world = self.apps.main.world();
-        let skin = world.resource::<ActiveNoteSkins>().get(PlayerId::P1);
-        let handles = [
-            skin.sheet.clone(),
-            skin.hold_body_inactive.clone(),
-            skin.hold_body_active.clone(),
-        ];
+        let handles = world
+            .resource::<ActiveNoteSkins>()
+            .get(PlayerId::P1)
+            .loading_assets();
         for _ in 0..600 {
             self.update();
-            let images = self.apps.main.world().resource::<Assets<Image>>();
-            if handles.iter().all(|handle| images.contains(handle)) {
+            let asset_server = self.apps.main.world().resource::<AssetServer>();
+            if handles
+                .iter()
+                .all(|handle| asset_server.is_loaded(handle.id()))
+            {
                 // One more frame so the gpu copies exist before capturing.
                 self.update();
                 return;
             }
         }
-        panic!("note skin images did not finish loading");
+        panic!("note skin assets did not finish loading");
     }
 
     fn update(&mut self) {
@@ -530,6 +584,7 @@ impl FieldRenderer {
         });
         let field = self.field;
         let layout = &self.layout;
+        let asset_server = world.resource::<AssetServer>().clone();
         let mut notes: Vec<(SpawnedNote, usize)> = Vec::new();
         let mut mines: Vec<(Entity, usize)> = Vec::new();
         world.resource_scope(|world, skins: Mut<ActiveNoteSkins>| {
@@ -538,13 +593,18 @@ impl FieldRenderer {
             spawn_receptors(&mut commands, skin, field, layout);
             for note in &scenario.notes {
                 let time = timing.seconds_at_beat(Beat(note.beat));
-                let end = note.length_beats.map(|length| {
+                let tail = note.length_beats.map(|length| {
                     let end_beat = Beat(note.beat + length);
-                    (timing.seconds_at_beat(end_beat), end_beat)
+                    NoteTail {
+                        time: timing.seconds_at_beat(end_beat),
+                        beat: end_beat,
+                        roll: note.roll,
+                    }
                 });
                 notes.push((
                     spawn_note(
                         &mut commands,
+                        &asset_server,
                         skin,
                         field,
                         layout,
@@ -553,7 +613,7 @@ impl FieldRenderer {
                             beat: Beat(note.beat),
                             column: note.column,
                             quant: config.recognized_quant(note.quant),
-                            end,
+                            tail,
                         },
                     ),
                     note.column,
@@ -722,24 +782,23 @@ fn apply_action(
             let (note, column) = &notes[index];
             world.despawn(note.head);
             let column = *column;
+            let asset_server = world.resource::<AssetServer>().clone();
             world.resource_scope(|world, skins: Mut<ActiveNoteSkins>| {
                 let mut commands = world.commands();
-                spawn_arrow_flash(
-                    &mut commands,
-                    skins.get(layout.player),
+                LaneEffects {
+                    commands: &mut commands,
+                    asset_server: &asset_server,
+                    skin: skins.get(layout.player),
                     layout,
-                    column,
-                    TARGET_Y,
-                    flash_color,
-                    false,
-                );
+                }
+                .arrow_flash(column, TARGET_Y, flash_color, false);
             });
             world.flush();
         }
         ScriptAction::Press(column, held) => {
-            let mut receptors = world.query::<&mut Receptor>();
-            for mut receptor in receptors.iter_mut(world) {
-                if receptor.column == column && receptor.held != held {
+            let mut receptors = world.query::<(&InColumn, &mut Receptor)>();
+            for (anchor, mut receptor) in receptors.iter_mut(world) {
+                if anchor.column == column && receptor.held != held {
                     receptor.held = held;
                 }
             }
@@ -747,15 +806,16 @@ fn apply_action(
         ScriptAction::ExplodeMine(index) => {
             let (entity, column) = mines[index];
             world.despawn(entity);
+            let asset_server = world.resource::<AssetServer>().clone();
             world.resource_scope(|world, skins: Mut<ActiveNoteSkins>| {
                 let mut commands = world.commands();
-                spawn_mine_explosion(
-                    &mut commands,
-                    skins.get(layout.player),
+                LaneEffects {
+                    commands: &mut commands,
+                    asset_server: &asset_server,
+                    skin: skins.get(layout.player),
                     layout,
-                    column,
-                    TARGET_Y,
-                );
+                }
+                .mine_explosion(column, TARGET_Y);
             });
             world.flush();
         }

@@ -4,14 +4,20 @@ use crate::core::config::GameConfig;
 use crate::core::font::game_font;
 use crate::core::input::{Actions, GameAction, NavPulse, StepDirection};
 use crate::core::menu::{ACTIVE_COLOR, INACTIVE_COLOR, TITLE_COLOR};
-use crate::core::note_field::NoteSpeed;
-use crate::core::note_skin::NoteSkinLibrary;
+use crate::core::note_field::{
+    HoldVisual, HoldVisualState, InField, NoteField, NoteFieldClock, NoteSpawn, NoteSpeed,
+    NoteTail, Perspective, spawn_note, spawn_note_field, visible_world_size,
+};
+use crate::core::note_skin::{ActiveNoteSkins, NoteSkinLibrary};
 use crate::core::player::{PlayMode, PlayerId};
 use crate::core::scene_flow::SpawnScoped;
-use crate::core::settings::{PlayerOptions, PlayerSettings};
+use crate::core::settings::{MachineSettings, PlayerOptions, PlayerSettings};
 use crate::core::sfx::{PlaySfx, Sfx};
+use crate::core::stepfile::MusicPlayer;
+use crate::core::units::{Beat, Seconds};
 use crate::scenes::GameScene;
 use bevy::ecs::query::QueryFilter;
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use strum::{EnumCount, EnumIter, IntoEnumIterator, IntoStaticStr};
 
@@ -23,6 +29,7 @@ use strum::{EnumCount, EnumIter, IntoEnumIterator, IntoStaticStr};
 /// Also keeps the options summary next to the wheel current.
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(OnEnter(FileSelectFocus::PlayerOptions), enter)
+        .add_systems(OnExit(FileSelectFocus::PlayerOptions), exit_previews)
         .add_systems(
             Update,
             refresh_summary.run_if(in_state(GameScene::FileSelect)),
@@ -35,6 +42,8 @@ pub(super) fn plugin(app: &mut App) {
                 refresh_values,
                 highlight_rows,
                 animate_transition,
+                rebuild_previews_on_skin_change,
+                drive_skin_previews.before(crate::core::note_field::NoteFieldSystems),
             )
                 .chain()
                 .run_if(in_state(FileSelectFocus::PlayerOptions)),
@@ -49,7 +58,12 @@ fn enter(
     settings: Res<PlayerSettings>,
     config: Res<GameConfig>,
     skins: Res<NoteSkinLibrary>,
+    active_skins: Res<ActiveNoteSkins>,
+    asset_server: Res<AssetServer>,
 ) {
+    for player in mode.players() {
+        spawn_preview(&mut commands, &asset_server, &active_skins, *player);
+    }
     let tagged = mode.players().len() > 1;
     let panels: Vec<_> = mode
         .players()
@@ -136,6 +150,9 @@ fn panel_scene(
         })
         .into_iter()
         .collect();
+    // Label and value columns have fixed widths, so a panel never
+    // resizes — and nothing re-centers — when a selected value's text
+    // length changes.
     let rows: Vec<_> = OptionRow::iter()
         .enumerate()
         .map(|(index, row)| {
@@ -155,11 +172,14 @@ fn panel_scene(
                         )]
                     ),
                     (
-                        ValueText { player: {player}, row: index }
-                        ModalText
-                        game_font(28.0)
-                        Text({value})
-                        TextColor({INACTIVE_COLOR})
+                        Node { width: px(240) }
+                        Children [(
+                            ValueText { player: {player}, row: index }
+                            ModalText
+                            game_font(28.0)
+                            Text({value})
+                            TextColor({INACTIVE_COLOR})
+                        )]
                     ),
                 ]
             }
@@ -395,6 +415,7 @@ enum OptionRow {
     SpeedModifier,
     #[strum(serialize = "Note Skin")]
     NoteSkin,
+    Perspective,
 }
 
 fn row(index: usize) -> OptionRow {
@@ -499,6 +520,22 @@ fn change_value(
             options.note_skin = skin.name.clone();
             true
         }
+        OptionRow::Perspective => {
+            let all: Vec<Perspective> = Perspective::iter().collect();
+            let index = all
+                .iter()
+                .position(|perspective| *perspective == options.perspective)
+                .unwrap_or(0);
+            let stepped = index.saturating_add_signed(delta as isize);
+            let Some(perspective) = all.get(stepped) else {
+                return false;
+            };
+            if stepped == index {
+                return false;
+            }
+            options.perspective = *perspective;
+            true
+        }
     }
 }
 
@@ -525,6 +562,7 @@ fn row_value(
             .find(|skin| skin.name == options.note_skin)
             .map(|skin| skin.display_name.clone())
             .unwrap_or_else(|| options.note_skin.clone()),
+        OptionRow::Perspective => <&str>::from(options.perspective).to_string(),
     }
 }
 
@@ -537,6 +575,269 @@ fn selected_index(options: &[f32], value: f32) -> usize {
         .min_by(|(_, a), (_, b)| (*a - value).abs().total_cmp(&(*b - value).abs()))
         .map(|(index, _)| index)
         .unwrap_or(0)
+}
+
+/// The animated skin preview beside a player's options panel: a real note
+/// field showing one pinned 4th-quant hold, rendered and animated by the
+/// same note-field systems as the play stage.
+#[derive(Component)]
+struct SkinPreview {
+    player: PlayerId,
+    head: Entity,
+}
+
+/// Horizontal gap between a panel's edge and its preview.
+const PREVIEW_GAP: f32 = 56.0;
+/// Previews park here until the panel layout has resolved.
+const PREVIEW_OFFSCREEN_X: f32 = -10_000.0;
+/// The preview arrow's size as a fraction of the panel's row span.
+const PREVIEW_ARROW_SPAN: f32 = 0.42;
+
+fn spawn_preview(
+    commands: &mut Commands,
+    asset_server: &AssetServer,
+    skins: &ActiveNoteSkins,
+    player: PlayerId,
+) {
+    let layout = NoteField {
+        player,
+        // A field's lane sets its camera order; these sit past the
+        // overlay's, so the previews draw over the modal itself.
+        lane: match player {
+            PlayerId::P1 => 8,
+            PlayerId::P2 => 9,
+        },
+        origin_x: PREVIEW_OFFSCREEN_X,
+        // Column 1 of a 3-column field — the down arrow — sits exactly on
+        // `origin_x`.
+        columns: 3,
+        speed: NoteSpeed::Dynamic(1.0),
+        arrow_size: 64.0,
+        // The driver refines size and position from the panel's layout.
+    };
+    let field = spawn_note_field(commands, layout.clone());
+    let spawned = spawn_note(
+        commands,
+        asset_server,
+        skins.get(player),
+        field,
+        &layout,
+        &NoteSpawn {
+            time: Seconds::ZERO,
+            beat: Beat(0.0),
+            column: 1,
+            quant: 4,
+            tail: Some(NoteTail {
+                time: Seconds(1.0),
+                beat: Beat(1.0),
+                roll: false,
+            }),
+        },
+    );
+    commands.entity(field).insert((
+        SkinPreview {
+            player,
+            head: spawned.head,
+        },
+        DespawnOnExit(FileSelectFocus::PlayerOptions),
+    ));
+    for entity in spawned.entities() {
+        commands
+            .entity(entity)
+            .insert(DespawnOnExit(FileSelectFocus::PlayerOptions));
+    }
+}
+
+/// Changing the skin selection reloads [`ActiveNoteSkins`]; the previews
+/// respawn their note from the fresh skin.
+fn rebuild_previews_on_skin_change(
+    skins: Res<ActiveNoteSkins>,
+    asset_server: Res<AssetServer>,
+    previews: Query<(Entity, &SkinPreview, &NoteField)>,
+    members: Query<(Entity, &InField)>,
+    mut commands: Commands,
+) {
+    if !skins.is_changed() {
+        return;
+    }
+    for (field, preview, layout) in &previews {
+        for (entity, in_field) in &members {
+            if in_field.0 == field {
+                commands.entity(entity).despawn();
+            }
+        }
+        let spawned = spawn_note(
+            &mut commands,
+            &asset_server,
+            skins.get(preview.player),
+            field,
+            layout,
+            &NoteSpawn {
+                time: Seconds::ZERO,
+                beat: Beat(0.0),
+                column: 1,
+                quant: 4,
+                tail: Some(NoteTail {
+                    time: Seconds(1.0),
+                    beat: Beat(1.0),
+                    roll: false,
+                }),
+            },
+        );
+        commands.entity(field).insert(SkinPreview {
+            player: preview.player,
+            head: spawned.head,
+        });
+        for entity in spawned.entities() {
+            commands
+                .entity(entity)
+                .insert(DespawnOnExit(FileSelectFocus::PlayerOptions));
+        }
+    }
+}
+
+/// What [`drive_skin_previews`] reads: the preview music's timeline and
+/// the modal's laid-out panel geometry.
+#[derive(SystemParam)]
+struct PreviewContext<'w, 's> {
+    time: Res<'w, Time>,
+    machine: Res<'w, MachineSettings>,
+    music: Res<'w, MusicPlayer>,
+    windows: Query<'w, 's, &'static Window>,
+    panels: Query<
+        'w,
+        's,
+        (
+            &'static OptionsPanel,
+            &'static ComputedNode,
+            &'static UiGlobalTransform,
+        ),
+    >,
+    rows: Query<
+        'w,
+        's,
+        (
+            &'static RowText,
+            &'static ComputedNode,
+            &'static UiGlobalTransform,
+        ),
+    >,
+}
+
+/// Owns the modal's [`NoteFieldClock`] and shapes each preview around its
+/// panel: the clock runs on the preview music's own timeline, the arrow's
+/// tip top-aligns with the first option row, the hold's tail reaches the
+/// last one, and the hold alternates held and released every two beats.
+fn drive_skin_previews(
+    ctx: PreviewContext,
+    mut previews: Query<(&SkinPreview, &mut NoteField)>,
+    mut holds: Query<&mut HoldVisual>,
+    clock: Option<ResMut<NoteFieldClock>>,
+    mut commands: Commands,
+) {
+    let Ok(window) = ctx.windows.single() else {
+        return;
+    };
+    let timeline = ctx.music.visible_now(&ctx.machine.timing);
+    let mut clock = match (clock, &timeline) {
+        (Some(clock), _) => clock,
+        (None, Some((visible, timing))) => {
+            commands.insert_resource(NoteFieldClock {
+                visible: *visible,
+                timing: (*timing).clone(),
+                target_y: 0.0,
+            });
+            return;
+        }
+        // Nothing plays yet; the clock starts with the music.
+        (None, None) => return,
+    };
+    match timeline {
+        // The wheel cannot change songs while the modal is up, so the
+        // timing set at clock creation stays valid.
+        Some((visible, _)) => clock.visible = visible,
+        None => clock.visible += Seconds(ctx.time.delta_secs_f64()),
+    }
+    let beat = clock.beat();
+
+    // UI layout is in physical pixels; the lane lives in world units.
+    let physical = Vec2::new(
+        window.physical_width().max(1) as f32,
+        window.physical_height().max(1) as f32,
+    );
+    let pixels_per_world = physical.x / visible_world_size(window).x;
+    let to_world = |ui: Vec2| {
+        Vec2::new(
+            (ui.x - physical.x * 0.5) / pixels_per_world,
+            (physical.y * 0.5 - ui.y) / pixels_per_world,
+        )
+    };
+
+    for (preview, mut field) in &mut previews {
+        let mut top = None;
+        let mut bottom = None;
+        for (row, node, transform) in &ctx.rows {
+            if row.player != preview.player || node.size() == Vec2::ZERO {
+                continue;
+            }
+            let center = to_world(transform.translation);
+            let half = node.size().y * 0.5 / pixels_per_world;
+            if row.row == 0 {
+                top = Some(center.y + half);
+            }
+            if row.row == OptionRow::COUNT - 1 {
+                bottom = Some(center.y - half);
+            }
+        }
+        let panel_edge = ctx.panels.iter().find_map(|(panel, node, transform)| {
+            if panel.player != preview.player || node.size() == Vec2::ZERO {
+                return None;
+            }
+            let center = to_world(transform.translation);
+            let half = node.size().x * 0.5 / pixels_per_world;
+            Some(match preview.player {
+                PlayerId::P1 => center.x - half,
+                PlayerId::P2 => center.x + half,
+            })
+        });
+        let (Some(top), Some(bottom), Some(edge)) = (top, bottom, panel_edge) else {
+            continue;
+        };
+        let span = top - bottom;
+        if span <= 1.0 {
+            continue;
+        }
+        let arrow = span * PREVIEW_ARROW_SPAN;
+        field.arrow_size = arrow;
+        // Clamped inside the visible width: versus panels reach close to
+        // the screen edges, and a clipped preview helps nobody.
+        let half_visible = visible_world_size(window).x * 0.5;
+        field.origin_x = match preview.player {
+            PlayerId::P1 => (edge - PREVIEW_GAP - arrow * 0.5).max(-half_visible + arrow),
+            PlayerId::P2 => (edge + PREVIEW_GAP + arrow * 0.5).min(half_visible - arrow),
+        };
+        // The arrow's tip touches the top anchor; the pinned head hangs
+        // half an arrow below it.
+        clock.target_y = top - arrow * 0.5;
+        // The tail's cap dips about half an arrow under the tail center,
+        // landing it on the bottom anchor.
+        let end_y = bottom + arrow * 0.5;
+        let length_beats = ((clock.target_y - end_y) / arrow).max(0.5) as f64;
+        if let Ok(mut hold) = holds.get_mut(preview.head) {
+            let end_beat = Beat(beat + length_beats);
+            hold.end_beat = end_beat;
+            hold.end = clock.timing.seconds_at_beat(end_beat);
+            hold.state = if beat.rem_euclid(4.0) < 2.0 {
+                HoldVisualState::Held
+            } else {
+                HoldVisualState::Released
+            };
+        }
+    }
+}
+
+fn exit_previews(mut commands: Commands) {
+    commands.remove_resource::<NoteFieldClock>();
 }
 
 /// Dynamic multipliers always render with an `x` suffix.

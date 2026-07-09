@@ -115,9 +115,7 @@ impl Platform for NativePlatform {
         if options.paused {
             sink.pause();
         }
-        if options.muted {
-            sink.set_volume(0.0);
-        }
+        sink.set_volume(if options.muted { 0.0 } else { options.volume });
         let window = match options.window {
             Some((start, length)) => {
                 sink.append(WindowedMusic::open(bytes, start, length)?);
@@ -134,6 +132,7 @@ impl Platform for NativePlatform {
             sink,
             window,
             muted: options.muted,
+            volume: options.volume,
         }))
     }
 }
@@ -162,6 +161,14 @@ struct NativeChannel {
     /// sink's monotonic position back into the sound's timeline.
     window: Option<(f64, f64)>,
     muted: bool,
+    volume: f32,
+}
+
+impl NativeChannel {
+    fn apply_gain(&self) {
+        self.sink
+            .set_volume(if self.muted { 0.0 } else { self.volume });
+    }
 }
 
 impl AudioChannel for NativeChannel {
@@ -178,12 +185,17 @@ impl AudioChannel for NativeChannel {
     }
 
     fn set_muted(&mut self, muted: bool) {
-        self.sink.set_volume(if muted { 0.0 } else { 1.0 });
         self.muted = muted;
+        self.apply_gain();
     }
 
     fn is_muted(&self) -> bool {
         self.muted
+    }
+
+    fn set_volume(&mut self, volume: f32) {
+        self.volume = volume;
+        self.apply_gain();
     }
 
     fn position(&self) -> Seconds {
@@ -238,9 +250,13 @@ impl VideoSource for NativeVideoSource {
 }
 
 /// Music playing its preview sample window: the decoder is seeked to the
-/// window start when opened and seeked back whenever the window runs out.
+/// window start when opened, and the window wraps by rebuilding the
+/// decoder with that same entry seek. Seeking a live decoder backwards
+/// silently misses once it has played past the target (symphonia's ogg
+/// reader), while a fresh decoder's first seek always lands.
 struct WindowedMusic {
     decoder: rodio::Decoder<Cursor<Arc<[u8]>>>,
+    bytes: Arc<[u8]>,
     start: Duration,
     /// The window length, while looping it stays possible.
     window: Option<Duration>,
@@ -250,22 +266,38 @@ struct WindowedMusic {
 
 impl WindowedMusic {
     fn open(bytes: Arc<[u8]>, start: Seconds, length: Seconds) -> Result<WindowedMusic, String> {
-        let mut decoder =
-            rodio::Decoder::new(Cursor::new(bytes)).map_err(|error| error.to_string())?;
         let start = Duration::from_secs_f64(start.0.max(0.0));
-        let window = match decoder.try_seek(start) {
-            Ok(()) => (length.0 > 0.0).then(|| Duration::from_secs_f64(length.0)),
+        let (decoder, window) = match Self::seeked_decoder(&bytes, start) {
+            Ok(decoder) => (
+                decoder,
+                (length.0 > 0.0).then(|| Duration::from_secs_f64(length.0)),
+            ),
             Err(error) => {
-                warn!("music cannot seek, playing it whole: {error:?}");
-                None
+                warn!("music cannot seek, playing it whole: {error}");
+                let decoder = rodio::Decoder::new(Cursor::new(bytes.clone()))
+                    .map_err(|error| error.to_string())?;
+                (decoder, None)
             }
         };
         Ok(WindowedMusic {
             decoder,
+            bytes,
             start,
             window,
             played: 0,
         })
+    }
+
+    fn seeked_decoder(
+        bytes: &Arc<[u8]>,
+        start: Duration,
+    ) -> Result<rodio::Decoder<Cursor<Arc<[u8]>>>, String> {
+        let mut decoder =
+            rodio::Decoder::new(Cursor::new(bytes.clone())).map_err(|error| error.to_string())?;
+        decoder
+            .try_seek(start)
+            .map_err(|error| format!("{error:?}"))?;
+        Ok(decoder)
     }
 
     fn window_samples(&self, window: Duration) -> u64 {
@@ -276,10 +308,13 @@ impl WindowedMusic {
 
     fn rewind(&mut self) -> bool {
         self.played = 0;
-        match self.decoder.try_seek(self.start) {
-            Ok(()) => true,
+        match Self::seeked_decoder(&self.bytes, self.start) {
+            Ok(decoder) => {
+                self.decoder = decoder;
+                true
+            }
             Err(error) => {
-                warn!("music stopped looping its window: {error:?}");
+                warn!("music stopped looping its window: {error}");
                 self.window = None;
                 false
             }

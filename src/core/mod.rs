@@ -65,8 +65,11 @@ pub fn oriented(x: f32, y: f32, z: f32, rotation: Quat) -> impl Scene {
 
 /// The fixed logical screen size shared by the window and full-screen visuals.
 pub const SCREEN_SIZE: Vec2 = Vec2::new(1280.0, 720.0);
-/// Padding between the screen edges and anchored stage furniture — the
-/// health vials keep this to their side edge and the note fields to the
-/// top edge, so everything hugging the frame lines up.
-pub const SCREEN_EDGE_PADDING: f32 = 50.0;
+/// The camera stack: the 2D world draws first, one 3D lane camera per
+/// note field above it (layer and camera order are `LANE_LAYER_BASE` +
+/// the field's lane), and the 2D overlay — receptor flashes, grading
+/// popups, and all UI — on top of everything.
+pub const LANE_LAYER_BASE: usize = 1;
+pub const OVERLAY_LAYER: usize = 8;
+pub const OVERLAY_CAMERA_ORDER: isize = 8;
 pub const CLEAR_COLOR: Color = Color::srgb(0.04, 0.04, 0.07);

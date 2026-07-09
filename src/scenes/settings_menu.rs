@@ -28,13 +28,16 @@ fn enter(mut commands: Commands) {
         &mut commands,
         GameScene::SettingsMenu,
         "Settings",
-        &["Configure keymap"],
+        &["Configure keymap", "Audio settings"],
     );
 }
 
 fn handle_selection(mut selected: MessageReader<MenuSelected>, mut fade: ResMut<SceneFade>) {
-    for _ in selected.read() {
-        fade.begin(GameScene::Keymap);
+    for selection in selected.read() {
+        fade.begin(match selection.index {
+            0 => GameScene::Keymap,
+            _ => GameScene::AudioSettings,
+        });
     }
 }
 

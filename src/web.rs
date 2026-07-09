@@ -217,7 +217,8 @@ impl Platform for WebPlatform {
         let gain: GainNode = context
             .create_gain()
             .map_err(|_| "cannot create a gain node")?;
-        gain.gain().set_value(if options.muted { 0.0 } else { 1.0 });
+        gain.gain()
+            .set_value(if options.muted { 0.0 } else { options.volume });
         gain.connect_with_audio_node(&context.destination())
             .map_err(|_| "cannot reach the audio output")?;
 
@@ -232,6 +233,7 @@ impl Platform for WebPlatform {
             window,
             paused: options.paused,
             muted: options.muted,
+            volume: options.volume,
             offset: window.map(|(start, _)| start).unwrap_or(0.0),
             started_at: 0.0,
             failed: false,
@@ -370,11 +372,20 @@ struct WebAudio {
     window: Option<(f64, f64)>,
     paused: bool,
     muted: bool,
+    volume: f32,
     /// The sound-timeline position playback (re)started at, and when.
     offset: f64,
     started_at: f64,
     failed: bool,
     dropped: bool,
+}
+
+impl WebAudio {
+    fn apply_gain(&self) {
+        self.gain
+            .gain()
+            .set_value(if self.muted { 0.0 } else { self.volume });
+    }
 }
 
 impl WebAudio {
@@ -454,11 +465,17 @@ impl AudioChannel for WebChannel {
     fn set_muted(&mut self, muted: bool) {
         let mut state = self.state.borrow_mut();
         state.muted = muted;
-        state.gain.gain().set_value(if muted { 0.0 } else { 1.0 });
+        state.apply_gain();
     }
 
     fn is_muted(&self) -> bool {
         self.state.borrow().muted
+    }
+
+    fn set_volume(&mut self, volume: f32) {
+        let mut state = self.state.borrow_mut();
+        state.volume = volume;
+        state.apply_gain();
     }
 
     fn position(&self) -> Seconds {
