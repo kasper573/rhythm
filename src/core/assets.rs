@@ -1,21 +1,11 @@
+use crate::core::platform::platform;
 use std::path::{Path, PathBuf};
 
-/// The folder assets are loaded from, resolved exactly like bevy's asset
-/// server resolves its default source, so paths agree between the asset
-/// server and our own file scanning.
+/// The folder assets are loaded from, resolved by the installed platform
+/// exactly like bevy's asset server resolves its default source, so paths
+/// agree between the asset server and our own file scanning.
 pub fn asset_root() -> PathBuf {
-    let base = if let Ok(root) = std::env::var("BEVY_ASSET_ROOT") {
-        PathBuf::from(root)
-    } else if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
-        PathBuf::from(manifest_dir)
-    } else {
-        std::env::current_exe()
-            .expect("could not locate the executable to resolve the asset root")
-            .parent()
-            .expect("executable has no parent directory")
-            .to_path_buf()
-    };
-    base.join("assets")
+    platform().asset_root()
 }
 
 /// Converts an absolute path under the asset root into the relative,

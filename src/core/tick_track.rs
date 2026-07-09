@@ -1,3 +1,4 @@
+use crate::core::platform::platform;
 use crate::core::units::Seconds;
 use std::io::Cursor;
 use std::path::Path;
@@ -12,7 +13,10 @@ pub fn render_tick_track(
     times: &[Seconds],
     volume: f32,
 ) -> Result<Vec<u8>, hound::Error> {
-    let mut reader = hound::WavReader::open(tick_wav)?;
+    let bytes = platform()
+        .read_asset(tick_wav)
+        .map_err(hound::Error::IoError)?;
+    let mut reader = hound::WavReader::new(Cursor::new(bytes))?;
     let spec = reader.spec();
     let channels = spec.channels as usize;
     let tick: Vec<f32> = match spec.sample_format {

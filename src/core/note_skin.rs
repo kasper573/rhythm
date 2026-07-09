@@ -1,4 +1,5 @@
 use crate::core::assets::asset_root;
+use crate::core::platform::platform;
 use crate::core::settings::Settings;
 use bevy::image::{ImageAddressMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor};
 use bevy::math::Rect;
@@ -117,9 +118,10 @@ impl Plugin for NoteSkinPlugin {
 pub fn load_note_skin(asset_server: &AssetServer, name: &str) -> ActiveNoteSkin {
     let folder = asset_root().join("note_skins").join(name);
     let manifest_path = folder.join("manifest.json");
-    let text = std::fs::read_to_string(&manifest_path)
+    let bytes = platform()
+        .read_asset(&manifest_path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", manifest_path.display()));
-    let manifest: Manifest = crate::core::jsonc::parse(&text)
+    let manifest: Manifest = crate::core::jsonc::parse(&String::from_utf8_lossy(&bytes))
         .unwrap_or_else(|error| panic!("invalid {}: {error}", manifest_path.display()));
 
     let load = |file: &str| asset_server.load::<Image>(format!("note_skins/{name}/{file}"));
@@ -244,19 +246,26 @@ fn reload_changed_skin(
 
 fn scan_note_skins() -> NoteSkinLibrary {
     let root = asset_root().join("note_skins");
-    let entries = std::fs::read_dir(&root)
-        .unwrap_or_else(|error| panic!("failed to read {}: {error}", root.display()));
+    let entries = platform().list_asset_dir(&root);
+    if entries.is_empty() {
+        panic!("failed to read {}: no note skins found", root.display());
+    }
     let mut skins = Vec::new();
-    for entry in entries.flatten() {
-        if !entry.path().is_dir() {
+    for entry in entries {
+        if !entry.is_dir {
             continue;
         }
-        let name = entry.file_name().to_string_lossy().to_string();
-        let manifest_path = entry.path().join("manifest.json");
-        let text = std::fs::read_to_string(&manifest_path)
+        let Some(name) = entry.path.file_name() else {
+            continue;
+        };
+        let name = name.to_string_lossy().to_string();
+        let manifest_path = entry.path.join("manifest.json");
+        let bytes = platform()
+            .read_asset(&manifest_path)
             .unwrap_or_else(|error| panic!("failed to read {}: {error}", manifest_path.display()));
-        let manifest: DisplayNameManifest = crate::core::jsonc::parse(&text)
-            .unwrap_or_else(|error| panic!("invalid {}: {error}", manifest_path.display()));
+        let manifest: DisplayNameManifest =
+            crate::core::jsonc::parse(&String::from_utf8_lossy(&bytes))
+                .unwrap_or_else(|error| panic!("invalid {}: {error}", manifest_path.display()));
         skins.push(NoteSkinEntry {
             name,
             display_name: manifest.display_name,

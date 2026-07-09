@@ -329,9 +329,10 @@ impl GameConfig {
     /// explicitly and correctly configured.
     pub fn load() -> GameConfig {
         let path = asset_root().join("game_config.json");
-        let text = std::fs::read_to_string(&path)
+        let bytes = crate::core::platform::platform()
+            .read_asset(&path)
             .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
-        let config: GameConfig = crate::core::jsonc::parse(&text)
+        let config: GameConfig = crate::core::jsonc::parse(&String::from_utf8_lossy(&bytes))
             .unwrap_or_else(|error| panic!("invalid {}: {error}", path.display()));
         config.validate(&path.display().to_string());
         config
@@ -484,7 +485,7 @@ impl GameConfig {
         );
         for rating in &self.ratings {
             assert!(
-                asset_root().join(&rating.image).exists(),
+                crate::core::platform::platform().asset_exists(&asset_root().join(&rating.image)),
                 "{source}: rating image {} does not exist",
                 rating.image
             );

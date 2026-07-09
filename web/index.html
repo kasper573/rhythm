@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rhythm</title>
+    <link rel="icon" href="data:," />
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #06070f;
+        overflow: hidden;
+      }
+      canvas {
+        display: block;
+        outline: none;
+      }
+      #start {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #06070f;
+        color: #e8e8f0;
+        font-family: system-ui, sans-serif;
+        z-index: 1;
+      }
+      #start button {
+        font-size: 2rem;
+        padding: 1rem 3rem;
+        border: 1px solid #4a5a8a;
+        border-radius: 0.5rem;
+        background: #101528;
+        color: inherit;
+        cursor: pointer;
+      }
+      #start button:hover {
+        background: #1a2140;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="start"><button>▶ Play</button></div>
+    <script type="module">
+      import init from "./rhythm.js";
+
+      // The wasm download starts immediately; the game itself only boots
+      // from the click below, which is the user gesture browsers require
+      // before audio may play.
+      const wasm = fetch("./rhythm_bg.wasm");
+      const overlay = document.getElementById("start");
+      const button = overlay.querySelector("button");
+
+      button.addEventListener("click", async () => {
+        button.textContent = "Loading…";
+        button.disabled = true;
+        // The game inserts its canvas when it has fetched its assets and
+        // started up; keep the overlay up until then.
+        new MutationObserver((_, observer) => {
+          if (document.querySelector("canvas")) {
+            overlay.remove();
+            observer.disconnect();
+          }
+        }).observe(document.body, { childList: true, subtree: true });
+        await init({ module_or_path: wasm });
+      });
+    </script>
+  </body>
+</html>

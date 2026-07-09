@@ -10,6 +10,7 @@ pub mod menu;
 pub mod note_field;
 pub mod note_skin;
 pub mod persist;
+pub mod platform;
 pub mod scene_flow;
 pub mod settings;
 pub mod sfx;

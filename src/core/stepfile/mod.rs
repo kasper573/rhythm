@@ -45,10 +45,12 @@ impl Stepfile {
     /// Reads and parses the file, tolerating non-UTF-8 bytes (old simfiles
     /// often use legacy encodings for titles).
     pub fn load(path: &Path) -> Result<Stepfile, StepfileError> {
-        let bytes = std::fs::read(path).map_err(|source| StepfileError::Io {
-            path: path.display().to_string(),
-            source,
-        })?;
+        let bytes = crate::core::platform::platform()
+            .read_asset(path)
+            .map_err(|source| StepfileError::Io {
+                path: path.display().to_string(),
+                source,
+            })?;
         Stepfile::parse(&String::from_utf8_lossy(&bytes))
     }
 

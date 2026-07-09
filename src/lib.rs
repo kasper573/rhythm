@@ -1,5 +1,9 @@
 pub mod core;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod native;
 pub mod scenes;
+#[cfg(target_arch = "wasm32")]
+pub mod web;
 
 use crate::core::config::GameConfig;
 use crate::core::health_vial::HealthVialPlugin;
@@ -16,7 +20,8 @@ use bevy::camera::ScalingMode;
 use bevy::prelude::*;
 use bevy::ui::UiScale;
 
-pub fn run() {
+pub fn run(platform: impl core::platform::Platform + 'static) {
+    core::platform::install(platform);
     let config = GameConfig::load();
     let settings_plugin = SettingsPlugin {
         default_stepfile: config.default_stepfile_options.clone(),
@@ -32,6 +37,7 @@ pub fn run() {
                         // quantize presses to the display refresh (+0..16ms of
                         // one-sided timing error at 60Hz).
                         present_mode: bevy::window::PresentMode::AutoNoVsync,
+                        fit_canvas_to_parent: true,
                         ..default()
                     }),
                     ..default()

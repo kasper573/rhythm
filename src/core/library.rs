@@ -1,4 +1,5 @@
 use crate::core::assets::asset_root;
+use crate::core::platform::platform;
 use crate::core::stepfile::{Bgm, Stepfile};
 use bevy::prelude::*;
 use std::path::{Path, PathBuf};
@@ -50,43 +51,37 @@ impl StepfileLibrary {
         let root = asset_root().join("stepfiles");
         let mut groups: Vec<StepfileGroup> = Vec::new();
 
-        let group_dirs = match std::fs::read_dir(&root) {
-            Ok(entries) => entries,
-            Err(error) => {
-                warn!(
-                    "cannot read stepfile library at {}: {error}",
-                    root.display()
-                );
-                return StepfileLibrary {
-                    groups,
-                    default_bgm,
-                };
-            }
-        };
+        let group_dirs = platform().list_asset_dir(&root);
+        if group_dirs.is_empty() {
+            warn!("no stepfile library at {}", root.display());
+            return StepfileLibrary {
+                groups,
+                default_bgm,
+            };
+        }
 
-        for group in group_dirs.filter_map(Result::ok) {
-            let group_path = group.path();
-            if !group_path.is_dir() {
-                warn_if_stray_stepfile(&group_path);
+        for group in group_dirs {
+            if !group.is_dir {
+                warn_if_stray_stepfile(&group.path);
                 continue;
             }
-            let name = group.file_name().to_string_lossy().into_owned();
+            let Some(name) = group.path.file_name() else {
+                continue;
+            };
+            let name = name.to_string_lossy().into_owned();
 
             let mut stepfiles = Vec::new();
-            if let Ok(entries) = std::fs::read_dir(&group_path) {
-                for entry in entries.filter_map(Result::ok) {
-                    let path = entry.path();
-                    if path.is_dir() {
-                        // Chart-less stepfiles are valid as music (the
-                        // default BGM is one) but have no place on the wheel.
-                        stepfiles.extend(
-                            load_stepfile_folder(&path)
-                                .into_iter()
-                                .filter(|entry| !entry.stepfile.charts.is_empty()),
-                        );
-                    } else {
-                        warn_if_stray_stepfile(&path);
-                    }
+            for entry in platform().list_asset_dir(&group.path) {
+                if entry.is_dir {
+                    // Chart-less stepfiles are valid as music (the
+                    // default BGM is one) but have no place on the wheel.
+                    stepfiles.extend(
+                        load_stepfile_folder(&entry.path)
+                            .into_iter()
+                            .filter(|entry| !entry.stepfile.charts.is_empty()),
+                    );
+                } else {
+                    warn_if_stray_stepfile(&entry.path);
                 }
             }
             if stepfiles.is_empty() {
@@ -94,7 +89,7 @@ impl StepfileLibrary {
             }
             stepfiles.sort_by_key(|entry| entry.display_title().to_lowercase());
             groups.push(StepfileGroup {
-                banner_path: group_banner(&group_path, &name),
+                banner_path: group_banner(&group.path, &name),
                 name,
                 stepfiles,
             });
@@ -165,14 +160,14 @@ impl StepfileEntry {
     /// simfile tags frequently disagree with the real file's casing.
     pub fn resolve_file(&self, name: &str) -> Option<PathBuf> {
         let direct = self.dir.join(name);
-        if direct.exists() {
+        if platform().asset_exists(&direct) {
             return Some(direct);
         }
         let lowered = name.to_lowercase();
-        std::fs::read_dir(&self.dir)
-            .ok()?
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
+        platform()
+            .list_asset_dir(&self.dir)
+            .into_iter()
+            .map(|entry| entry.path)
             .find(|path| {
                 path.file_name()
                     .is_some_and(|file| file.to_string_lossy().to_lowercase() == lowered)
@@ -211,10 +206,11 @@ impl StepfileEntry {
     }
 
     fn first_file_with_extension(&self, extensions: &[&str]) -> Option<PathBuf> {
-        let mut files: Vec<PathBuf> = std::fs::read_dir(&self.dir)
-            .ok()?
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
+        let mut files: Vec<PathBuf> = platform()
+            .list_asset_dir(&self.dir)
+            .into_iter()
+            .filter(|entry| !entry.is_dir)
+            .map(|entry| entry.path)
             .filter(|path| has_extension(path, extensions))
             .collect();
         files.sort();
@@ -223,13 +219,11 @@ impl StepfileEntry {
 }
 
 fn load_stepfile_folder(dir: &Path) -> Vec<StepfileEntry> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    entries
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.is_file() && has_extension(path, &["sm"]))
+    platform()
+        .list_asset_dir(dir)
+        .into_iter()
+        .filter(|entry| !entry.is_dir && has_extension(&entry.path, &["sm"]))
+        .map(|entry| entry.path)
         .filter_map(|sm_path| match Stepfile::load(&sm_path) {
             Ok(stepfile) => Some(StepfileEntry {
                 dir: dir.to_path_buf(),
@@ -246,17 +240,18 @@ fn load_stepfile_folder(dir: &Path) -> Vec<StepfileEntry> {
 
 fn group_banner(group_path: &Path, group_name: &str) -> Option<PathBuf> {
     let wanted_stem = group_name.to_lowercase();
-    std::fs::read_dir(group_path)
-        .ok()?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .find(|path| {
-            path.is_file()
-                && has_extension(path, IMAGE_EXTENSIONS)
-                && path
+    platform()
+        .list_asset_dir(group_path)
+        .into_iter()
+        .find(|entry| {
+            !entry.is_dir
+                && has_extension(&entry.path, IMAGE_EXTENSIONS)
+                && entry
+                    .path
                     .file_stem()
                     .is_some_and(|stem| stem.to_string_lossy().to_lowercase() == wanted_stem)
         })
+        .map(|entry| entry.path)
 }
 
 /// Image formats the renderer can load.

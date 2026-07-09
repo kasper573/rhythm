@@ -58,6 +58,7 @@ struct Cli {
 }
 
 fn main() {
+    rhythm::core::platform::install(rhythm::native::NativePlatform);
     let cli = Cli::parse();
     assert!(cli.bpm > 0.0, "--bpm must be positive");
     let scenarios = scenario_matrix();

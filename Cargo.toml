@@ -11,9 +11,6 @@ bevy = { version = "0.19", default-features = false, features = [
     "std",
     "bevy_winit",
     "default_font",
-    "multi_threaded",
-    "x11",
-    "wayland",
     "2d_bevy_render",
     "scene",
     "picking",
@@ -30,7 +27,6 @@ bevy = { version = "0.19", default-features = false, features = [
     "jpeg",
     "serialize",
 ] }
-clap = { version = "4", features = ["derive"] }
 derive_more = { version = "2", features = ["add", "add_assign", "mul", "not", "display"] }
 hound = "3"
 # Not used directly: routes the text layouter's ICU4X warnings through `log`
@@ -39,13 +35,50 @@ icu_provider = { version = "2", default-features = false, features = ["logging"]
 json_comments = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-dirs = "6"
+sha2 = "0.11.0"
 strum = { version = "0.27", features = ["derive"] }
 thiserror = "2"
-sha2 = "0.11.0"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+bevy = { version = "0.19", default-features = false, features = [
+    "multi_threaded",
+    "x11",
+    "wayland",
+] }
+clap = { version = "4", features = ["derive"] }
+dirs = "6"
+tiny_http = "0.12"
 video-rs = { version = "0.11.0", features = ["ndarray"] }
+walkdir = "2"
+
+# The ffmpeg behind video-rs compiles from source and links statically on
+# unix; ffmpeg's configure cannot run on Windows, which links the prebuilt
+# libraries `FFMPEG_DIR` points at instead.
+[target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "windows")))'.dependencies]
 ffmpeg-sys-next = { version = "8.1", features = ["build"] }
 
+[target.'cfg(target_os = "windows")'.dependencies]
+ffmpeg-sys-next = "8.1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+bevy = { version = "0.19", default-features = false, features = ["web", "webgl2"] }
+console_error_panic_hook = "0.1"
+futures = { version = "0.3", default-features = false, features = ["alloc"] }
+gloo-net = { version = "0.6", default-features = false, features = ["http"] }
+gloo-storage = "0.3"
+send_wrapper = "0.6"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = [
+    "CanvasRenderingContext2d",
+    "Document",
+    "Element",
+    "HtmlCanvasElement",
+    "HtmlMediaElement",
+    "HtmlVideoElement",
+    "ImageData",
+    "Window",
+] }
 
 [profile.dev]
 opt-level = 1
