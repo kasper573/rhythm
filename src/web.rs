@@ -148,7 +148,24 @@ impl Platform for WebPlatform {
         }
         video.set_muted(true);
         video.set_loop(looping);
+        video.set_autoplay(true);
+        // Without inline playback, iOS Safari hijacks play() into its
+        // fullscreen native player instead of feeding our texture.
+        let _ = video.set_attribute("playsinline", "");
+        let _ = video.set_attribute("webkit-playsinline", "");
+        // iOS only decodes videos that live in the DOM and are not
+        // display:none, so park the element offscreen; the poll below
+        // copies its frames into the game's texture.
+        let _ = video.set_attribute(
+            "style",
+            "position:fixed;right:100%;bottom:100%;width:1px;height:1px;opacity:0;pointer-events:none",
+        );
         video.set_src(&encode_path(&path.to_string_lossy().replace('\\', "/")));
+        document
+            .body()
+            .ok_or("no body to attach the video to")?
+            .append_child(&video)
+            .map_err(|_| "cannot attach the video element")?;
         let _ = video.play();
 
         let canvas: HtmlCanvasElement = document
@@ -254,6 +271,13 @@ struct WebVideo {
 struct WebVideoSource {
     inner: SendWrapper<WebVideo>,
     last_time: f64,
+}
+
+impl Drop for WebVideoSource {
+    fn drop(&mut self) {
+        let _ = self.inner.video.pause();
+        self.inner.video.remove();
+    }
 }
 
 impl VideoSource for WebVideoSource {

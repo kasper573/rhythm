@@ -2,7 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"
+    />
     <title>Rhythm</title>
     <link rel="icon" href="data:," />
     <style>
@@ -12,10 +15,12 @@
         height: 100%;
         background: #06070f;
         overflow: hidden;
+        touch-action: none;
       }
       canvas {
         display: block;
         outline: none;
+        touch-action: none;
       }
       #start {
         position: absolute;
@@ -67,6 +72,66 @@
         }).observe(document.body, { childList: true, subtree: true });
         await init({ module_or_path: wasm });
       });
+
+      // Rudimentary touch bindings, synthesized as the keyboard events the
+      // game already understands: tap = Select, swipe = arrows,
+      // two-finger tap = Cancel.
+      const SWIPE_MIN_PX = 30;
+      let touchStart = null;
+      let twoFinger = false;
+
+      function sendKey(code) {
+        const canvas = document.querySelector("canvas");
+        if (!canvas) return;
+        const options = { code, key: code, bubbles: true, cancelable: true };
+        canvas.dispatchEvent(new KeyboardEvent("keydown", options));
+        setTimeout(
+          () => canvas.dispatchEvent(new KeyboardEvent("keyup", options)),
+          60,
+        );
+      }
+
+      document.addEventListener(
+        "touchstart",
+        (event) => {
+          if (!document.querySelector("canvas")) return;
+          event.preventDefault();
+          if (event.touches.length >= 2) {
+            twoFinger = true;
+            return;
+          }
+          const touch = event.touches[0];
+          twoFinger = false;
+          touchStart = { x: touch.clientX, y: touch.clientY };
+        },
+        { passive: false },
+      );
+
+      document.addEventListener(
+        "touchend",
+        (event) => {
+          if (!document.querySelector("canvas")) return;
+          event.preventDefault();
+          if (event.touches.length > 0) return;
+          if (twoFinger) {
+            sendKey("Escape");
+          } else if (touchStart) {
+            const touch = event.changedTouches[0];
+            const dx = touch.clientX - touchStart.x;
+            const dy = touch.clientY - touchStart.y;
+            if (Math.max(Math.abs(dx), Math.abs(dy)) < SWIPE_MIN_PX) {
+              sendKey("Enter");
+            } else if (Math.abs(dx) > Math.abs(dy)) {
+              sendKey(dx > 0 ? "ArrowRight" : "ArrowLeft");
+            } else {
+              sendKey(dy > 0 ? "ArrowDown" : "ArrowUp");
+            }
+          }
+          twoFinger = false;
+          touchStart = null;
+        },
+        { passive: false },
+      );
     </script>
   </body>
 </html>

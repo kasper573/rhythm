@@ -16,6 +16,10 @@ struct Cli {
     /// assets folder.
     #[arg(long)]
     emit: Option<PathBuf>,
+    /// Interface to bind; 0.0.0.0 exposes the server to the LAN for
+    /// testing from other devices.
+    #[arg(long, default_value = "127.0.0.1")]
+    host: String,
     /// Port to serve on.
     #[arg(long, default_value_t = 8080)]
     port: u16,
@@ -30,7 +34,7 @@ fn main() {
     let site = build_site(&repo);
     match cli.emit {
         Some(directory) => emit(&repo, &site, &directory),
-        None => serve(&repo, &site, cli.port),
+        None => serve(&repo, &site, &cli.host, cli.port),
     }
 }
 
@@ -152,12 +156,12 @@ fn copy_into(source: &Path, target: &Path) {
         .unwrap_or_else(|error| panic!("failed to copy {}: {error}", source.display()));
 }
 
-fn serve(repo: &Path, site: &Path, port: u16) {
+fn serve(repo: &Path, site: &Path, host: &str, port: u16) {
     let assets = Arc::new(repo.join("assets"));
     let site = Arc::new(site.to_path_buf());
-    let server = tiny_http::Server::http(("127.0.0.1", port))
-        .unwrap_or_else(|error| panic!("failed to bind port {port}: {error}"));
-    println!("serving the web build at http://127.0.0.1:{port}/");
+    let server = tiny_http::Server::http((host, port))
+        .unwrap_or_else(|error| panic!("failed to bind {host}:{port}: {error}"));
+    println!("serving the web build at http://{host}:{port}/");
     for request in server.incoming_requests() {
         let assets = assets.clone();
         let site = site.clone();
@@ -173,7 +177,7 @@ fn respond(request: tiny_http::Request, site: &Path, assets: &Path) {
         return;
     }
 
-    let response = if path == "assets/index.json" {
+    let content = if path == "assets/index.json" {
         Some((asset_index(assets).into_bytes(), "application/json"))
     } else {
         let file = match path.strip_prefix("assets/") {
@@ -183,15 +187,59 @@ fn respond(request: tiny_http::Request, site: &Path, assets: &Path) {
         };
         std::fs::read(&file).ok().map(|bytes| (bytes, mime(&file)))
     };
+    let Some((bytes, mime)) = content else {
+        let _ = request.respond(tiny_http::Response::empty(404));
+        return;
+    };
 
-    let _ = match response {
-        Some((bytes, mime)) => request.respond(
+    // iOS Safari refuses to play media from servers without byte-range
+    // support, so single ranges are honored for every file.
+    let range = request
+        .headers()
+        .iter()
+        .find(|header| header.field.equiv("range"))
+        .and_then(|header| parse_range(header.value.as_str(), bytes.len()));
+
+    let _ = match range {
+        Some((start, end)) => request.respond(
+            tiny_http::Response::from_data(bytes[start..=end].to_vec())
+                .with_status_code(206)
+                .with_header(header("Content-Type", mime))
+                .with_header(header("Cache-Control", "no-cache"))
+                .with_header(header("Accept-Ranges", "bytes"))
+                .with_header(header(
+                    "Content-Range",
+                    &format!("bytes {start}-{end}/{}", bytes.len()),
+                )),
+        ),
+        None => request.respond(
             tiny_http::Response::from_data(bytes)
                 .with_header(header("Content-Type", mime))
-                .with_header(header("Cache-Control", "no-cache")),
+                .with_header(header("Cache-Control", "no-cache"))
+                .with_header(header("Accept-Ranges", "bytes")),
         ),
-        None => request.respond(tiny_http::Response::empty(404)),
     };
+}
+
+/// The byte window of a `Range: bytes=a-b` header (also `a-` and `-n`
+/// forms), inclusive and clamped; `None` falls back to the whole file.
+fn parse_range(value: &str, total: usize) -> Option<(usize, usize)> {
+    let spec = value.strip_prefix("bytes=")?.split(',').next()?.trim();
+    let (start, end) = spec.split_once('-')?;
+    let last = total.checked_sub(1)?;
+    if start.is_empty() {
+        let suffix: usize = end.parse().ok()?;
+        return Some((total.saturating_sub(suffix.max(1)), last));
+    }
+    let start: usize = start.parse().ok()?;
+    if start > last {
+        return None;
+    }
+    let end: usize = match end {
+        "" => last,
+        end => end.parse::<usize>().ok()?.min(last),
+    };
+    (start <= end).then_some((start, end))
 }
 
 fn header(field: &str, value: &str) -> tiny_http::Header {
