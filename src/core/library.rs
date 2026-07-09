@@ -29,7 +29,7 @@ pub struct StepfileGroup {
 pub struct StepfileEntry {
     pub stepfile: Stepfile,
     pub sm_path: PathBuf,
-    pub dir: PathBuf,
+    dir: PathBuf,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

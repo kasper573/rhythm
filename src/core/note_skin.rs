@@ -1,12 +1,32 @@
 use crate::core::assets::asset_root;
 use crate::core::platform::platform;
-use crate::core::settings::Settings;
+use crate::core::player::{PerPlayer, PlayerId};
+use crate::core::settings::PlayerSettings;
 use bevy::image::{ImageAddressMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor};
 use bevy::math::Rect;
 use bevy::prelude::*;
 use serde::Deserialize;
+use strum::IntoEnumIterator;
 
+/// Each player's loaded note skin, kept on whatever their settings name.
 #[derive(Resource)]
+pub struct ActiveNoteSkins(PerPlayer<ActiveNoteSkin>);
+
+impl ActiveNoteSkins {
+    /// Both players on one skin — for tools that render a single field.
+    pub fn shared(skin: ActiveNoteSkin) -> ActiveNoteSkins {
+        ActiveNoteSkins(PerPlayer {
+            p1: skin.clone(),
+            p2: skin,
+        })
+    }
+
+    pub fn get(&self, player: PlayerId) -> &ActiveNoteSkin {
+        &self.0[player]
+    }
+}
+
+#[derive(Clone)]
 pub struct ActiveNoteSkin {
     /// Folder name under `assets/note_skins`.
     pub name: String,
@@ -83,6 +103,7 @@ pub struct NoteSkinLibrary {
     pub skins: Vec<NoteSkinEntry>,
 }
 
+#[derive(Clone)]
 struct TapRow {
     quant: u32,
     first_frame: usize,
@@ -94,23 +115,22 @@ pub struct NoteSkinEntry {
     pub display_name: String,
 }
 
-/// Keeps the active skin on whatever the settings name: loaded at startup
-/// and reloaded whenever they change. Requires [`Settings`] to already be
-/// inserted.
+/// Keeps every player's active skin on whatever their settings name:
+/// loaded at startup and reloaded whenever they change. Requires
+/// [`PlayerSettings`] to already be inserted.
 pub struct NoteSkinPlugin;
 
 impl Plugin for NoteSkinPlugin {
     fn build(&self, app: &mut App) {
-        let name = app
-            .world()
-            .resource::<Settings>()
-            .stepfile
-            .note_skin
-            .clone();
-        let skin = load_note_skin(app.world().resource::<AssetServer>(), &name);
-        app.insert_resource(skin)
+        let settings = app.world().resource::<PlayerSettings>().clone();
+        let asset_server = app.world().resource::<AssetServer>();
+        let skins = ActiveNoteSkins(PerPlayer {
+            p1: load_note_skin(asset_server, &settings[PlayerId::P1].note_skin),
+            p2: load_note_skin(asset_server, &settings[PlayerId::P2].note_skin),
+        });
+        app.insert_resource(skins)
             .insert_resource(scan_note_skins())
-            .add_systems(Update, reload_changed_skin);
+            .add_systems(Update, reload_changed_skins);
     }
 }
 
@@ -177,6 +197,11 @@ pub fn load_note_skin(asset_server: &AssetServer, name: &str) -> ActiveNoteSkin 
         rect(manifest.receptor.frames[0], manifest.receptor.size),
         rect(manifest.receptor.frames[1], manifest.receptor.size),
     ];
+    assert!(
+        !manifest.hold_head.inactive.is_empty() && !manifest.hold_head.active.is_empty(),
+        "{}: hold_head needs at least one inactive and one active sprite",
+        manifest_path.display()
+    );
     let hold_head_inactive = manifest
         .hold_head
         .inactive
@@ -193,6 +218,12 @@ pub fn load_note_skin(asset_server: &AssetServer, name: &str) -> ActiveNoteSkin 
     let hold_cap_active = rect(manifest.hold_cap.active, manifest.hold_cap.size);
     let mine = rect(manifest.mine.pos, manifest.mine.size);
     let mine_explosion = rect(manifest.mine_explosion.pos, manifest.mine_explosion.size);
+    assert!(
+        !tap_rows.is_empty(),
+        "{}: taps.quants must not be empty",
+        manifest_path.display()
+    );
+
     let mut flash = |region: &RegionManifest| ArrowFlashSprite {
         frame: rect(region.pos, region.size),
         size: region.size[0] as f32,
@@ -233,15 +264,20 @@ pub fn load_note_skin(asset_server: &AssetServer, name: &str) -> ActiveNoteSkin 
     }
 }
 
-fn reload_changed_skin(
-    settings: Res<Settings>,
+fn reload_changed_skins(
+    settings: Res<PlayerSettings>,
     asset_server: Res<AssetServer>,
-    mut skin: ResMut<ActiveNoteSkin>,
+    mut skins: ResMut<ActiveNoteSkins>,
 ) {
-    if !settings.is_changed() || skin.name == settings.stepfile.note_skin {
+    if !settings.is_changed() {
         return;
     }
-    *skin = load_note_skin(&asset_server, &settings.stepfile.note_skin);
+    for player in PlayerId::iter() {
+        let wanted = &settings[player].note_skin;
+        if skins.0[player].name != *wanted {
+            skins.0[player] = load_note_skin(&asset_server, wanted);
+        }
+    }
 }
 
 fn scan_note_skins() -> NoteSkinLibrary {

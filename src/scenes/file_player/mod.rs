@@ -1,27 +1,30 @@
 mod background;
 mod clock;
 mod grading;
+mod tuning;
 mod visuals;
 
 use crate::core::assets::{asset_root, asset_server_path};
-use crate::core::at;
 use crate::core::audio::{Sound, SoundChannel, SoundPlayer};
 use crate::core::config::{GameConfig, RowOutcome};
 use crate::core::font::game_font;
-use crate::core::health_vial::{HealthVialMaterial, spawn_health_vial};
-use crate::core::input::{Actions, GameAction, shift_held};
+use crate::core::health_vial::{HealthVialMaterial, VialSide, spawn_health_vial};
+use crate::core::input::{Actions, GameAction};
 use crate::core::library::{StepfileEntry, StepfileId, StepfileLibrary};
 use crate::core::note_field::{
-    NoteFieldClock, NoteFieldSystems, NoteSpawn, TARGET_Y, spawn_mine, spawn_note, spawn_receptors,
+    FadeOut, InField, NoteField, NoteFieldClock, NoteFieldSystems, NoteSpawn, TARGET_Y,
+    fitted_arrow_size, spawn_mine, spawn_note, spawn_note_field, spawn_receptors,
 };
-use crate::core::note_skin::ActiveNoteSkin;
+use crate::core::note_skin::{ActiveNoteSkin, ActiveNoteSkins};
 use crate::core::platform::SoundOptions;
+use crate::core::player::PlayerId;
 use crate::core::scene_flow::SpawnScoped;
-use crate::core::settings::{Settings, TimingSettings};
+use crate::core::settings::{PlayerSettings, TimingSettings};
 use crate::core::sfx::{PlaySfx, Sfx};
-use crate::core::stepfile::{Chart, Difficulty, MusicPlayer, StepfileClock, StepfileTiming};
+use crate::core::stepfile::{Chart, MusicPlayer, StepfileClock, StepfileTiming};
 use crate::core::tick_track::render_tick_track;
-use crate::core::units::{Millis, Seconds};
+use crate::core::units::Seconds;
+use crate::core::{SCREEN_SIZE, at};
 use crate::scenes::file_select::{FileSelectTarget, SelectedStepfile};
 use crate::scenes::{GameScene, SceneFade, scene_accepts_input};
 use bevy::ecs::system::SystemParam;
@@ -32,8 +35,17 @@ use bevy::prelude::*;
 pub struct ScoreResults {
     pub id: StepfileId,
     pub title: String,
-    pub result: PlayResult,
-    pub difficulty: Difficulty,
+    pub players: Vec<PlayerResult>,
+}
+
+/// One player's complete run.
+#[derive(Debug, Clone)]
+pub struct PlayerResult {
+    pub player: PlayerId,
+    /// The run drained to zero health before the chart ended.
+    pub failed: bool,
+    /// Index into the played stepfile's `charts`.
+    pub chart: usize,
     pub outcomes: Vec<RowOutcome>,
     /// Every row of the chart, so partial (failed) runs still rate against
     /// the whole song.
@@ -46,15 +58,7 @@ pub struct ScoreResults {
     pub mines_total: u32,
 }
 
-/// How a play session ended: cleared the chart, or drained to zero health
-/// partway through.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PlayResult {
-    Cleared,
-    Failed,
-}
-
-pub struct FilePlayerPlugin;
+pub(super) struct FilePlayerPlugin;
 
 impl Plugin for FilePlayerPlugin {
     fn build(&self, app: &mut App) {
@@ -62,6 +66,7 @@ impl Plugin for FilePlayerPlugin {
             .add_plugins((
                 clock::plugin,
                 grading::plugin,
+                tuning::plugin,
                 visuals::plugin,
                 background::plugin,
             ))
@@ -82,19 +87,7 @@ impl Plugin for FilePlayerPlugin {
             .add_systems(
                 Update,
                 (
-                    toggle_tick_audio,
-                    toggle_autosync,
-                    fold_autosync,
-                    update_autosync_status,
-                    adjust_timing_offsets,
-                )
-                    .chain()
-                    .in_set(PlaySet::Tune),
-            )
-            .add_systems(
-                Update,
-                (
-                    fail_when_drained,
+                    fail_drained_stages,
                     finish_when_complete,
                     handle_cancel.run_if(scene_accepts_input),
                 )
@@ -104,9 +97,9 @@ impl Plugin for FilePlayerPlugin {
     }
 }
 
-/// The frame pipeline around the note field: the phases through `Sync` feed
-/// it and run before [`NoteFieldSystems`]; `Present` reacts to the graded
-/// frame after it.
+/// The frame pipeline around the note fields: the phases through `Sync`
+/// feed them and run before [`NoteFieldSystems`]; `Present` reacts to the
+/// graded frame after it.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum PlaySet {
     Clock,
@@ -119,7 +112,7 @@ enum PlaySet {
 /// The sources everything on stage is materialized from.
 #[derive(SystemParam)]
 struct StageAssets<'w> {
-    skin: Res<'w, ActiveNoteSkin>,
+    skins: Res<'w, ActiveNoteSkins>,
     asset_server: Res<'w, AssetServer>,
     sounds: ResMut<'w, Assets<Sound>>,
     vial_materials: ResMut<'w, Assets<HealthVialMaterial>>,
@@ -127,21 +120,47 @@ struct StageAssets<'w> {
 
 const LEAD_IN: Seconds = Seconds(2.0);
 
+/// Width reserved on each screen edge that fields never enter: the health
+/// vials plus breathing room.
+const STAGE_MARGIN_X: f32 = 150.0;
+
+/// Gap between adjacent fields, in column spacings.
+const FIELD_GAP_COLUMNS: f32 = 2.0;
+
 #[derive(Resource)]
 pub(super) struct PlaySession {
     pub title: String,
-    pub difficulty: Difficulty,
+    /// One per active player, in [`SelectedStepfile`] chart order; a
+    /// doubles session is P1's single wide stage.
+    pub stages: Vec<Stage>,
+    pub clock: PlaybackClock,
+    pub last_note_time: Seconds,
+    pub finished: bool,
+    pub autosync: AutoSync,
+}
+
+/// One player's run through their chart: their notes, their grading
+/// cursors, their combo and health. The field's geometry and input
+/// mapping live on the [`NoteField`] component of `field`. Draining to
+/// zero fails only this stage; the session ends when every stage has
+/// failed or every surviving one is complete.
+pub(super) struct Stage {
+    pub player: PlayerId,
+    pub field: Entity,
     pub rows: Vec<SessionRow>,
     pub mines: Vec<SessionMine>,
     pub graded_count: usize,
     pub expire_cursor: usize,
-    pub clock: PlaybackClock,
     pub combo: u32,
     pub max_combo: u32,
     pub health: u32,
-    pub last_note_time: Seconds,
-    pub finished: bool,
-    pub autosync: AutoSync,
+    pub failed: bool,
+}
+
+impl Stage {
+    pub fn complete(&self) -> bool {
+        self.graded_count >= self.rows.len()
+    }
 }
 
 /// The session's playback timeline, advanced by the [`clock`] module: the
@@ -184,7 +203,7 @@ impl PlaySession {
 pub(super) struct SessionRow {
     pub time: Seconds,
     pub outcome: Option<RowOutcome>,
-    /// 1..=4 arrows; two or more make the row a jump.
+    /// Simultaneous arrows; two or more make the row a jump.
     pub arrows: Vec<SessionArrow>,
 }
 
@@ -238,9 +257,10 @@ pub(super) enum MineOutcome {
     Avoided,
 }
 
-/// Announces a graded row so the grade/combo displays can react.
+/// Announces a stage's graded row so the grade/combo displays can react.
 #[derive(Message)]
 pub(super) struct RowGraded {
+    pub player: PlayerId,
     pub outcome: RowOutcome,
     pub combo: u32,
 }
@@ -253,11 +273,20 @@ pub(super) struct MusicTrack;
 #[derive(Component, Default, Clone)]
 pub(super) struct TickTrack;
 
+/// Tags a HUD element with the stage player it reports on. Public only
+/// because the template derive demands it.
+#[derive(Component, Clone, Copy, FromTemplate)]
+pub struct ForPlayer(pub PlayerId);
+
 #[derive(Component, Default, Clone)]
 pub(super) struct GradeText;
 
+/// The combo readout, carrying its own bounce animation state.
 #[derive(Component, Default, Clone)]
-pub(super) struct ComboText;
+pub(super) struct ComboText {
+    pub bounce: Seconds,
+    pub last_combo: u32,
+}
 
 #[derive(Component, Default, Clone)]
 pub(super) struct OffsetOsd;
@@ -270,7 +299,7 @@ fn enter(
     selected: Option<Res<SelectedStepfile>>,
     library: Res<StepfileLibrary>,
     config: Res<GameConfig>,
-    settings: Res<Settings>,
+    player_settings: Res<PlayerSettings>,
     mut assets: StageAssets,
     mut fade: ResMut<SceneFade>,
 ) {
@@ -279,62 +308,88 @@ fn enter(
         return;
     };
     let entry = library.stepfile(selected.id);
-    let chart = entry
-        .stepfile
+    let timing = entry.stepfile.timing.clone();
+
+    let Some(charts) = selected
         .charts
-        .get(selected.chart)
-        .or_else(|| entry.stepfile.preferred_chart());
-    let Some(chart) = chart else {
+        .iter()
+        .map(|player_chart| {
+            entry
+                .stepfile
+                .charts
+                .get(player_chart.chart)
+                .map(|chart| (player_chart.player, chart))
+        })
+        .collect::<Option<Vec<_>>>()
+    else {
         fade.begin(GameScene::FileSelect);
         return;
     };
-    if chart.columns != 4 {
-        warn!(
-            "chart has {} columns; only 4-column play is supported",
-            chart.columns
-        );
-    }
+    let layouts = stage_layouts(&charts, &player_settings);
 
-    let timing = entry.stepfile.timing.clone();
-
-    for entity in spawn_receptors(&mut commands, &assets.skin) {
+    let mut stages = Vec::new();
+    let mut last_note_time = Seconds::ZERO;
+    for ((player, chart), layout) in charts.into_iter().zip(layouts) {
+        let origin_x = layout.origin_x;
+        let skin = assets.skins.get(player);
+        let field = spawn_note_field(&mut commands, layout.clone());
         commands
-            .entity(entity)
+            .entity(field)
             .insert(DespawnOnExit(GameScene::FilePlayer));
-    }
-    let vial = spawn_health_vial(&mut commands, &mut assets.vial_materials, 1.0);
-    commands
-        .entity(vial)
-        .insert(DespawnOnExit(GameScene::FilePlayer));
+        for entity in spawn_receptors(&mut commands, skin, field, &layout) {
+            commands
+                .entity(entity)
+                .insert(DespawnOnExit(GameScene::FilePlayer));
+        }
+        let side = match player {
+            PlayerId::P1 => VialSide::Left,
+            PlayerId::P2 => VialSide::Right,
+        };
+        let vial = spawn_health_vial(&mut commands, &mut assets.vial_materials, 1.0, side);
+        commands
+            .entity(vial)
+            .insert((ForPlayer(player), DespawnOnExit(GameScene::FilePlayer)));
+        spawn_stage_hud(&mut commands, player, origin_x);
 
-    let (rows, mines, last_note_time) =
-        spawn_chart(&mut commands, &assets.skin, &config, chart, &timing);
-    spawn_audio_tracks(&mut commands, &mut assets, entry, &rows, &config);
+        let (rows, mines, stage_last) =
+            spawn_chart(&mut commands, skin, field, &layout, &config, chart, &timing);
+        last_note_time = last_note_time.max(stage_last);
+        stages.push(Stage {
+            player,
+            field,
+            rows,
+            mines,
+            graded_count: 0,
+            expire_cursor: 0,
+            combo: 0,
+            max_combo: 0,
+            health: config.player_max_health,
+            failed: false,
+        });
+    }
+    if stages.is_empty() {
+        fade.begin(GameScene::FileSelect);
+        return;
+    }
+
+    spawn_audio_tracks(&mut commands, &mut assets, entry, &stages, &config);
     background::spawn_background(&mut commands, entry, &timing);
-    spawn_hud(&mut commands);
+    spawn_shared_hud(&mut commands);
 
     commands.insert_resource(NoteFieldClock {
         visible: -LEAD_IN,
         timing: timing.clone(),
-        speed: settings.stepfile.note_speed,
         target_y: TARGET_Y,
     });
     commands.insert_resource(PlaySession {
         title: entry.display_title(),
-        difficulty: chart.difficulty.clone(),
-        rows,
-        mines,
-        graded_count: 0,
-        expire_cursor: 0,
+        stages,
         clock: PlaybackClock {
             phase: PlayPhase::LeadIn { remaining: LEAD_IN },
             music: StepfileClock::start_at(timing, -LEAD_IN),
             wall_since_play: Seconds::ZERO,
             latency_samples: Vec::new(),
         },
-        combo: 0,
-        max_combo: 0,
-        health: config.player_max_health,
         last_note_time,
         finished: false,
         autosync: AutoSync::default(),
@@ -348,12 +403,51 @@ fn exit(mut commands: Commands, mut music: ResMut<MusicPlayer>) {
     commands.remove_resource::<SelectedStepfile>();
 }
 
-/// Spawns every note and mine of the chart into the field, scoped to the
-/// scene, and returns the session records tracking them plus the time the
-/// chart is over.
+/// Sizes and places one field per chart: arrows grow to
+/// [`MAX_ARROW_SIZE`](crate::core::note_field::MAX_ARROW_SIZE) when the
+/// screen has room and shrink until every column — plus the gaps between
+/// fields — fits between the reserved screen edges. The fields pack
+/// left-to-right, centered as a block.
+fn stage_layouts(
+    charts: &[(PlayerId, &Chart)],
+    player_settings: &PlayerSettings,
+) -> Vec<NoteField> {
+    let columns: usize = charts.iter().map(|(_, chart)| chart.columns).sum();
+    let gap_units = FIELD_GAP_COLUMNS * (charts.len() - 1) as f32;
+    let arrow_size = fitted_arrow_size(
+        columns as f32 + gap_units,
+        SCREEN_SIZE.x - 2.0 * STAGE_MARGIN_X,
+    );
+
+    let mut layouts: Vec<NoteField> = charts
+        .iter()
+        .map(|(player, chart)| NoteField {
+            player: *player,
+            origin_x: 0.0,
+            columns: chart.columns,
+            speed: player_settings[*player].note_speed,
+            arrow_size,
+        })
+        .collect();
+    let gap = FIELD_GAP_COLUMNS * layouts[0].spacing();
+    let total: f32 =
+        layouts.iter().map(NoteField::width).sum::<f32>() + gap * (layouts.len() - 1) as f32;
+    let mut x = -total / 2.0;
+    for layout in &mut layouts {
+        layout.origin_x = x + layout.width() / 2.0;
+        x += layout.width() + gap;
+    }
+    layouts
+}
+
+/// Spawns every note and mine of the chart into the stage's field, scoped
+/// to the scene, and returns the session records tracking them plus the
+/// time the chart is over.
 fn spawn_chart(
     commands: &mut Commands,
     skin: &ActiveNoteSkin,
+    field: Entity,
+    layout: &NoteField,
     config: &GameConfig,
     chart: &Chart,
     timing: &StepfileTiming,
@@ -361,12 +455,9 @@ fn spawn_chart(
     let mut mines = Vec::new();
     let mut last_note_time = Seconds::ZERO;
     for mine in &chart.mines {
-        if mine.column >= 4 {
-            continue;
-        }
         let time = timing.seconds_at_beat(mine.beat);
         last_note_time = last_note_time.max(time);
-        let entity = spawn_mine(commands, skin, time, mine.beat, mine.column);
+        let entity = spawn_mine(commands, skin, field, layout, time, mine.beat, mine.column);
         commands
             .entity(entity)
             .insert(DespawnOnExit(GameScene::FilePlayer));
@@ -384,9 +475,6 @@ fn spawn_chart(
         let quant = config.recognized_quant(row.quant);
         let mut arrows = Vec::new();
         for arrow in &row.arrows {
-            if arrow.column >= 4 {
-                continue;
-            }
             let end = arrow
                 .tail
                 .map(|tail| (timing.seconds_at_beat(tail.end), tail.end));
@@ -394,6 +482,8 @@ fn spawn_chart(
             let spawned = spawn_note(
                 commands,
                 skin,
+                field,
+                layout,
                 &NoteSpawn {
                     time,
                     beat: row.beat,
@@ -421,13 +511,11 @@ fn spawn_chart(
                 }),
             });
         }
-        if !arrows.is_empty() {
-            rows.push(SessionRow {
-                time,
-                outcome: None,
-                arrows,
-            });
-        }
+        rows.push(SessionRow {
+            time,
+            outcome: None,
+            arrows,
+        });
     }
     // Warps and stops can reorder wall-clock times relative to beats; the
     // expiry cursor needs time order.
@@ -436,12 +524,13 @@ fn spawn_chart(
 }
 
 /// Spawns the music (when the stepfile has any) and the pre-rendered tick
-/// track, both paused until the lead-in ends.
+/// track, both paused until the lead-in ends. The ticks cover every
+/// stage's rows, so versus hears both charts.
 fn spawn_audio_tracks(
     commands: &mut Commands,
     assets: &mut StageAssets,
     entry: &StepfileEntry,
-    rows: &[SessionRow],
+    stages: &[Stage],
     config: &GameConfig,
 ) {
     if let Some(path) = entry.music_path().as_deref().and_then(asset_server_path) {
@@ -467,7 +556,10 @@ fn spawn_audio_tracks(
         );
     }
 
-    let tick_times: Vec<Seconds> = rows.iter().map(|row| row.time).collect();
+    let tick_times: Vec<Seconds> = stages
+        .iter()
+        .flat_map(|stage| stage.rows.iter().map(|row| row.time))
+        .collect();
     match render_tick_track(
         &asset_root().join(Sfx::Tick.asset_path()),
         &tick_times,
@@ -497,15 +589,17 @@ fn spawn_audio_tracks(
     }
 }
 
-fn spawn_hud(commands: &mut Commands) {
+/// The per-stage readouts, centered over the stage's field.
+fn spawn_stage_hud(commands: &mut Commands, player: PlayerId, origin_x: f32) {
     commands.spawn_scoped(
         GameScene::FilePlayer,
         bsn! {
             ComboText
+            ForPlayer({player})
             game_font(44.0)
             Text2d("")
             TextColor(Color::WHITE)
-            at(0.0, -60.0, 5.0)
+            at(origin_x, -60.0, 5.0)
             Visibility::Hidden
         },
     );
@@ -513,12 +607,17 @@ fn spawn_hud(commands: &mut Commands) {
         GameScene::FilePlayer,
         bsn! {
             GradeText
+            ForPlayer({player})
             game_font(50.0)
             Text2d("")
             TextColor(Color::srgba(1.0, 1.0, 1.0, 0.0))
-            at(0.0, 10.0, 6.0)
+            at(origin_x, 10.0, 6.0)
         },
     );
+}
+
+/// The machine-wide readouts: the timing-offset OSD and AutoSync status.
+fn spawn_shared_hud(commands: &mut Commands) {
     commands.spawn_scoped(
         GameScene::FilePlayer,
         bsn! {
@@ -550,126 +649,6 @@ fn spawn_hud(commands: &mut Commands) {
     );
 }
 
-fn toggle_autosync(actions: Actions, mut session: ResMut<PlaySession>) {
-    if !actions.just_pressed(GameAction::ToggleAutoSync) {
-        return;
-    }
-    session.autosync.enabled = !session.autosync.enabled;
-    session.autosync.samples.clear();
-}
-
-/// AutoSync: with enough hit samples, fold their median error into the
-/// machine offset (surfacing it through the usual offset OSD), reset, and
-/// keep collecting until toggled off.
-const AUTOSYNC_SAMPLES: usize = 24;
-
-fn fold_autosync(
-    mut session: ResMut<PlaySession>,
-    mut settings: ResMut<Settings>,
-    mut osd: MessageWriter<visuals::OffsetOsdLine>,
-) {
-    if !session.autosync.enabled || session.autosync.samples.len() < AUTOSYNC_SAMPLES {
-        return;
-    }
-    let mut samples = std::mem::take(&mut session.autosync.samples);
-    samples.sort_by(|a, b| a.0.total_cmp(&b.0));
-    let median = samples[samples.len() / 2];
-    let delta = Millis(median.to_millis().round() as i64);
-    if delta == Millis(0) {
-        return;
-    }
-    settings.timing.machine_offset = settings.timing.machine_offset + delta;
-    osd.write(visuals::OffsetOsdLine(format!(
-        "Machine offset: {}",
-        settings.timing.machine_offset
-    )));
-}
-
-fn update_autosync_status(
-    session: Res<PlaySession>,
-    mut status: Single<(&mut Text, &mut Visibility), With<AutoSyncText>>,
-    mut shown: Local<Option<(bool, usize)>>,
-) {
-    let state = (session.autosync.enabled, session.autosync.samples.len());
-    if *shown == Some(state) {
-        return;
-    }
-    *shown = Some(state);
-    let (text, visibility) = &mut *status;
-    if session.autosync.enabled {
-        text.0 = format!("AutoSync ({}/{AUTOSYNC_SAMPLES} samples)", state.1);
-        **visibility = Visibility::Visible;
-    } else {
-        **visibility = Visibility::Hidden;
-    }
-}
-
-fn toggle_tick_audio(actions: Actions, mut tick: Query<&mut SoundChannel, With<TickTrack>>) {
-    if !actions.just_pressed(GameAction::ToggleTickAudio) {
-        return;
-    }
-    for mut channel in &mut tick {
-        let muted = channel.is_muted();
-        channel.set_muted(!muted);
-    }
-}
-
-/// Adjusts the three synchronization offsets by 1ms (10ms with SHIFT held)
-/// and surfaces the new value on the OSD.
-fn adjust_timing_offsets(
-    keys: Res<ButtonInput<KeyCode>>,
-    mut settings: ResMut<Settings>,
-    config: Res<GameConfig>,
-    mut osd: MessageWriter<visuals::OffsetOsdLine>,
-) {
-    let step = if shift_held(&keys) { 10 } else { 1 };
-    let pairs = [
-        (
-            GameAction::DecreaseMachineOffset,
-            GameAction::IncreaseMachineOffset,
-        ),
-        (
-            GameAction::DecreaseVisualDelay,
-            GameAction::IncreaseVisualDelay,
-        ),
-        (
-            GameAction::DecreaseAudioLatency,
-            GameAction::IncreaseAudioLatency,
-        ),
-    ];
-    let mut osd_line = None;
-    for (index, (decrease, increase)) in pairs.into_iter().enumerate() {
-        let mut delta: i64 = 0;
-        if settings.keymap.just_pressed(&keys, increase, &config) {
-            delta += step;
-        }
-        if settings.keymap.just_pressed(&keys, decrease, &config) {
-            delta -= step;
-        }
-        if delta == 0 {
-            continue;
-        }
-        let timing = &mut settings.timing;
-        osd_line = Some(match index {
-            0 => {
-                timing.machine_offset = timing.machine_offset + Millis(delta);
-                format!("Machine offset: {}", timing.machine_offset)
-            }
-            1 => {
-                timing.visual_delay = timing.visual_delay + Millis(delta);
-                format!("Visual delay: {}", timing.visual_delay)
-            }
-            _ => {
-                let latency = timing.audio_latency() + Millis(delta);
-                timing.audio_latency = Some(latency);
-                format!("Audio latency: {latency}")
-            }
-        });
-    }
-    let Some(line) = osd_line else { return };
-    osd.write(visuals::OffsetOsdLine(line));
-}
-
 fn finish_when_complete(
     mut session: ResMut<PlaySession>,
     selected: Res<SelectedStepfile>,
@@ -678,7 +657,11 @@ fn finish_when_complete(
     mut commands: Commands,
     mut fade: ResMut<SceneFade>,
 ) {
-    if session.finished || session.graded_count < session.rows.len() {
+    let all_settled = session
+        .stages
+        .iter()
+        .all(|stage| stage.failed || stage.complete());
+    if session.finished || !all_settled {
         return;
     }
     let audio_done = if let Ok(channel) = music.single() {
@@ -694,85 +677,108 @@ fn finish_when_complete(
         return;
     }
     session.finished = true;
-    commands.insert_resource(collect_results(&session, &selected, PlayResult::Cleared));
+    commands.insert_resource(collect_results(&session, &selected));
     fade.begin(GameScene::Score);
 }
 
-/// Zero health ends the session on the spot: the fail sting fires here so
-/// it plays through the transition, and the grades given so far become the
-/// final result.
-fn fail_when_drained(
+/// Zero health fails that stage on the spot: its remaining notes fade out
+/// and its grading stops, while any surviving stage plays on. The fail
+/// sting fires per failed stage; once every stage is down the session
+/// ends and the grades given so far become the final result.
+fn fail_drained_stages(
     mut session: ResMut<PlaySession>,
     selected: Res<SelectedStepfile>,
+    staged: Query<(Entity, &InField)>,
     mut sfx: MessageWriter<PlaySfx>,
     mut commands: Commands,
     mut fade: ResMut<SceneFade>,
 ) {
-    if session.finished || session.health > 0 {
+    if session.finished {
         return;
     }
-    session.finished = true;
-    sfx.write(PlaySfx(Sfx::Fail));
-    commands.insert_resource(collect_results(&session, &selected, PlayResult::Failed));
-    fade.begin(GameScene::Score);
+    for stage in &mut session.stages {
+        if stage.failed || stage.health > 0 {
+            continue;
+        }
+        stage.failed = true;
+        sfx.write(PlaySfx(Sfx::Fail));
+        // The whole side shuts down: notes, mines, and receptors fade away.
+        for (entity, in_field) in &staged {
+            if in_field.0 == stage.field {
+                commands
+                    .entity(entity)
+                    .insert(FadeOut::over(FAIL_FADE_SECONDS));
+            }
+        }
+    }
+    if session.stages.iter().all(|stage| stage.failed) {
+        session.finished = true;
+        commands.insert_resource(collect_results(&session, &selected));
+        fade.begin(GameScene::Score);
+    }
 }
 
-fn collect_results(
-    session: &PlaySession,
-    selected: &SelectedStepfile,
-    result: PlayResult,
-) -> ScoreResults {
-    let holds: Vec<&HoldState> = session
-        .rows
+const FAIL_FADE_SECONDS: f32 = 0.8;
+
+fn collect_results(session: &PlaySession, selected: &SelectedStepfile) -> ScoreResults {
+    let players = session
+        .stages
         .iter()
-        .flat_map(|row| &row.arrows)
-        .filter_map(|arrow| arrow.hold.as_ref())
+        .zip(&selected.charts)
+        .map(|(stage, player_chart)| {
+            let holds: Vec<&HoldState> = stage
+                .rows
+                .iter()
+                .flat_map(|row| &row.arrows)
+                .filter_map(|arrow| arrow.hold.as_ref())
+                .collect();
+            PlayerResult {
+                player: stage.player,
+                failed: stage.failed,
+                chart: player_chart.chart,
+                outcomes: stage.rows.iter().filter_map(|row| row.outcome).collect(),
+                rows_total: stage.rows.len() as u32,
+                max_combo: stage.max_combo,
+                holds_ok: holds
+                    .iter()
+                    .filter(|hold| hold.result == Some(HoldOutcome::Ok))
+                    .count() as u32,
+                holds_ng: holds
+                    .iter()
+                    .filter(|hold| hold.result == Some(HoldOutcome::Ng))
+                    .count() as u32,
+                holds_total: holds.len() as u32,
+                mines_exploded: stage
+                    .mines
+                    .iter()
+                    .filter(|mine| mine.outcome == Some(MineOutcome::Exploded))
+                    .count() as u32,
+                mines_total: stage.mines.len() as u32,
+            }
+        })
         .collect();
     ScoreResults {
         id: selected.id,
         title: session.title.clone(),
-        result,
-        difficulty: session.difficulty.clone(),
-        outcomes: session.rows.iter().filter_map(|row| row.outcome).collect(),
-        rows_total: session.rows.len() as u32,
-        max_combo: session.max_combo,
-        holds_ok: holds
-            .iter()
-            .filter(|hold| hold.result == Some(HoldOutcome::Ok))
-            .count() as u32,
-        holds_ng: holds
-            .iter()
-            .filter(|hold| hold.result == Some(HoldOutcome::Ng))
-            .count() as u32,
-        holds_total: holds.len() as u32,
-        mines_exploded: session
-            .mines
-            .iter()
-            .filter(|mine| mine.outcome == Some(MineOutcome::Exploded))
-            .count() as u32,
-        mines_total: session.mines.len() as u32,
+        players,
     }
 }
 
 fn handle_cancel(
     actions: Actions,
+    session: Res<PlaySession>,
     selected: Res<SelectedStepfile>,
     mut commands: Commands,
     mut fade: ResMut<SceneFade>,
     mut sfx: MessageWriter<PlaySfx>,
 ) {
-    if actions.just_pressed(GameAction::Cancel) {
+    let cancelled = session
+        .stages
+        .iter()
+        .any(|stage| actions.just_pressed(GameAction::cancel(stage.player)));
+    if cancelled {
         sfx.write(PlaySfx(Sfx::Cancel));
-        commands.insert_resource(FileSelectTarget::Stepfile(selected.id));
+        commands.insert_resource(FileSelectTarget(selected.id));
         fade.begin(GameScene::FileSelect);
-    }
-}
-
-pub(super) fn direction_action(column: usize) -> GameAction {
-    match column {
-        0 => GameAction::Left,
-        1 => GameAction::Down,
-        2 => GameAction::Up,
-        _ => GameAction::Right,
     }
 }

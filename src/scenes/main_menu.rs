@@ -2,7 +2,7 @@ use crate::core::menu::{MenuSelected, spawn_menu};
 use crate::scenes::{GameScene, SceneFade, play_default_bgm, spawn_default_background};
 use bevy::prelude::*;
 
-pub struct MainMenuPlugin;
+pub(super) struct MainMenuPlugin;
 
 impl Plugin for MainMenuPlugin {
     fn build(&self, app: &mut App) {
@@ -22,7 +22,7 @@ fn enter(mut commands: Commands) {
         &mut commands,
         GameScene::MainMenu,
         "Rhythm",
-        &["File select", "Settings", "Quit"],
+        &["Start", "Settings", "Quit"],
     );
 }
 
@@ -33,7 +33,7 @@ fn handle_selection(
 ) {
     for selection in selected.read() {
         match selection.index {
-            0 => fade.begin(GameScene::FileSelect),
+            0 => fade.begin(GameScene::ModeSelect),
             1 => fade.begin(GameScene::SettingsMenu),
             _ => {
                 exit.write(AppExit::Success);

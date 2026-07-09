@@ -1,7 +1,7 @@
 use super::{ActiveRowHighlight, Wheel, WheelEntry};
 use crate::core::config::RhythmCycle;
 use crate::core::library::StepfileLibrary;
-use crate::core::settings::Settings;
+use crate::core::settings::MachineSettings;
 use crate::core::stepfile::MusicPlayer;
 use bevy::prelude::*;
 
@@ -33,7 +33,7 @@ pub(super) fn drive_wheel_bgm(
 /// Pulses the active-row highlight's opacity between 0.5 and 1 on the
 /// music's beat, apex on the beat; a steady 1 while nothing plays.
 pub(super) fn pulse_active_row(
-    settings: Res<Settings>,
+    settings: Res<MachineSettings>,
     player: Res<MusicPlayer>,
     mut highlight: Single<&mut Sprite, With<ActiveRowHighlight>>,
 ) {

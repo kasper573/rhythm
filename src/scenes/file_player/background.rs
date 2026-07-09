@@ -2,7 +2,7 @@ use super::{PlaySession, PlaySet};
 use crate::core::assets::asset_server_path;
 use crate::core::library::{StepfileEntry, is_video_file};
 use crate::core::scene_flow::SpawnScoped;
-use crate::core::settings::Settings;
+use crate::core::settings::MachineSettings;
 use crate::core::stepfile::StepfileTiming;
 use crate::core::units::Seconds;
 use crate::core::video::VideoStream;
@@ -101,7 +101,7 @@ struct BackgroundCue {
 
 fn cue_background_changes(
     session: Res<PlaySession>,
-    settings: Res<Settings>,
+    settings: Res<MachineSettings>,
     mut timeline: ResMut<BackgroundTimeline>,
     mut cues: MessageWriter<BackgroundCue>,
 ) {
@@ -215,7 +215,7 @@ fn fade_background_layers(
 
 fn stream_video_frames(
     session: Res<PlaySession>,
-    settings: Res<Settings>,
+    settings: Res<MachineSettings>,
     mut images: ResMut<Assets<Image>>,
     mut videos: Query<&mut VideoStream>,
 ) {

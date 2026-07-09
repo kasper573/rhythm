@@ -22,11 +22,12 @@ use clap::Parser;
 use rhythm::core::CLEAR_COLOR;
 use rhythm::core::config::GameConfig;
 use rhythm::core::note_field::{
-    ARROW_SIZE, FadeOut, HOLD_OK_FADE_SECONDS, HoldPart, HoldVisual, HoldVisualState, MineNote,
-    NoteArrow, NoteFieldClock, NoteFieldPlugin, NoteSpawn, NoteSpeed, Receptor, SpawnedNote,
+    FadeOut, HOLD_OK_FADE_SECONDS, HoldPart, HoldVisual, HoldVisualState, MineNote, NoteArrow,
+    NoteField, NoteFieldClock, NoteFieldPlugin, NoteSpawn, NoteSpeed, Receptor, SpawnedNote,
     TARGET_Y, spawn_arrow_flash, spawn_mine, spawn_mine_explosion, spawn_note, spawn_receptors,
 };
-use rhythm::core::note_skin::{ActiveNoteSkin, load_note_skin};
+use rhythm::core::note_skin::{ActiveNoteSkins, load_note_skin};
+use rhythm::core::player::PlayerId;
 use rhythm::core::stepfile::StepfileTiming;
 use rhythm::core::units::{Beat, Seconds};
 use std::collections::BTreeMap;
@@ -81,7 +82,7 @@ fn main() {
     }
 
     let config = GameConfig::load();
-    let defaults = &config.default_stepfile_options;
+    let defaults = &config.default_player_options;
     let skin_name = cli
         .skin
         .clone()
@@ -99,6 +100,8 @@ fn main() {
 
 const WIDTH: u32 = 640;
 const HEIGHT: u32 = 720;
+/// The rendered field's arrow size: the classic in-game proportions.
+const RENDER_ARROW_SIZE: f32 = 88.0;
 /// Clips start with the first note this far below the receptors: past the
 /// bottom edge whatever the scroll speed.
 const LEAD_PIXELS: f32 = 760.0;
@@ -394,14 +397,15 @@ fn mine(beat: f64, column: usize) -> ScenarioMine {
     ScenarioMine { beat, column }
 }
 
-/// A headless bevy app rendering the note field into an image target, one
-/// fixed-step frame at a time.
+/// A headless bevy app rendering one P1 note field into an image target,
+/// one fixed-step frame at a time.
 struct FieldRenderer {
     apps: SubApps,
     target: Handle<Image>,
     sender: Sender<(u32, Vec<u8>)>,
     frames: Receiver<(u32, Vec<u8>)>,
-    speed: NoteSpeed,
+    field: Entity,
+    layout: NoteField,
     fps: u32,
 }
 
@@ -429,12 +433,20 @@ impl FieldRenderer {
             1.0 / fps as f64,
         )));
         let skin = load_note_skin(app.world().resource::<AssetServer>(), skin_name);
-        app.insert_resource(skin);
+        app.insert_resource(ActiveNoteSkins::shared(skin));
         app.finish();
         app.cleanup();
         let mut apps = std::mem::take(app.sub_apps_mut());
 
         let world = apps.main.world_mut();
+        let layout = NoteField {
+            player: PlayerId::P1,
+            origin_x: 0.0,
+            columns: 4,
+            speed,
+            arrow_size: RENDER_ARROW_SIZE,
+        };
+        let field = world.spawn(layout.clone()).id();
         let mut target =
             Image::new_target_texture(WIDTH, HEIGHT, TextureFormat::Rgba8UnormSrgb, None);
         target.texture_descriptor.usage |= TextureUsages::COPY_SRC;
@@ -453,7 +465,8 @@ impl FieldRenderer {
             target,
             sender,
             frames,
-            speed,
+            field,
+            layout,
             fps,
         };
         renderer.wait_for_skin_images();
@@ -464,7 +477,7 @@ impl FieldRenderer {
     /// nothing; pump the app until they are in and uploaded.
     fn wait_for_skin_images(&mut self) {
         let world = self.apps.main.world();
-        let skin = world.resource::<ActiveNoteSkin>();
+        let skin = world.resource::<ActiveNoteSkins>().get(PlayerId::P1);
         let handles = [
             skin.sheet.clone(),
             skin.hold_body_inactive.clone(),
@@ -506,21 +519,23 @@ impl FieldRenderer {
         timing: &StepfileTiming,
         path: &std::path::Path,
     ) -> u32 {
-        let (start, end) = clip_window(scenario, timing, self.speed);
+        let (start, end) = clip_window(scenario, timing, self.layout.speed);
         let frame_count = ((end.0 - start.0) * self.fps as f64).ceil() as u32;
 
         let world = self.apps.main.world_mut();
         world.insert_resource(NoteFieldClock {
             visible: start,
             timing: timing.clone(),
-            speed: self.speed,
             target_y: TARGET_Y,
         });
+        let field = self.field;
+        let layout = &self.layout;
         let mut notes: Vec<(SpawnedNote, usize)> = Vec::new();
         let mut mines: Vec<(Entity, usize)> = Vec::new();
-        world.resource_scope(|world, skin: Mut<ActiveNoteSkin>| {
+        world.resource_scope(|world, skins: Mut<ActiveNoteSkins>| {
+            let skin = skins.get(layout.player);
             let mut commands = world.commands();
-            spawn_receptors(&mut commands, &skin);
+            spawn_receptors(&mut commands, skin, field, layout);
             for note in &scenario.notes {
                 let time = timing.seconds_at_beat(Beat(note.beat));
                 let end = note.length_beats.map(|length| {
@@ -530,7 +545,9 @@ impl FieldRenderer {
                 notes.push((
                     spawn_note(
                         &mut commands,
-                        &skin,
+                        skin,
+                        field,
+                        layout,
                         &NoteSpawn {
                             time,
                             beat: Beat(note.beat),
@@ -545,7 +562,15 @@ impl FieldRenderer {
             for mine in &scenario.mines {
                 let time = timing.seconds_at_beat(Beat(mine.beat));
                 mines.push((
-                    spawn_mine(&mut commands, &skin, time, Beat(mine.beat), mine.column),
+                    spawn_mine(
+                        &mut commands,
+                        skin,
+                        field,
+                        layout,
+                        time,
+                        Beat(mine.beat),
+                        mine.column,
+                    ),
                     mine.column,
                 ));
             }
@@ -573,7 +598,14 @@ impl FieldRenderer {
             let world = self.apps.main.world_mut();
             world.resource_mut::<NoteFieldClock>().visible = now;
             while next_action < script.len() && script[next_action].0.0 <= now.0 {
-                apply_action(world, &notes, &mines, script[next_action].1, flash_color);
+                apply_action(
+                    world,
+                    &self.layout,
+                    &notes,
+                    &mines,
+                    script[next_action].1,
+                    flash_color,
+                );
                 next_action += 1;
             }
             let sender = self.sender.clone();
@@ -648,7 +680,7 @@ fn clip_window(
         cover(*beat);
     }
     assert!(first.is_finite(), "scenario has an empty timeline");
-    let lead_arrows = (LEAD_PIXELS / ARROW_SIZE) as f64;
+    let lead_arrows = (LEAD_PIXELS / RENDER_ARROW_SIZE) as f64;
     let start = match speed {
         NoteSpeed::Constant(scroll_bpm) => {
             timing.seconds_at_beat(Beat(first)) - Seconds(lead_arrows * 60.0 / scroll_bpm as f64)
@@ -665,6 +697,7 @@ fn clip_window(
 
 fn apply_action(
     world: &mut World,
+    layout: &NoteField,
     notes: &[(SpawnedNote, usize)],
     mines: &[(Entity, usize)],
     action: ScriptAction,
@@ -689,9 +722,17 @@ fn apply_action(
             let (note, column) = &notes[index];
             world.despawn(note.head);
             let column = *column;
-            world.resource_scope(|world, skin: Mut<ActiveNoteSkin>| {
+            world.resource_scope(|world, skins: Mut<ActiveNoteSkins>| {
                 let mut commands = world.commands();
-                spawn_arrow_flash(&mut commands, &skin, column, TARGET_Y, flash_color, false);
+                spawn_arrow_flash(
+                    &mut commands,
+                    skins.get(layout.player),
+                    layout,
+                    column,
+                    TARGET_Y,
+                    flash_color,
+                    false,
+                );
             });
             world.flush();
         }
@@ -706,9 +747,15 @@ fn apply_action(
         ScriptAction::ExplodeMine(index) => {
             let (entity, column) = mines[index];
             world.despawn(entity);
-            world.resource_scope(|world, skin: Mut<ActiveNoteSkin>| {
+            world.resource_scope(|world, skins: Mut<ActiveNoteSkins>| {
                 let mut commands = world.commands();
-                spawn_mine_explosion(&mut commands, &skin, column, TARGET_Y);
+                spawn_mine_explosion(
+                    &mut commands,
+                    skins.get(layout.player),
+                    layout,
+                    column,
+                    TARGET_Y,
+                );
             });
             world.flush();
         }

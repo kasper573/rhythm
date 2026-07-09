@@ -1,25 +1,28 @@
-use super::{FileSelectMode, STATS_TEXT, STEPFILE_TEXT};
+use super::{FileSelectFocus, STATS_TEXT};
 use crate::core::at;
 use crate::core::config::GameConfig;
 use crate::core::font::game_font;
-use crate::core::input::{Actions, GameAction, NavPulse};
+use crate::core::input::{Actions, GameAction, NavPulse, StepDirection};
 use crate::core::menu::{ACTIVE_COLOR, INACTIVE_COLOR, TITLE_COLOR};
 use crate::core::note_field::NoteSpeed;
 use crate::core::note_skin::NoteSkinLibrary;
+use crate::core::player::{PlayMode, PlayerId};
 use crate::core::scene_flow::SpawnScoped;
-use crate::core::settings::Settings;
+use crate::core::settings::{PlayerOptions, PlayerSettings};
 use crate::core::sfx::{PlaySfx, Sfx};
 use crate::scenes::GameScene;
 use bevy::ecs::query::QueryFilter;
 use bevy::prelude::*;
 use strum::{EnumCount, EnumIter, IntoEnumIterator, IntoStaticStr};
 
-/// The player options modal: edits the stepfile options in place (they live
-/// in the settings, so changes persist immediately) as an edge-to-edge
-/// stripe over the vertical center of the file select, which stays mounted
-/// underneath. Also keeps the options summary next to the wheel current.
+/// The player options modal: edits each active player's options in place
+/// (they live in the player settings, so changes persist immediately) as
+/// an edge-to-edge stripe over the vertical center of the file select,
+/// which stays mounted underneath. One options panel per active player —
+/// P1 to the left, P2 to the right — each driven by its player's own pad.
+/// Also keeps the options summary next to the wheel current.
 pub(super) fn plugin(app: &mut App) {
-    app.add_systems(OnEnter(FileSelectMode::PlayerOptions), enter)
+    app.add_systems(OnEnter(FileSelectFocus::PlayerOptions), enter)
         .add_systems(
             Update,
             refresh_summary.run_if(in_state(GameScene::FileSelect)),
@@ -29,13 +32,12 @@ pub(super) fn plugin(app: &mut App) {
             (
                 handle_pulses,
                 handle_close,
-                rebuild_value_lists,
+                refresh_values,
                 highlight_rows,
-                animate_underline,
                 animate_transition,
             )
                 .chain()
-                .run_if(in_state(FileSelectMode::PlayerOptions)),
+                .run_if(in_state(FileSelectFocus::PlayerOptions)),
         );
 }
 
@@ -43,52 +45,20 @@ pub(super) fn plugin(app: &mut App) {
 /// them in from opposite directions.
 fn enter(
     mut commands: Commands,
-    settings: Res<Settings>,
+    mode: Res<PlayMode>,
+    settings: Res<PlayerSettings>,
     config: Res<GameConfig>,
     skins: Res<NoteSkinLibrary>,
 ) {
-    let rows: Vec<_> = (0..OptionRow::COUNT)
-        .map(|index| {
-            let (values, selected) = row_values(row(index), &settings, &config, &skins);
-            let label: &str = row(index).into();
-            let values = value_scenes(index, values);
-            bsn! {
-                Node { column_gap: px(24), align_items: AlignItems::Center }
-                Children [
-                    (
-                        Node { width: px(240) }
-                        Children [(
-                            RowText(index)
-                            game_font(28.0)
-                            Text({label.to_string()})
-                            TextColor({INACTIVE_COLOR})
-                        )]
-                    ),
-                    (
-                        RowValues(index)
-                        Node { column_gap: px(22), align_items: AlignItems::Center }
-                        Children [ {values} ]
-                    ),
-                    (
-                        Underline { row: index, target: selected }
-                        Node {
-                            position_type: PositionType::Absolute,
-                            left: px(0),
-                            bottom: px(-2),
-                            width: px(0),
-                            height: px(4),
-                            border_radius: {BorderRadius::all(Val::Px(2.0))},
-                        }
-                        BackgroundColor({STEPFILE_TEXT})
-                    ),
-                ]
-            }
-        })
+    let tagged = mode.players().len() > 1;
+    let panels: Vec<_> = mode
+        .players()
+        .iter()
+        .map(|player| panel_scene(*player, tagged, &settings[*player], &config, &skins))
         .collect();
     commands.spawn_scoped(
-        FileSelectMode::PlayerOptions,
+        FileSelectFocus::PlayerOptions,
         bsn! {
-            ActiveRow(0)
             ModalTransition { t: 0.0, dir: 1.0 }
             Node {
                 width: percent(100),
@@ -118,16 +88,23 @@ fn enter(
                             flex_direction: FlexDirection::Column,
                             align_items: AlignItems::Center,
                             padding: {UiRect::vertical(Val::Px(28.0))},
-                            row_gap: px(14),
+                            row_gap: px(18),
                         }
                         Children [
                             (
+                                ModalText
                                 game_font(52.0)
                                 Text("Player Options")
                                 TextColor({TITLE_COLOR})
-                                Node { margin: {UiRect::bottom(Val::Px(24.0))} }
+                                Node { margin: {UiRect::bottom(Val::Px(16.0))} }
                             ),
-                            {rows},
+                            (
+                                Node {
+                                    column_gap: px(110),
+                                    align_items: AlignItems::FlexStart,
+                                }
+                                Children [ {panels} ]
+                            ),
                         ]
                     ),
                 ]
@@ -136,26 +113,79 @@ fn enter(
     );
 }
 
-fn value_scenes(row: usize, values: Vec<String>) -> Vec<impl Scene> {
-    values
-        .into_iter()
-        .enumerate()
-        .map(move |(index, value)| {
+/// One player's column of option rows, each showing only its selected
+/// value; ¤Up¤/¤Down¤ move between rows, ¤Left¤/¤Right¤ change the value
+/// in place.
+fn panel_scene(
+    player: PlayerId,
+    tagged: bool,
+    options: &PlayerOptions,
+    config: &GameConfig,
+    skins: &NoteSkinLibrary,
+) -> impl Scene {
+    let header: Vec<_> = tagged
+        .then(|| {
+            let tag = player.label().to_string();
             bsn! {
-                ValueText { row: row, index: index }
-                game_font(28.0)
-                Text({value})
-                TextColor({INACTIVE_COLOR})
+                ModalText
+                game_font(34.0)
+                Text({tag})
+                TextColor({TITLE_COLOR})
+                Node { margin: {UiRect::bottom(Val::Px(8.0))} }
             }
         })
-        .collect()
+        .into_iter()
+        .collect();
+    let rows: Vec<_> = OptionRow::iter()
+        .enumerate()
+        .map(|(index, row)| {
+            let label: &str = row.into();
+            let value = row_value(row, options, config, skins);
+            bsn! {
+                Node { column_gap: px(24), align_items: AlignItems::Center }
+                Children [
+                    (
+                        Node { width: px(220) }
+                        Children [(
+                            RowText { player: {player}, row: index }
+                            ModalText
+                            game_font(28.0)
+                            Text({label.to_string()})
+                            TextColor({INACTIVE_COLOR})
+                        )]
+                    ),
+                    (
+                        ValueText { player: {player}, row: index }
+                        ModalText
+                        game_font(28.0)
+                        Text({value})
+                        TextColor({INACTIVE_COLOR})
+                    ),
+                ]
+            }
+        })
+        .collect();
+    bsn! {
+        OptionsPanel { player: {player}, active_row: 0 }
+        Node {
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::FlexStart,
+            row_gap: px(14),
+        }
+        Children [
+            {header},
+            {rows},
+        ]
+    }
 }
 
+/// Routes each pulse to the pulsing player's own panel: their pad's
+/// up/down moves between rows, left/right steps the value.
 fn handle_pulses(
     mut pulses: MessageReader<NavPulse>,
     modal: Single<&ModalTransition>,
-    mut active: Single<&mut ActiveRow>,
-    mut settings: ResMut<Settings>,
+    mut panels: Query<&mut OptionsPanel>,
+    mut settings: ResMut<PlayerSettings>,
     config: Res<GameConfig>,
     skins: Res<NoteSkinLibrary>,
     mut sfx: MessageWriter<PlaySfx>,
@@ -164,144 +194,100 @@ fn handle_pulses(
         return;
     }
     for pulse in pulses.read() {
-        match pulse.action {
-            GameAction::Previous => {
-                active.0 = (active.0 + OptionRow::COUNT - 1) % OptionRow::COUNT;
-                sfx.write(PlaySfx(Sfx::Navigate));
+        let Some((player, direction)) = pulse.action.as_step() else {
+            continue;
+        };
+        let Some(mut panel) = panels.iter_mut().find(|panel| panel.player == player) else {
+            continue;
+        };
+        let acted = match direction {
+            StepDirection::Up => {
+                panel.active_row = (panel.active_row + OptionRow::COUNT - 1) % OptionRow::COUNT;
+                true
             }
-            GameAction::Next => {
-                active.0 = (active.0 + 1) % OptionRow::COUNT;
-                sfx.write(PlaySfx(Sfx::Navigate));
+            StepDirection::Down => {
+                panel.active_row = (panel.active_row + 1) % OptionRow::COUNT;
+                true
             }
-            GameAction::Left | GameAction::Right => {
-                let delta = if pulse.action == GameAction::Left {
+            StepDirection::Left | StepDirection::Right => {
+                let delta = if direction == StepDirection::Left {
                     -1
                 } else {
                     1
                 };
-                if change_value(row(active.0), delta, &mut settings, &config, &skins) {
-                    sfx.write(PlaySfx(Sfx::Navigate));
-                }
+                change_value(
+                    row(panel.active_row),
+                    delta,
+                    &mut settings[player],
+                    &config,
+                    &skins,
+                )
             }
-            _ => {}
+        };
+        if acted {
+            sfx.write(PlaySfx(Sfx::Navigate));
         }
     }
 }
 
+/// Closing the modal is a shared space: any active player's ¤Select¤ or
+/// ¤Cancel¤ closes it for everyone.
 fn handle_close(
     actions: Actions,
+    mode: Res<PlayMode>,
     mut modal: Single<&mut ModalTransition>,
     mut sfx: MessageWriter<PlaySfx>,
 ) {
     if modal.dir < 0.0 {
         return;
     }
-    if actions.just_pressed(GameAction::Cancel) || actions.just_pressed(GameAction::Select) {
+    if actions.any_just_pressed(mode.players(), GameAction::cancel)
+        || actions.any_just_pressed(mode.players(), GameAction::select)
+    {
         sfx.write(PlaySfx(Sfx::Cancel));
         modal.dir = -1.0;
     }
 }
 
-/// The type and skin lists never change after enter; only the modifier
-/// list does, and only when the speed type flips. That one respawn happens
-/// in a single command batch — a queued spawn would leave the row empty
-/// for a frame and make the centered layout jump.
-fn rebuild_value_lists(
-    settings: Res<Settings>,
+/// Keeps every value text on its player's current selection.
+fn refresh_values(
+    settings: Res<PlayerSettings>,
     config: Res<GameConfig>,
     skins: Res<NoteSkinLibrary>,
-    containers: Query<(Entity, &RowValues)>,
-    mut underlines: Query<&mut Underline>,
-    mut last_dynamic: Local<Option<bool>>,
-    mut commands: Commands,
+    mut values: Query<(&ValueText, &mut Text)>,
 ) {
     if !settings.is_changed() {
         return;
     }
-    for (_, marker) in &containers {
-        let (_, selected) = row_values(row(marker.0), &settings, &config, &skins);
-        for mut underline in &mut underlines {
-            if underline.row == marker.0 {
-                underline.target = selected;
-            }
-        }
-    }
-
-    let dynamic = matches!(settings.stepfile.note_speed, NoteSpeed::Dynamic(_));
-    let type_changed = last_dynamic.is_some_and(|last| last != dynamic);
-    *last_dynamic = Some(dynamic);
-    if !type_changed {
-        return;
-    }
-    for (container, marker) in &containers {
-        if row(marker.0) != OptionRow::SpeedModifier {
-            continue;
-        }
-        let (values, _) = row_values(row(marker.0), &settings, &config, &skins);
-        commands.entity(container).despawn_related::<Children>();
-        for scene in value_scenes(marker.0, values) {
-            commands.spawn_scene(scene).insert(ChildOf(container));
+    for (value, mut text) in &mut values {
+        let current = row_value(row(value.row), &settings[value.player], &config, &skins);
+        if text.0 != current {
+            text.0 = current;
         }
     }
 }
 
 fn highlight_rows(
-    active: Single<&ActiveRow>,
+    panels: Query<&OptionsPanel>,
     mut labels: Query<(&RowText, &mut TextColor)>,
     mut values: Query<(&ValueText, &mut TextColor), Without<RowText>>,
 ) {
+    let active = |player: PlayerId, row: usize| {
+        panels
+            .iter()
+            .any(|panel| panel.player == player && panel.active_row == row)
+    };
     for (label, mut color) in &mut labels {
-        let wanted = row_color(label.0 == active.0);
+        let wanted = row_color(active(label.player, label.row));
         if color.0 != wanted {
             color.0 = wanted;
         }
     }
     for (value, mut color) in &mut values {
-        let wanted = row_color(value.row == active.0);
+        let wanted = row_color(active(value.player, value.row));
         if color.0 != wanted {
             color.0 = wanted;
         }
-    }
-}
-
-const UNDERLINE_RATE: f32 = 14.0;
-
-/// Slides and resizes each row's underline toward its selected value,
-/// measuring the laid-out text so the tween tracks real glyph widths.
-fn animate_underline(
-    time: Res<Time>,
-    values: Query<(&ValueText, &ComputedNode, &UiGlobalTransform)>,
-    rows: Query<(&ComputedNode, &UiGlobalTransform)>,
-    mut underlines: Query<(&mut Underline, &mut Node, &ChildOf)>,
-) {
-    for (mut underline, mut node, child_of) in &mut underlines {
-        let Ok((row_node, row_transform)) = rows.get(child_of.parent()) else {
-            continue;
-        };
-        let Some((_, value_node, value_transform)) = values
-            .iter()
-            .find(|(value, ..)| value.row == underline.row && value.index == underline.target)
-        else {
-            continue;
-        };
-        if value_node.size.x == 0.0 {
-            continue;
-        }
-        let scale = value_node.inverse_scale_factor;
-        let left = (value_transform.translation.x
-            - value_node.size.x / 2.0
-            - (row_transform.translation.x - row_node.size.x / 2.0))
-            * scale;
-        let target = Vec2::new(left, value_node.size.x * scale);
-        let current = match underline.current {
-            None => target,
-            Some(current) => {
-                current + (target - current) * (1.0 - (-UNDERLINE_RATE * time.delta_secs()).exp())
-            }
-        };
-        underline.current = Some(current);
-        node.left = Val::Px(current.x);
-        node.width = Val::Px(current.y);
     }
 }
 
@@ -311,30 +297,23 @@ struct ContentOnly {
     _not_background: Without<ModalBackground>,
 }
 
-#[derive(QueryFilter)]
-struct UnderlineFill {
-    _underline: With<Underline>,
-    _not_background: Without<ModalBackground>,
-}
-
 /// The background slides in from the left and the content from the right,
 /// both fading in; closing plays the same effect in reverse and only then
 /// leaves the modal state.
 fn animate_transition(
     time: Res<Time>,
-    mut mode: ResMut<NextState<FileSelectMode>>,
+    mut mode: ResMut<NextState<FileSelectFocus>>,
     mut modal: Single<&mut ModalTransition>,
     mut background: Single<(&mut Node, &mut BackgroundColor), With<ModalBackground>>,
     mut content: Single<&mut Node, ContentOnly>,
-    mut texts: Query<&mut TextColor, With<Node>>,
-    mut underlines: Query<&mut BackgroundColor, UnderlineFill>,
+    mut texts: Query<&mut TextColor, With<ModalText>>,
 ) {
     if modal.t >= 1.0 && modal.dir > 0.0 {
         return;
     }
     modal.t = (modal.t + modal.dir * time.delta_secs() / TRANSITION_SECONDS).clamp(0.0, 1.0);
     if modal.t <= 0.0 && modal.dir < 0.0 {
-        mode.set(FileSelectMode::Browse);
+        mode.set(FileSelectFocus::Browse);
     }
     let eased = EaseFunction::CubicOut.sample_clamped(modal.t);
     let (background_node, background_color) = &mut *background;
@@ -344,27 +323,25 @@ fn animate_transition(
     for mut color in &mut texts {
         color.0.set_alpha(eased);
     }
-    for mut color in &mut underlines {
-        color.0.set_alpha(eased);
-    }
 }
 
-/// Upserts the one-line options summary shown next to the wheel, e.g.
-/// `Dynamic 2x · DDREx Note`.
+/// Upserts the options summary shown next to the wheel — one line per
+/// active player, tagged when both play, e.g. `P1  Dynamic 2x · DDREx Note`.
 fn refresh_summary(
-    settings: Res<Settings>,
+    mode: Res<PlayMode>,
+    settings: Res<PlayerSettings>,
     skins: Res<NoteSkinLibrary>,
     text: Option<Single<&mut Text2d, With<OptionsSummary>>>,
     mut commands: Commands,
 ) {
     let Some(mut text) = text else {
-        let line = summary(&settings, &skins);
+        let lines = summary(*mode, &settings, &skins);
         commands.spawn_scoped(
             GameScene::FileSelect,
             bsn! {
                 OptionsSummary
                 game_font(22.0)
-                Text2d({line})
+                Text2d({lines})
                 TextColor({STATS_TEXT})
                 at(-320.0, -150.0, 5.0)
             },
@@ -372,27 +349,38 @@ fn refresh_summary(
         return;
     };
     if settings.is_changed() {
-        text.0 = summary(&settings, &skins);
+        text.0 = summary(*mode, &settings, &skins);
     }
 }
 
-fn summary(settings: &Settings, skins: &NoteSkinLibrary) -> String {
-    let options = &settings.stepfile;
-    let speed = match options.note_speed {
-        NoteSpeed::Constant(value) => {
-            format!("Constant {}", format_modifier(value, options.note_speed))
-        }
-        NoteSpeed::Dynamic(value) => {
-            format!("Dynamic {}", format_modifier(value, options.note_speed))
-        }
-    };
-    let skin = skins
-        .skins
+fn summary(mode: PlayMode, settings: &PlayerSettings, skins: &NoteSkinLibrary) -> String {
+    let tagged = mode.players().len() > 1;
+    mode.players()
         .iter()
-        .find(|skin| skin.name == options.note_skin)
-        .map(|skin| skin.display_name.clone())
-        .unwrap_or_else(|| options.note_skin.clone());
-    format!("{speed} · {skin}")
+        .map(|player| {
+            let options = &settings[*player];
+            let speed = match options.note_speed {
+                NoteSpeed::Constant(value) => {
+                    format!("Constant {}", format_modifier(value, options.note_speed))
+                }
+                NoteSpeed::Dynamic(value) => {
+                    format!("Dynamic {}", format_modifier(value, options.note_speed))
+                }
+            };
+            let skin = skins
+                .skins
+                .iter()
+                .find(|skin| skin.name == options.note_skin)
+                .map(|skin| skin.display_name.clone())
+                .unwrap_or_else(|| options.note_skin.clone());
+            if tagged {
+                format!("{}  {speed} · {skin}", player.label())
+            } else {
+                format!("{speed} · {skin}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn row_color(active: bool) -> Color {
@@ -413,8 +401,12 @@ fn row(index: usize) -> OptionRow {
     OptionRow::iter().nth(index).expect("row index is wrapped")
 }
 
+/// One player's panel and which of its rows is active.
 #[derive(Component, Clone, FromTemplate)]
-struct ActiveRow(usize);
+struct OptionsPanel {
+    player: PlayerId,
+    active_row: usize,
+}
 
 /// `t` runs 0..=1 through the open/close effect; `dir` is +1 while opening
 /// and -1 while closing.
@@ -429,27 +421,23 @@ const TRANSITION_SECONDS: f32 = 0.25;
 #[derive(Component, Default, Clone)]
 struct ModalBackground;
 
+/// Every text inside the modal, faded as one by [`animate_transition`].
+#[derive(Component, Default, Clone)]
+struct ModalText;
+
 #[derive(Component, Default, Clone)]
 struct ModalContent;
 
 #[derive(Component, Clone, FromTemplate)]
-struct RowText(usize);
-
-#[derive(Component, Clone, FromTemplate)]
-struct RowValues(usize);
+struct RowText {
+    player: PlayerId,
+    row: usize,
+}
 
 #[derive(Component, Clone, FromTemplate)]
 struct ValueText {
+    player: PlayerId,
     row: usize,
-    index: usize,
-}
-
-/// One per option row; [`animate_underline`] tweens it to the selected value.
-#[derive(Component, Clone, FromTemplate)]
-struct Underline {
-    row: usize,
-    target: usize,
-    current: Option<Vec2>,
 }
 
 #[derive(Component, Default, Clone)]
@@ -461,11 +449,10 @@ struct OptionsSummary;
 fn change_value(
     row: OptionRow,
     delta: i32,
-    settings: &mut Settings,
+    options: &mut PlayerOptions,
     config: &GameConfig,
     skins: &NoteSkinLibrary,
 ) -> bool {
-    let options = &mut settings.stepfile;
     match row {
         OptionRow::SpeedType => {
             let switched = match (options.note_speed, delta) {
@@ -515,50 +502,29 @@ fn change_value(
     }
 }
 
-/// The row's value labels and which one is selected.
-fn row_values(
+/// The label of the row's currently selected value.
+fn row_value(
     row: OptionRow,
-    settings: &Settings,
+    options: &PlayerOptions,
     config: &GameConfig,
     skins: &NoteSkinLibrary,
-) -> (Vec<String>, usize) {
-    let options = &settings.stepfile;
+) -> String {
     match row {
-        OptionRow::SpeedType => {
-            let selected = match options.note_speed {
-                NoteSpeed::Constant(_) => 0,
-                NoteSpeed::Dynamic(_) => 1,
-            };
-            (
-                vec!["Constant".to_string(), "Dynamic".to_string()],
-                selected,
-            )
-        }
+        OptionRow::SpeedType => match options.note_speed {
+            NoteSpeed::Constant(_) => "Constant".to_string(),
+            NoteSpeed::Dynamic(_) => "Dynamic".to_string(),
+        },
         OptionRow::SpeedModifier => {
             let set = config.speed_modifiers.set(options.note_speed);
-            (
-                set.options
-                    .iter()
-                    .map(|value| format_modifier(*value, options.note_speed))
-                    .collect(),
-                selected_index(&set.options, options.note_speed.value()),
-            )
+            let index = selected_index(&set.options, options.note_speed.value());
+            format_modifier(set.options[index], options.note_speed)
         }
-        OptionRow::NoteSkin => {
-            let selected = skins
-                .skins
-                .iter()
-                .position(|skin| skin.name == options.note_skin)
-                .unwrap_or(0);
-            (
-                skins
-                    .skins
-                    .iter()
-                    .map(|skin| skin.display_name.clone())
-                    .collect(),
-                selected,
-            )
-        }
+        OptionRow::NoteSkin => skins
+            .skins
+            .iter()
+            .find(|skin| skin.name == options.note_skin)
+            .map(|skin| skin.display_name.clone())
+            .unwrap_or_else(|| options.note_skin.clone()),
     }
 }
 

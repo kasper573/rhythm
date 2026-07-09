@@ -73,22 +73,65 @@
         await init({ module_or_path: wasm });
       });
 
-      // Rudimentary touch bindings, synthesized as the keyboard events the
-      // game already understands: tap = Select, swipe = arrows,
-      // two-finger tap = Cancel.
+      // Touch bindings, synthesized as the keyboard events the game
+      // already understands. Every touch acts independently: a swipe
+      // presses its direction's arrow the moment it crosses the threshold
+      // and releases it when the finger lifts — so simultaneous swipes
+      // play jumps, and a swipe kept down sustains holds. A short
+      // stationary tap is Select; exactly two touches held stationary for
+      // a second are Cancel.
       const SWIPE_MIN_PX = 30;
-      let touchStart = null;
-      let twoFinger = false;
+      const CANCEL_HOLD_MS = 1000;
+      const touches = new Map();
+      let cancelTimer = null;
 
-      function sendKey(code) {
+      function keyEvent(type, code) {
         const canvas = document.querySelector("canvas");
         if (!canvas) return;
         const options = { code, key: code, bubbles: true, cancelable: true };
-        canvas.dispatchEvent(new KeyboardEvent("keydown", options));
-        setTimeout(
-          () => canvas.dispatchEvent(new KeyboardEvent("keyup", options)),
-          60,
-        );
+        canvas.dispatchEvent(new KeyboardEvent(type, options));
+      }
+
+      function pulseKey(code) {
+        keyEvent("keydown", code);
+        setTimeout(() => keyEvent("keyup", code), 60);
+      }
+
+      function stationary() {
+        return [...touches.values()].filter((t) => !t.arrow && !t.consumed);
+      }
+
+      function swipeArrow(tracked, touch) {
+        const dx = touch.clientX - tracked.x;
+        const dy = touch.clientY - tracked.y;
+        if (Math.max(Math.abs(dx), Math.abs(dy)) < SWIPE_MIN_PX) return null;
+        return Math.abs(dx) > Math.abs(dy)
+          ? dx > 0
+            ? "ArrowRight"
+            : "ArrowLeft"
+          : dy > 0
+            ? "ArrowDown"
+            : "ArrowUp";
+      }
+
+      // The cancel gesture arms whenever exactly two touches rest
+      // unresolved, and fires if they are still resting when the timer
+      // runs out; any change in the touch picture re-evaluates it.
+      function updateCancelTimer() {
+        const armable = touches.size === 2 && stationary().length === 2;
+        if (!armable && cancelTimer !== null) {
+          clearTimeout(cancelTimer);
+          cancelTimer = null;
+        } else if (armable && cancelTimer === null) {
+          cancelTimer = setTimeout(() => {
+            cancelTimer = null;
+            const resting = stationary();
+            if (touches.size === 2 && resting.length === 2) {
+              resting.forEach((t) => (t.consumed = true));
+              pulseKey("Escape");
+            }
+          }, CANCEL_HOLD_MS);
+        }
       }
 
       document.addEventListener(
@@ -96,42 +139,61 @@
         (event) => {
           if (!document.querySelector("canvas")) return;
           event.preventDefault();
-          if (event.touches.length >= 2) {
-            twoFinger = true;
-            return;
+          for (const touch of event.changedTouches) {
+            touches.set(touch.identifier, {
+              x: touch.clientX,
+              y: touch.clientY,
+              arrow: null,
+              consumed: false,
+            });
           }
-          const touch = event.touches[0];
-          twoFinger = false;
-          touchStart = { x: touch.clientX, y: touch.clientY };
+          updateCancelTimer();
         },
         { passive: false },
       );
 
       document.addEventListener(
-        "touchend",
+        "touchmove",
         (event) => {
           if (!document.querySelector("canvas")) return;
           event.preventDefault();
-          if (event.touches.length > 0) return;
-          if (twoFinger) {
-            sendKey("Escape");
-          } else if (touchStart) {
-            const touch = event.changedTouches[0];
-            const dx = touch.clientX - touchStart.x;
-            const dy = touch.clientY - touchStart.y;
-            if (Math.max(Math.abs(dx), Math.abs(dy)) < SWIPE_MIN_PX) {
-              sendKey("Enter");
-            } else if (Math.abs(dx) > Math.abs(dy)) {
-              sendKey(dx > 0 ? "ArrowRight" : "ArrowLeft");
-            } else {
-              sendKey(dy > 0 ? "ArrowDown" : "ArrowUp");
-            }
+          for (const touch of event.changedTouches) {
+            const tracked = touches.get(touch.identifier);
+            if (!tracked || tracked.arrow || tracked.consumed) continue;
+            const arrow = swipeArrow(tracked, touch);
+            if (!arrow) continue;
+            tracked.arrow = arrow;
+            keyEvent("keydown", arrow);
           }
-          twoFinger = false;
-          touchStart = null;
+          updateCancelTimer();
         },
         { passive: false },
       );
+
+      for (const kind of ["touchend", "touchcancel"]) {
+        document.addEventListener(
+          kind,
+          (event) => {
+            if (!document.querySelector("canvas")) return;
+            event.preventDefault();
+            for (const touch of event.changedTouches) {
+              const tracked = touches.get(touch.identifier);
+              touches.delete(touch.identifier);
+              if (!tracked || tracked.consumed) continue;
+              if (tracked.arrow) {
+                keyEvent("keyup", tracked.arrow);
+              } else if (kind === "touchend") {
+                // A swipe so fast the browser coalesced its movement into
+                // the end event still counts; anything shorter is a tap.
+                const arrow = swipeArrow(tracked, touch);
+                pulseKey(arrow ?? "Enter");
+              }
+            }
+            updateCancelTimer();
+          },
+          { passive: false },
+        );
+      }
     </script>
   </body>
 </html>

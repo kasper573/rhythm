@@ -1,16 +1,47 @@
-use crate::core::config::StepfileOptions;
 use crate::core::input::Keymap;
+use crate::core::note_field::NoteSpeed;
 use crate::core::persist::{load_user_data, save_user_data};
+use crate::core::player::{PerPlayer, PlayerId};
 use crate::core::units::{Millis, Seconds};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::ops::{Index, IndexMut};
+use strum::IntoEnumIterator;
 
+/// Settings that belong to the machine rather than to either player: the
+/// key bindings for both player slots and the rig's timing calibration.
 /// Any mutation is automatically persisted to disk.
 #[derive(Resource, Debug, Clone, PartialEq, Serialize)]
-pub struct Settings {
+pub struct MachineSettings {
     pub keymap: Keymap,
     pub timing: TimingSettings,
-    pub stepfile: StepfileOptions,
+}
+
+/// Each player slot's own presentation options, indexed by player. Any
+/// mutation is automatically persisted, one file per player.
+#[derive(Resource, Debug, Clone, PartialEq)]
+pub struct PlayerSettings(PerPlayer<PlayerOptions>);
+
+impl Index<PlayerId> for PlayerSettings {
+    type Output = PlayerOptions;
+
+    fn index(&self, player: PlayerId) -> &PlayerOptions {
+        &self.0[player]
+    }
+}
+
+impl IndexMut<PlayerId> for PlayerSettings {
+    fn index_mut(&mut self, player: PlayerId) -> &mut PlayerOptions {
+        &mut self.0[player]
+    }
+}
+
+/// One player's presentation choices for playing stepfiles.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlayerOptions {
+    /// Folder name of the note skin under `assets/note_skins`.
+    pub note_skin: String,
+    pub note_speed: NoteSpeed,
 }
 
 /// The synchronization model:
@@ -41,7 +72,7 @@ impl TimingSettings {
 
     /// What the speakers are playing right now, given the mixer's queue
     /// position.
-    pub fn heard(&self, position: Seconds) -> Seconds {
+    fn heard(&self, position: Seconds) -> Seconds {
         position - self.audio_latency().to_seconds()
     }
 
@@ -57,19 +88,17 @@ impl TimingSettings {
 }
 
 pub struct SettingsPlugin {
-    /// Stepfile options for settings files that predate the field.
-    pub default_stepfile: StepfileOptions,
+    /// Player options for settings files that predate the field.
+    pub default_options: PlayerOptions,
     /// Timing for settings files that predate the field.
     pub default_timing: TimingSettings,
 }
 
 impl Plugin for SettingsPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(load_settings(
-            self.default_stepfile.clone(),
-            self.default_timing.clone(),
-        ))
-        .add_systems(Update, save_settings);
+        app.insert_resource(load_machine_settings(self.default_timing.clone()))
+            .insert_resource(load_player_settings(self.default_options.clone()))
+            .add_systems(Update, (save_machine_settings, save_player_settings));
     }
 }
 
@@ -77,26 +106,51 @@ impl Plugin for SettingsPlugin {
 /// versions still load.
 #[derive(Default, Deserialize)]
 #[serde(default)]
-struct SettingsFile {
+struct MachineSettingsFile {
     keymap: Keymap,
     timing: Option<TimingSettings>,
-    stepfile: Option<StepfileOptions>,
 }
 
-const SETTINGS_FILE: &str = "settings.json";
+const MACHINE_SETTINGS_FILE: &str = "machine_settings.json";
 
-fn load_settings(default_stepfile: StepfileOptions, default_timing: TimingSettings) -> Settings {
-    let file: SettingsFile = load_user_data(SETTINGS_FILE);
-    Settings {
+fn player_settings_file(player: PlayerId) -> &'static str {
+    match player {
+        PlayerId::P1 => "p1_settings.json",
+        PlayerId::P2 => "p2_settings.json",
+    }
+}
+
+fn load_machine_settings(default_timing: TimingSettings) -> MachineSettings {
+    let file: MachineSettingsFile = load_user_data(MACHINE_SETTINGS_FILE);
+    MachineSettings {
         keymap: file.keymap,
         timing: file.timing.unwrap_or(default_timing),
-        stepfile: file.stepfile.unwrap_or(default_stepfile),
+    }
+}
+
+fn load_player_settings(default_options: PlayerOptions) -> PlayerSettings {
+    let load = |player: PlayerId| {
+        load_user_data::<Option<PlayerOptions>>(player_settings_file(player))
+            .unwrap_or_else(|| default_options.clone())
+    };
+    PlayerSettings(PerPlayer {
+        p1: load(PlayerId::P1),
+        p2: load(PlayerId::P2),
+    })
+}
+
+/// Persists on every edit; the initial insertion is not an edit.
+fn save_machine_settings(settings: Res<MachineSettings>) {
+    if settings.is_changed() && !settings.is_added() {
+        save_user_data(MACHINE_SETTINGS_FILE, &*settings);
     }
 }
 
 /// Persists on every edit; the initial insertion is not an edit.
-fn save_settings(settings: Res<Settings>) {
+fn save_player_settings(settings: Res<PlayerSettings>) {
     if settings.is_changed() && !settings.is_added() {
-        save_user_data(SETTINGS_FILE, &*settings);
+        for player in PlayerId::iter() {
+            save_user_data(player_settings_file(player), &settings.0[player]);
+        }
     }
 }

@@ -12,6 +12,7 @@ pub mod note_field;
 pub mod note_skin;
 pub mod persist;
 pub mod platform;
+pub mod player;
 pub mod scene_flow;
 pub mod settings;
 pub mod sfx;
@@ -64,4 +65,8 @@ pub fn oriented(x: f32, y: f32, z: f32, rotation: Quat) -> impl Scene {
 
 /// The fixed logical screen size shared by the window and full-screen visuals.
 pub const SCREEN_SIZE: Vec2 = Vec2::new(1280.0, 720.0);
+/// Padding between the screen edges and anchored stage furniture — the
+/// health vials keep this to their side edge and the note fields to the
+/// top edge, so everything hugging the frame lines up.
+pub const SCREEN_EDGE_PADDING: f32 = 50.0;
 pub const CLEAR_COLOR: Color = Color::srgb(0.04, 0.04, 0.07);

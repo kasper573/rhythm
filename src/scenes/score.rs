@@ -4,17 +4,18 @@ use crate::core::high_scores::{HighScores, highscore_key};
 use crate::core::input::{Actions, GameAction};
 use crate::core::library::StepfileLibrary;
 use crate::core::menu::TITLE_COLOR;
+use crate::core::player::PlayerId;
 use crate::core::scene_flow::SpawnScoped;
 use crate::core::sfx::{PlaySfx, Sfx};
 use crate::core::units::Percent;
-use crate::scenes::file_player::{PlayResult, ScoreResults};
+use crate::scenes::file_player::{PlayerResult, ScoreResults};
 use crate::scenes::file_select::FileSelectTarget;
 use crate::scenes::{
     GameScene, SceneFade, play_default_bgm, scene_accepts_input, spawn_default_background,
 };
 use bevy::prelude::*;
 
-pub struct ScoreScenePlugin;
+pub(super) struct ScoreScenePlugin;
 
 impl Plugin for ScoreScenePlugin {
     fn build(&self, app: &mut App) {
@@ -48,111 +49,28 @@ fn enter(
         return;
     };
 
-    let tally = tally(&config, &results);
-
-    // Best to worst (config validates smallest window first), Miss last.
-    let mut tallies: Vec<_> = config
-        .grading
-        .dynamic
+    // One column per player, in player order: P1 left, P2 right.
+    let tagged = results.players.len() > 1;
+    let columns: Vec<_> = results
+        .players
         .iter()
-        .zip(&tally.grade_counts)
-        .map(|(grade, count)| (format!("{:<12} {count}", grade.name), grade.color))
-        .collect();
-    tallies.push((
-        format!(
-            "{:<12} {}",
-            config.grading.fixed.miss.name, tally.miss_count
-        ),
-        config.grading.fixed.miss.color,
-    ));
-    tallies.push((
-        format!(
-            "{:<12} {}/{}",
-            "Holds", results.holds_ok, results.holds_total
-        ),
-        Color::srgb(0.8, 0.85, 0.8),
-    ));
-    tallies.push((
-        format!(
-            "{:<12} {}/{} avoided",
-            "Mines",
-            results.mines_total - results.mines_exploded,
-            results.mines_total
-        ),
-        Color::srgb(0.8, 0.85, 0.8),
-    ));
-    let tallies: Vec<_> = tallies
-        .into_iter()
-        .map(|(line, color)| {
-            bsn! {
-                game_font(30.0)
-                Text({line})
-                TextColor({color})
-            }
+        .map(|player| {
+            let chart = &library.stepfile(results.id).stepfile.charts[player.chart];
+            let key = highscore_key(&library, results.id, chart);
+            let tally = tally(&config, player);
+            let new_high_score = high_scores.record(player.player, key, tally.total_points);
+            player_column(
+                &config,
+                &asset_server,
+                player,
+                &tally,
+                new_high_score,
+                tagged,
+            )
         })
         .collect();
-
-    let rating_image = asset_server.load(
-        config
-            .rating(tally.percent, tally.worst_grade)
-            .image
-            .clone(),
-    );
-
-    let key = highscore_key(
-        library.group_name(results.id),
-        &library.stepfile(results.id).name(),
-        &results.difficulty,
-    );
-    let new_high_score = high_scores.record(key, tally.total_points);
-    let overlay: Vec<_> = new_high_score
-        .then(|| {
-            bsn! {
-                game_font(18.0)
-                Text("New high score!")
-                TextColor(Color::srgb(1.0, 0.85, 0.35))
-                Node {
-                    position_type: PositionType::Absolute,
-                    top: px(-14),
-                    right: px(-30),
-                }
-            }
-        })
-        .into_iter()
-        .collect();
-    let percent_line = tally.percent.to_string();
-    let score_line = bsn! {
-        Node {
-            column_gap: px(16),
-            align_items: AlignItems::Center,
-            margin: {UiRect::bottom(Val::Px(14.0))},
-        }
-        Children [
-            (
-                game_font(42.0)
-                Text({percent_line})
-                TextColor(Color::srgb(0.95, 0.97, 1.0))
-            ),
-            (
-                ImageNode { image: {rating_image} }
-                Node { height: px(56) }
-            ),
-            {overlay},
-        ]
-    };
 
     let title = results.title.clone();
-    let (result_label, result_color) = match results.result {
-        PlayResult::Cleared => ("CLEARED", Color::srgb(0.5, 0.95, 0.6)),
-        PlayResult::Failed => ("FAILED", Color::srgb(0.95, 0.25, 0.25)),
-    };
-    let result_line = bsn! {
-        game_font(34.0)
-        Text({result_label.to_string()})
-        TextColor({result_color})
-        Node { margin: {UiRect::bottom(Val::Px(20.0))} }
-    };
-    let combo = format!("Max combo: {}", results.max_combo);
     commands.spawn_scoped(
         GameScene::Score,
         bsn! {
@@ -162,27 +80,202 @@ fn enter(
                 flex_direction: FlexDirection::Column,
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
-                row_gap: px(8),
+                row_gap: px(20),
             }
             Children [
                 (
                     game_font(46.0)
                     Text({title})
                     TextColor({TITLE_COLOR})
-                    Node { margin: {UiRect::bottom(Val::Px(4.0))} }
                 ),
-                {result_line},
-                {score_line},
-                {tallies},
                 (
-                    game_font(32.0)
-                    Text({combo})
-                    TextColor(Color::srgb(0.7, 0.85, 1.0))
-                    Node { margin: {UiRect::top(Val::Px(24.0))} }
+                    Node {
+                        column_gap: px(120),
+                        align_items: AlignItems::FlexStart,
+                    }
+                    Children [ {columns} ]
                 ),
             ]
         },
     );
+}
+
+/// One player's full result column: their outcome, score, tallies, and
+/// combo, tagged with their slot when both players show.
+fn player_column(
+    config: &GameConfig,
+    asset_server: &AssetServer,
+    player: &PlayerResult,
+    tally: &Tally,
+    new_high_score: bool,
+    tagged: bool,
+) -> impl Scene + use<> {
+    // Best to worst (config validates smallest window first), Miss last.
+    let mut lines: Vec<(String, String, Color)> = config
+        .grading
+        .dynamic
+        .iter()
+        .zip(&tally.grade_counts)
+        .map(|(grade, count)| (grade.name.clone(), count.to_string(), grade.color))
+        .collect();
+    lines.push((
+        config.grading.fixed.miss.name.clone(),
+        tally.miss_count.to_string(),
+        config.grading.fixed.miss.color,
+    ));
+    lines.push((
+        "Holds".to_string(),
+        format!("{}/{}", player.holds_ok, player.holds_total),
+        Color::srgb(0.8, 0.85, 0.8),
+    ));
+    lines.push((
+        "Mines".to_string(),
+        format!(
+            "{}/{}",
+            player.mines_total - player.mines_exploded,
+            player.mines_total
+        ),
+        Color::srgb(0.8, 0.85, 0.8),
+    ));
+    // Two left-aligned columns; rows line up because every cell shares one
+    // font size and line height.
+    let (labels, values): (Vec<_>, Vec<_>) = lines
+        .into_iter()
+        .map(|(label, value, color)| {
+            (
+                bsn! {
+                    game_font(30.0)
+                    Text({label})
+                    TextColor({color})
+                },
+                bsn! {
+                    game_font(30.0)
+                    Text({value})
+                    TextColor({color})
+                },
+            )
+        })
+        .unzip();
+    let tallies = bsn! {
+        Node { column_gap: px(28) }
+        Children [
+            (
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::FlexStart,
+                    row_gap: px(2),
+                }
+                Children [ {labels} ]
+            ),
+            (
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::FlexStart,
+                    row_gap: px(2),
+                }
+                Children [ {values} ]
+            ),
+        ]
+    };
+
+    let header: Vec<_> = tagged
+        .then(|| {
+            let tag = player.player.label().to_string();
+            bsn! {
+                game_font(36.0)
+                Text({tag})
+                TextColor({TITLE_COLOR})
+            }
+        })
+        .into_iter()
+        .collect();
+
+    let (result_label, result_color) = if player.failed {
+        ("FAILED", Color::srgb(0.95, 0.25, 0.25))
+    } else {
+        ("CLEARED", Color::srgb(0.5, 0.95, 0.6))
+    };
+    let result_line = bsn! {
+        game_font(34.0)
+        Text({result_label.to_string()})
+        TextColor({result_color})
+        Node { margin: {UiRect::bottom(Val::Px(12.0))} }
+    };
+
+    let rating_image = asset_server.load(
+        config
+            .rating(tally.percent, tally.worst_grade)
+            .image
+            .clone(),
+    );
+    // One unwrapped line overlaid on the rating art, centered on it and
+    // hugging its bottom edge; wider text simply overflows both sides.
+    let overlay: Vec<_> = new_high_score
+        .then(|| {
+            bsn! {
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: px(0),
+                    right: px(0),
+                    bottom: px(-4),
+                    justify_content: JustifyContent::Center,
+                }
+                Children [(
+                    game_font(16.0)
+                    Text("New high score!")
+                    TextLayout { linebreak: LineBreak::NoWrap }
+                    TextColor(Color::srgb(1.0, 0.85, 0.35))
+                )]
+            }
+        })
+        .into_iter()
+        .collect();
+    let percent_line = tally.percent.to_string();
+    let score_line = bsn! {
+        Node {
+            column_gap: px(16),
+            align_items: AlignItems::Center,
+            margin: {UiRect::bottom(Val::Px(10.0))},
+        }
+        Children [
+            (
+                game_font(42.0)
+                Text({percent_line})
+                TextColor(Color::srgb(0.95, 0.97, 1.0))
+            ),
+            (
+                Node { height: px(56) }
+                Children [
+                    (
+                        ImageNode { image: {rating_image} }
+                        Node { height: percent(100) }
+                    ),
+                    {overlay},
+                ]
+            ),
+        ]
+    };
+
+    let combo = format!("Max combo: {}", player.max_combo);
+    bsn! {
+        Node {
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            row_gap: px(8),
+        }
+        Children [
+            {header},
+            {result_line},
+            {score_line},
+            {tallies},
+            (
+                game_font(32.0)
+                Text({combo})
+                TextColor(Color::srgb(0.7, 0.85, 1.0))
+                Node { margin: {UiRect::top(Val::Px(16.0))} }
+            ),
+        ]
+    }
 }
 
 /// Everything the score derives from the raw outcomes — grades and score
@@ -200,10 +293,10 @@ struct Tally {
     worst_grade: Option<Grade>,
 }
 
-fn tally(config: &GameConfig, results: &ScoreResults) -> Tally {
+fn tally(config: &GameConfig, player: &PlayerResult) -> Tally {
     let mut grade_counts = vec![0u32; config.grading.dynamic.len()];
     let mut miss_count = 0u32;
-    for outcome in &results.outcomes {
+    for outcome in &player.outcomes {
         match config.grade(*outcome) {
             Grade::Hit(grade) => grade_counts[grade.0] += 1,
             Grade::Miss => miss_count += 1,
@@ -216,10 +309,10 @@ fn tally(config: &GameConfig, results: &ScoreResults) -> Tally {
         .map(|(count, grade)| count * grade.points)
         .sum::<u32>()
         + miss_count * config.grading.fixed.miss.points
-        + results.holds_ok * config.grading.fixed.ok.points
-        + results.holds_ng * config.grading.fixed.ng.points;
+        + player.holds_ok * config.grading.fixed.ok.points
+        + player.holds_ng * config.grading.fixed.ng.points;
 
-    let complete = results.outcomes.len() as u32 == results.rows_total;
+    let complete = player.outcomes.len() as u32 == player.rows_total;
     let worst_grade = complete.then(|| {
         if miss_count > 0 {
             Grade::Miss
@@ -234,7 +327,7 @@ fn tally(config: &GameConfig, results: &ScoreResults) -> Tally {
     });
 
     Tally {
-        percent: config.score_percent(total_points, results.rows_total, results.holds_total),
+        percent: config.score_percent(total_points, player.rows_total, player.holds_total),
         grade_counts,
         miss_count,
         total_points,
@@ -242,6 +335,8 @@ fn tally(config: &GameConfig, results: &ScoreResults) -> Tally {
     }
 }
 
+/// Any player who just played may leave the results; the wheel returns to
+/// the played stepfile.
 fn leave(
     actions: Actions,
     results: Res<ScoreResults>,
@@ -249,14 +344,20 @@ fn leave(
     mut fade: ResMut<SceneFade>,
     mut sfx: MessageWriter<PlaySfx>,
 ) {
-    let sound = if actions.just_pressed(GameAction::Select) {
+    let pressed = |action: fn(PlayerId) -> GameAction| {
+        results
+            .players
+            .iter()
+            .any(|player| actions.just_pressed(action(player.player)))
+    };
+    let sound = if pressed(GameAction::select) {
         Sfx::Select
-    } else if actions.just_pressed(GameAction::Cancel) {
+    } else if pressed(GameAction::cancel) {
         Sfx::Cancel
     } else {
         return;
     };
     sfx.write(PlaySfx(sound));
-    commands.insert_resource(FileSelectTarget::Stepfile(results.id));
+    commands.insert_resource(FileSelectTarget(results.id));
     fade.begin(GameScene::FileSelect);
 }

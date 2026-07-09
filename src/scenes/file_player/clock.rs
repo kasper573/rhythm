@@ -1,6 +1,6 @@
 use super::{MusicTrack, PlayPhase, PlaySession, PlaySet, PlaybackClock, TickTrack};
 use crate::core::audio::{SoundChannel, SoundPlayer};
-use crate::core::settings::Settings;
+use crate::core::settings::MachineSettings;
 use crate::core::units::{Millis, Seconds};
 use bevy::prelude::*;
 
@@ -18,7 +18,7 @@ type TrackChannel = (Option<&'static mut SoundChannel>, Has<SoundPlayer>);
 fn advance_clock(
     time: Res<Time>,
     mut session: ResMut<PlaySession>,
-    mut settings: ResMut<Settings>,
+    mut settings: ResMut<MachineSettings>,
     mut music: Query<TrackChannel, (With<MusicTrack>, Without<TickTrack>)>,
     mut tick: Query<TrackChannel, (With<TickTrack>, Without<MusicTrack>)>,
 ) {

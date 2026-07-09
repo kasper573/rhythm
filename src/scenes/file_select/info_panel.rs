@@ -1,6 +1,6 @@
 use super::{
     BANNER_SIZE, BANNER_TEXT, BANNER_TINT, BPM_TEXT, DETAILS_BOX_CENTER, DETAILS_BOX_SIZE,
-    PreferredDifficulty, STATS_TEXT, Wheel, WheelEntry, chart_for_preference,
+    PreferredDifficulty, STATS_TEXT, Wheel, WheelEntry,
 };
 use crate::core::assets::asset_server_path;
 use crate::core::at;
@@ -11,7 +11,7 @@ use crate::core::stepfile::{Difficulty, DisplayBpm, Stepfile};
 use crate::core::units::Seconds;
 use crate::scenes::GameScene;
 use bevy::prelude::*;
-use bevy::sprite::{SpriteImageMode, SpriteScalingMode};
+use bevy::sprite::{Anchor, SpriteImageMode, SpriteScalingMode};
 
 #[derive(Component, Default, Clone)]
 pub(super) struct InfoPanel;
@@ -36,14 +36,23 @@ pub(super) fn refresh_info_panel(
         return;
     };
 
-    let (banner_path, fallback_title, headline, chart) = match entry {
+    let (banner_path, fallback_title, headline, charts) = match entry {
         WheelEntry::Stepfile { id } => {
             let entry = library.stepfile(id);
+            let charts: Vec<_> = wheel
+                .players
+                .iter()
+                .filter_map(|player| {
+                    wheel
+                        .chart_for(&entry.stepfile, &preferred, *player)
+                        .map(|index| (*player, id, index))
+                })
+                .collect();
             (
                 entry.banner_path(),
                 entry.display_title(),
                 bpm_label(&entry.stepfile),
-                chart_for_preference(&entry.stepfile, preferred.0).map(|index| (id, index)),
+                charts,
             )
         }
         WheelEntry::Group { index } => {
@@ -56,7 +65,7 @@ pub(super) fn refresh_info_panel(
                 group.banner_path.clone(),
                 group.name.clone(),
                 headline,
-                None,
+                Vec::new(),
             )
         }
     };
@@ -94,17 +103,27 @@ pub(super) fn refresh_info_panel(
         })
         .into_iter()
         .collect();
-    let chart_lines: Vec<_> = chart
-        .map(|(id, index)| {
-            let stepfile = &library.stepfile(id).stepfile;
-            let chart = &stepfile.charts[index];
-            let (name, color) = difficulty_style(&chart.difficulty);
-            vec![
-                (format!("{name} {}", chart.meter), 34.0, color, 18.0),
-                (stats_label(stepfile, index), 22.0, STATS_TEXT, -70.0),
-            ]
-        })
-        .unwrap_or_default()
+    // One difficulty line per active player (tagged when there are two),
+    // with the chart stats below in single-player modes; versus swaps the
+    // stats for the second player's line.
+    let mut lines: Vec<(String, f32, Color, f32)> = Vec::new();
+    let mut stat_cells: Vec<(String, f32, f32)> = Vec::new();
+    let tagged = charts.len() > 1;
+    for (row, (player, id, index)) in charts.iter().enumerate() {
+        let stepfile = &library.stepfile(*id).stepfile;
+        let chart = &stepfile.charts[*index];
+        let (name, color) = difficulty_style(&chart.difficulty);
+        let line = if tagged {
+            format!("{}  {name} {}", player.label(), chart.meter)
+        } else {
+            format!("{name} {}", chart.meter)
+        };
+        lines.push((line, 34.0, color, 18.0 - row as f32 * 42.0));
+        if !tagged {
+            stat_cells = stat_grid(stepfile, *index);
+        }
+    }
+    let chart_lines: Vec<_> = lines
         .into_iter()
         .map(|(line, size, color, y)| {
             bsn! {
@@ -112,6 +131,18 @@ pub(super) fn refresh_info_panel(
                 Text2d({line})
                 TextColor({color})
                 at(0.0, y, 0.0)
+            }
+        })
+        .collect();
+    let stat_cells: Vec<_> = stat_cells
+        .into_iter()
+        .map(|(text, x, y)| {
+            bsn! {
+                game_font(22.0)
+                Text2d({text})
+                TextColor({STATS_TEXT})
+                Anchor({Anchor::CENTER_LEFT.0})
+                at(x, y, 0.0)
             }
         })
         .collect();
@@ -140,12 +171,21 @@ pub(super) fn refresh_info_panel(
                     at(0.0, 70.0, 0.0)
                 ),
                 {chart_lines},
+                {stat_cells},
             ]
         },
     );
 }
 
-fn stats_label(stepfile: &Stepfile, chart_index: usize) -> String {
+/// Horizontal starts of the stat grid's label and value columns, two
+/// pairs side by side, in panel-local coordinates.
+const STAT_COLUMNS: [(f32, f32); 2] = [(-170.0, -75.0), (35.0, 130.0)];
+const STAT_TOP_Y: f32 = -48.0;
+const STAT_ROW_HEIGHT: f32 = 28.0;
+
+/// The chart's stats as left-aligned label/value cells in a two-pair grid:
+/// `(text, x, y)` for [`refresh_info_panel`] to place.
+fn stat_grid(stepfile: &Stepfile, chart_index: usize) -> Vec<(String, f32, f32)> {
     let chart = &stepfile.charts[chart_index];
     let stats = chart.stats();
     let duration = chart
@@ -154,10 +194,21 @@ fn stats_label(stepfile: &Stepfile, chart_index: usize) -> String {
         .unwrap_or(Seconds::ZERO);
     let minutes = (duration.0.max(0.0) / 60.0) as u32;
     let seconds = (duration.0.max(0.0) % 60.0) as u32;
-    format!(
-        "Steps {}   Jumps {}\nHolds {}   Mines {}\nLength {minutes}:{seconds:02}",
-        stats.steps, stats.jumps, stats.holds, stats.mines
-    )
+    let pairs = [
+        ("Steps", stats.steps.to_string()),
+        ("Jumps", stats.jumps.to_string()),
+        ("Holds", stats.holds.to_string()),
+        ("Mines", stats.mines.to_string()),
+        ("Length", format!("{minutes}:{seconds:02}")),
+    ];
+    let mut cells = Vec::new();
+    for (index, (label, value)) in pairs.into_iter().enumerate() {
+        let (label_x, value_x) = STAT_COLUMNS[index % STAT_COLUMNS.len()];
+        let y = STAT_TOP_Y - (index / STAT_COLUMNS.len()) as f32 * STAT_ROW_HEIGHT;
+        cells.push((label.to_string(), label_x, y));
+        cells.push((value, value_x, y));
+    }
+    cells
 }
 
 fn difficulty_style(difficulty: &Difficulty) -> (&str, Color) {

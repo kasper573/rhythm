@@ -28,20 +28,17 @@ pub struct Stepfile {
     pub music: Option<String>,
     pub sample_start: Seconds,
     pub sample_length: Seconds,
+    /// `#SELECTABLE:NO` hides the stepfile from the wheel.
     pub selectable: bool,
     pub display_bpm: Option<DisplayBpm>,
     pub timing: StepfileTiming,
     pub bg_changes: Vec<BgChange>,
     pub charts: Vec<Chart>,
-    /// Keyed by upper-case tag name.
+    /// Every tag the game has no use for yet, keyed by upper-case name.
     pub extra_tags: BTreeMap<String, String>,
 }
 
 impl Stepfile {
-    pub fn parse(text: &str) -> Result<Stepfile, StepfileError> {
-        parse::parse_stepfile(text)
-    }
-
     /// Reads and parses the file, tolerating non-UTF-8 bytes (old simfiles
     /// often use legacy encodings for titles).
     pub fn load(path: &Path) -> Result<Stepfile, StepfileError> {
@@ -51,22 +48,34 @@ impl Stepfile {
                 path: path.display().to_string(),
                 source,
             })?;
-        Stepfile::parse(&String::from_utf8_lossy(&bytes))
+        parse::parse_stepfile(&String::from_utf8_lossy(&bytes))
     }
 
-    /// The chart played in single-player mode: the median-meter dance-single
-    /// chart, falling back to the first chart of any type.
-    pub fn preferred_chart(&self) -> Option<&Chart> {
-        let mut singles: Vec<&Chart> = self
+    /// Indices of the playable charts of one type — non-empty note data —
+    /// ordered easiest first.
+    pub fn playable_charts(&self, steps_type: &StepsType) -> Vec<usize> {
+        let mut charts: Vec<usize> = self
             .charts
             .iter()
-            .filter(|c| c.steps_type == StepsType::DanceSingle)
+            .enumerate()
+            .filter(|(_, chart)| chart.steps_type == *steps_type && !chart.rows.is_empty())
+            .map(|(index, _)| index)
             .collect();
-        if singles.is_empty() {
-            return self.charts.first();
-        }
-        singles.sort_by_key(|c| c.meter);
-        Some(singles[singles.len() / 2])
+        charts.sort_by_key(|&index| {
+            let chart = &self.charts[index];
+            (chart.difficulty.rank(), chart.meter)
+        });
+        charts
+    }
+
+    /// The playable chart whose difficulty rank sits closest to `preferred`.
+    pub fn closest_chart(&self, steps_type: &StepsType, preferred: u8) -> Option<usize> {
+        self.playable_charts(steps_type)
+            .into_iter()
+            .min_by_key(|&index| {
+                let rank = self.charts[index].difficulty.rank();
+                ((rank as i16 - preferred as i16).abs(), rank)
+            })
     }
 }
 

@@ -10,10 +10,12 @@ use rhythm::core::config::RowOutcome;
 use rhythm::core::input::NavPulseSystems;
 use rhythm::core::library::{StepfileEntry, StepfileId, StepfileLibrary};
 use rhythm::core::platform::{AssetEntry, AudioChannel, Platform, SoundOptions, VideoSource};
+use rhythm::core::player::PlayerId;
+use rhythm::core::stepfile::{Difficulty, StepsType};
 use rhythm::core::units::Seconds;
 use rhythm::native::NativePlatform;
-use rhythm::scenes::file_player::{PlayResult, ScoreResults};
-use rhythm::scenes::file_select::SelectedStepfile;
+use rhythm::scenes::file_player::{PlayerResult, ScoreResults};
+use rhythm::scenes::file_select::{PlayerChart, SelectedStepfile};
 use rhythm::scenes::{GameScene, SceneFade};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -326,30 +328,33 @@ fn bench_stepfile(library: &StepfileLibrary) -> (StepfileId, &StepfileEntry) {
     panic!("bench stepfile {BENCH_GROUP:?}/{BENCH_TITLE:?} is not in the library");
 }
 
-/// What the wheel would insert when starting the bench stepfile.
+/// What the wheel would insert when starting the bench stepfile in singles.
 fn bench_selection(library: &StepfileLibrary) -> SelectedStepfile {
     let (id, entry) = bench_stepfile(library);
-    let preferred = entry
+    SelectedStepfile {
+        id,
+        charts: vec![PlayerChart {
+            player: PlayerId::P1,
+            chart: bench_chart_index(entry),
+        }],
+    }
+}
+
+/// The chart the bench plays: what the wheel would pick at the default
+/// difficulty preference.
+fn bench_chart_index(entry: &StepfileEntry) -> usize {
+    entry
         .stepfile
-        .preferred_chart()
-        .expect("the bench stepfile has charts");
-    let chart = entry
-        .stepfile
-        .charts
-        .iter()
-        .position(|chart| std::ptr::eq(chart, preferred))
-        .expect("the preferred chart comes from the same list");
-    SelectedStepfile { id, chart }
+        .closest_chart(&StepsType::DanceSingle, Difficulty::Medium.rank())
+        .expect("the bench stepfile has singles charts")
 }
 
 /// What a finished session would insert: a deterministic spread of grades
 /// over the bench stepfile's chart.
 fn bench_score(library: &StepfileLibrary) -> ScoreResults {
     let (id, entry) = bench_stepfile(library);
-    let chart = entry
-        .stepfile
-        .preferred_chart()
-        .expect("the bench stepfile has charts");
+    let chart_index = bench_chart_index(entry);
+    let chart = &entry.stepfile.charts[chart_index];
     let stats = chart.stats();
     let rows_total = chart.rows.len() as u32;
     let outcomes = (0..rows_total)
@@ -363,16 +368,19 @@ fn bench_score(library: &StepfileLibrary) -> ScoreResults {
     ScoreResults {
         id,
         title: entry.display_title(),
-        result: PlayResult::Cleared,
-        difficulty: chart.difficulty.clone(),
-        outcomes,
-        rows_total,
-        max_combo: rows_total / 3,
-        holds_ok: stats.holds as u32,
-        holds_ng: 0,
-        holds_total: stats.holds as u32,
-        mines_exploded: 0,
-        mines_total: stats.mines as u32,
+        players: vec![PlayerResult {
+            player: PlayerId::P1,
+            failed: false,
+            chart: chart_index,
+            outcomes,
+            rows_total,
+            max_combo: rows_total / 3,
+            holds_ok: stats.holds as u32,
+            holds_ng: 0,
+            holds_total: stats.holds as u32,
+            mines_exploded: 0,
+            mines_total: stats.mines as u32,
+        }],
     }
 }
 

@@ -1,10 +1,11 @@
 use crate::core::assets::asset_root;
 use crate::core::input::GameAction;
 use crate::core::note_field::NoteSpeed;
+use crate::core::settings::{PlayerOptions, TimingSettings};
 use crate::core::units::{Percent, Seconds};
 use bevy::math::cubic_splines::CubicSegment;
 use bevy::prelude::*;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer};
 use std::collections::BTreeMap;
 use strum::IntoEnumIterator;
 
@@ -24,9 +25,9 @@ pub struct GameConfig {
     /// Must bind every action; the settings hold the player's overrides.
     pub default_keymap: BTreeMap<GameAction, KeyCode>,
     pub speed_modifiers: SpeedModifiers,
-    pub default_stepfile_options: StepfileOptions,
+    pub default_player_options: PlayerOptions,
     /// Timing for fresh installs and settings files that predate it.
-    pub timing_defaults: crate::core::settings::TimingSettings,
+    pub timing_defaults: TimingSettings,
     /// Combo at which the arrow flash switches to its brighter, snappier
     /// variant.
     pub bright_arrow_flash_combo: u32,
@@ -84,14 +85,6 @@ impl TryFrom<RawRatingDef> for RatingDef {
             kind,
         })
     }
-}
-
-/// The player's presentation choices for playing stepfiles.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct StepfileOptions {
-    /// Folder name of the note skin under `assets/note_skins`.
-    pub note_skin: String,
-    pub note_speed: NoteSpeed,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -470,6 +463,11 @@ impl GameConfig {
         assert!(
             !self.note_quants.is_empty(),
             "{source}: note_quants must not be empty"
+        );
+        assert!(
+            !self.speed_modifiers.constant.options.is_empty()
+                && !self.speed_modifiers.dynamic.options.is_empty(),
+            "{source}: speed_modifiers must offer at least one option each"
         );
         assert!(
             self.player_max_health > 0,

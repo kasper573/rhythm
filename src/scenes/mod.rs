@@ -2,6 +2,7 @@ pub mod file_player;
 pub mod file_select;
 pub mod keymap;
 pub mod main_menu;
+pub mod mode_select;
 pub mod score;
 pub mod settings_menu;
 
@@ -19,6 +20,7 @@ use bevy::sprite::{SpriteImageMode, SpriteScalingMode};
 pub enum GameScene {
     #[default]
     MainMenu,
+    ModeSelect,
     SettingsMenu,
     Keymap,
     FileSelect,
@@ -32,9 +34,9 @@ pub type SceneFade = crate::core::scene_flow::SceneFade<GameScene>;
 /// entered scene's UI. Registered on the `OnEnter` of scenes that want
 /// it, torn down with the scene; the scene fade masks the remount.
 #[derive(Component, Default, Clone)]
-pub struct DefaultSceneBackground;
+struct DefaultSceneBackground;
 
-pub fn spawn_default_background(
+fn spawn_default_background(
     mut commands: Commands,
     library: Res<StepfileLibrary>,
     asset_server: Res<AssetServer>,
@@ -85,7 +87,7 @@ pub fn spawn_default_background(
 }
 
 /// Keeps the scene backgrounds' videos decoding on wall time.
-pub fn stream_default_backgrounds(
+fn stream_default_backgrounds(
     time: Res<Time>,
     mut images: ResMut<Assets<Image>>,
     mut videos: Query<&mut VideoStream, With<DefaultSceneBackground>>,
@@ -98,30 +100,32 @@ pub fn stream_default_backgrounds(
 
 /// Scenes without music of their own start the default BGM on enter; the
 /// player keeps it running across such scenes uninterrupted.
-pub fn play_default_bgm(
+fn play_default_bgm(
     library: Res<crate::core::library::StepfileLibrary>,
     mut music: ResMut<crate::core::stepfile::MusicPlayer>,
 ) {
     music.play(library.default_bgm.bgm());
 }
 
-pub fn scene_accepts_input(fade: Res<SceneFade>) -> bool {
+fn scene_accepts_input(fade: Res<SceneFade>) -> bool {
     fade.accepts_input()
 }
 
-pub struct ScenesPlugin;
+pub(crate) struct ScenesPlugin;
 
 impl Plugin for ScenesPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((
-            SceneFlowPlugin::<GameScene>::default(),
-            MenuPlugin::<GameScene>::default(),
-            main_menu::MainMenuPlugin,
-            settings_menu::SettingsMenuPlugin,
-            keymap::KeymapScenePlugin,
-            file_select::FileSelectPlugin,
-            file_player::FilePlayerPlugin,
-            score::ScoreScenePlugin,
-        ));
+        app.add_systems(Update, stream_default_backgrounds)
+            .add_plugins((
+                SceneFlowPlugin::<GameScene>::default(),
+                MenuPlugin::<GameScene>::default(),
+                main_menu::MainMenuPlugin,
+                mode_select::ModeSelectPlugin,
+                settings_menu::SettingsMenuPlugin,
+                keymap::KeymapScenePlugin,
+                file_select::FileSelectPlugin,
+                file_player::FilePlayerPlugin,
+                score::ScoreScenePlugin,
+            ));
     }
 }

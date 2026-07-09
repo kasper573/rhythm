@@ -39,10 +39,6 @@ impl Seconds {
     pub fn max(self, other: Self) -> Self {
         Seconds(self.0.max(other.0))
     }
-
-    pub fn min(self, other: Self) -> Self {
-        Seconds(self.0.min(other.0))
-    }
 }
 
 impl Div<Seconds> for Seconds {
@@ -88,7 +84,3 @@ pub struct Beat(pub f64);
 )]
 #[display("{_0:.1}%")]
 pub struct Percent(pub f32);
-
-impl Beat {
-    pub const ZERO: Beat = Beat(0.0);
-}

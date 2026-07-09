@@ -1,66 +1,68 @@
 mod bgm;
 mod info_panel;
 mod player_options;
+mod ratings;
+mod wash;
 
-use crate::core::assets::asset_server_path;
 use crate::core::config::GameConfig;
 use crate::core::font::game_font;
-use crate::core::high_scores::{HighScores, highscore_key};
-use crate::core::input::{Actions, GameAction, NavPulse};
-use crate::core::library::{StepfileId, StepfileLibrary, is_video_file};
+use crate::core::input::{Actions, GameAction, NavPulse, StepDirection};
+use crate::core::library::{StepfileId, StepfileLibrary};
+use crate::core::player::{PerPlayer, PlayMode, PlayerId};
 use crate::core::scene_flow::SpawnScoped;
 use crate::core::sfx::{PlaySfx, Sfx};
 use crate::core::stepfile::{Difficulty, MusicPlayer, Stepfile, StepsType};
 use crate::core::units::Seconds;
-use crate::core::video::VideoStream;
 use crate::core::{SCREEN_SIZE, ViewportCover, at};
 use crate::scenes::{GameScene, SceneFade, scene_accepts_input};
 use bevy::ecs::query::QueryData;
-use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use bevy::sprite::{Anchor, SpriteImageMode, SpriteScalingMode};
-use std::path::PathBuf;
+use bevy::sprite::Anchor;
 
 /// The file player scene's entry param.
-#[derive(Resource, Debug, Clone, Copy)]
+#[derive(Resource, Debug, Clone)]
 pub struct SelectedStepfile {
     pub id: StepfileId,
+    /// The chart each active player steps.
+    pub charts: Vec<PlayerChart>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct PlayerChart {
+    pub player: PlayerId,
     /// Index into the stepfile's `charts`.
     pub chart: usize,
 }
 
-/// Which wheel row the file select scene lands on: inserted by whichever
+/// The stepfile row the file select scene lands on: inserted by whichever
 /// scene navigates here wanting a specific row active, consumed on enter.
 /// Torn-down scenes keep no state of their own — like route params.
 #[derive(Resource, Debug, Clone, Copy)]
-pub enum FileSelectTarget {
-    Group(usize),
-    Stepfile(StepfileId),
-}
+pub(crate) struct FileSelectTarget(pub StepfileId);
 
-/// Whether the player is browsing the wheel or editing options in the modal
-/// on top of it; input routes to exactly one of the two.
+/// Whether the players are browsing the wheel or editing options in the
+/// modal on top of it; input routes to exactly one of the two.
 #[derive(SubStates, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[source(GameScene = GameScene::FileSelect)]
-pub enum FileSelectMode {
+enum FileSelectFocus {
     #[default]
     Browse,
     PlayerOptions,
 }
 
-pub struct FileSelectPlugin;
+pub(super) struct FileSelectPlugin;
 
 impl Plugin for FileSelectPlugin {
     fn build(&self, app: &mut App) {
-        app.add_sub_state::<FileSelectMode>()
+        app.add_sub_state::<FileSelectFocus>()
             .add_plugins(player_options::plugin)
             .add_message::<WheelTap>()
             .init_resource::<PreferredDifficulty>()
             .add_systems(OnEnter(GameScene::FileSelect), enter)
             .add_systems(OnExit(GameScene::FileSelect), exit)
-            .add_systems(OnEnter(FileSelectMode::Browse), clear_nav_pulses)
-            .add_systems(OnEnter(FileSelectMode::PlayerOptions), clear_nav_pulses)
+            .add_systems(OnEnter(FileSelectFocus::Browse), clear_nav_pulses)
+            .add_systems(OnEnter(FileSelectFocus::PlayerOptions), clear_nav_pulses)
             .add_systems(
                 Update,
                 (
@@ -71,20 +73,21 @@ impl Plugin for FileSelectPlugin {
                         handle_tap,
                         cancel,
                     )
-                        .run_if(scene_accepts_input.and_then(in_state(FileSelectMode::Browse))),
+                        .run_if(scene_accepts_input.and_then(in_state(FileSelectFocus::Browse))),
                     fit_wheel_rows,
                     animate_wheel,
-                    pin_rating_column,
+                    ratings::pin_rating_column,
+                    ratings::position_rating_labels,
                     settle_wheel,
                     bgm::drive_wheel_bgm,
                     bgm::pulse_active_row,
                     // The cheap refreshers observe `Wheel::dirty` every
                     // step; the heavyweight ones wait for `just_settled`.
-                    refresh_scene_background,
-                    stream_wash_videos,
-                    fade_scene_background,
+                    wash::refresh_scene_background,
+                    wash::stream_wash_videos,
+                    wash::fade_scene_background,
                     refresh_wheel_rows,
-                    refresh_wheel_ratings,
+                    ratings::refresh_wheel_ratings,
                     info_panel::refresh_info_panel,
                     clear_wheel_flags,
                 )
@@ -100,14 +103,17 @@ fn clear_nav_pulses(mut pulses: ResMut<Messages<NavPulse>>) {
     pulses.clear();
 }
 
-/// The difficulty rank the player is aiming for, kept across stepfiles and
-/// scene visits; each stepfile snaps to its nearest available chart.
+/// The difficulty rank each player is aiming for, kept across stepfiles
+/// and scene visits; each stepfile snaps to its nearest available chart.
 #[derive(Resource)]
-struct PreferredDifficulty(u8);
+struct PreferredDifficulty(PerPlayer<u8>);
 
 impl Default for PreferredDifficulty {
     fn default() -> Self {
-        PreferredDifficulty(Difficulty::Medium.rank())
+        PreferredDifficulty(PerPlayer {
+            p1: Difficulty::Medium.rank(),
+            p2: Difficulty::Medium.rank(),
+        })
     }
 }
 
@@ -119,13 +125,6 @@ const WHEEL_X: f32 = 330.0;
 /// Rows shift right as they leave the center, curving the wheel.
 const BULGE_PER_ROW: f32 = 3.0;
 const BANNER_SIZE: Vec2 = Vec2::new(DETAILS_BOX_SIZE.x, 168.0);
-/// On-screen height of the wheel's rating images (native art is 120px).
-const RATING_HEIGHT: f32 = 38.0;
-/// Right edge of the rating column in row-local coordinates at zero
-/// bulge; [`pin_rating_column`] cancels the bulge so the column stays
-/// fixed on screen while the bars slide beneath it.
-const RATING_RIGHT_X: f32 = 270.0;
-
 const BACKDROP_COLOR: Color = Color::srgb(0.05, 0.085, 0.03);
 const STEPFILE_BAR: Color = Color::srgb(0.10, 0.19, 0.07);
 const GROUP_BAR: Color = Color::srgb(0.055, 0.10, 0.045);
@@ -142,6 +141,10 @@ const HELP_TEXT: Color = Color::srgb(0.5, 0.62, 0.5);
 
 #[derive(Resource)]
 struct Wheel {
+    /// The players and chart type the wheel was built for: its entries are
+    /// filtered to this type, and only these players may drive it.
+    players: &'static [PlayerId],
+    steps_type: StepsType,
     entries: Vec<WheelEntry>,
     active: usize,
     /// Spawned row slots; enough to fill the window's visible height,
@@ -167,6 +170,17 @@ impl Wheel {
         self.settle = SETTLE_DELAY;
         self.just_settled = true;
     }
+
+    /// The chart this stepfile would play `player`, honoring their
+    /// preferred difficulty.
+    fn chart_for(
+        &self,
+        stepfile: &Stepfile,
+        preferred: &PreferredDifficulty,
+        player: PlayerId,
+    ) -> Option<usize> {
+        stepfile.closest_chart(&self.steps_type, preferred.0[player])
+    }
 }
 
 /// Scrolling must settle before the music, background wash, and info
@@ -190,25 +204,6 @@ struct SlotRoot;
 #[derive(Component, Default, Clone)]
 struct ActiveRowHighlight;
 
-/// One layer of the scene background wash: the active row's background —
-/// image or looping video — over the green backdrop. Changing rows
-/// cross-fades: the incoming layer waits invisible until its image has
-/// actually loaded, then retires every older layer while it eases in — so
-/// the old background always fades under a renderable new one, never
-/// against a gap that a late-loading image would pop into.
-#[derive(Component)]
-struct SceneBackground {
-    /// The opacity this layer eases toward; reaching zero retires it.
-    target: f32,
-    /// Spawn order; the newest layer leads and retires the older ones.
-    sequence: u32,
-    /// The file this layer shows, the identity that keeps a re-selected
-    /// background from restarting (videos get a fresh handle per spawn,
-    /// so handles cannot be the identity).
-    source: PathBuf,
-}
-
-const BACKGROUND_OPACITY: f32 = 0.25;
 /// The contrast box behind the stepfile details column. The banner sits
 /// flush against its top and sides; only the content below is padded.
 const DETAILS_BOX_SIZE: Vec2 = Vec2::new(540.0, 530.0);
@@ -226,45 +221,33 @@ struct SlotTitle;
 #[derive(Component, Default, Clone)]
 struct SlotArtist;
 
-/// The high-score rating image at the right edge of a stepfile row.
-#[derive(Component, Default, Clone)]
-struct SlotRating;
-
 fn enter(
     mut commands: Commands,
     library: Res<StepfileLibrary>,
     config: Res<GameConfig>,
+    mode: Res<PlayMode>,
     target: Option<Res<FileSelectTarget>>,
     windows: Query<&Window>,
     mut images: ResMut<Assets<Image>>,
 ) {
     // Only the target row's group starts expanded.
     let target = target
-        .map(|target| *target)
-        .or_else(|| wheel_default_selection(&library, &config).map(FileSelectTarget::Stepfile))
+        .map(|target| target.0)
+        .or_else(|| wheel_default_selection(&library, &config))
         .or_else(|| {
-            (!library.is_empty()).then_some(FileSelectTarget::Stepfile(StepfileId {
+            (!library.is_empty()).then_some(StepfileId {
                 group: 0,
                 stepfile: 0,
-            }))
+            })
         });
     commands.remove_resource::<FileSelectTarget>();
-    let expanded_group = target.map(|target| match target {
-        FileSelectTarget::Group(index) => index,
-        FileSelectTarget::Stepfile(id) => id.group,
-    });
-    let entries = build_entries(&library, expanded_group);
+    let expanded_group = target.map(|id| id.group);
+    let entries = build_entries(&library, expanded_group, &mode.steps_type());
     let active = target
-        .and_then(|target| {
-            entries.iter().position(|entry| match (target, entry) {
-                (FileSelectTarget::Stepfile(id), WheelEntry::Stepfile { id: entry_id }) => {
-                    *entry_id == id
-                }
-                (FileSelectTarget::Group(index), WheelEntry::Group { index: entry_index }) => {
-                    *entry_index == index
-                }
-                _ => false,
-            })
+        .and_then(|id| {
+            entries.iter().position(
+                |entry| matches!(entry, WheelEntry::Stepfile { id: entry_id } if *entry_id == id),
+            )
         })
         .unwrap_or(0);
     let bar_image = images.add(rounded_image(512, 64, 16.0, None));
@@ -324,12 +307,13 @@ fn enter(
         },
     );
 
-    if library.is_empty() {
+    if entries.is_empty() {
+        let message = format!("No stepfiles with {} charts found", mode.label());
         commands.spawn_scoped(
             GameScene::FileSelect,
             bsn! {
                 game_font(30.0)
-                Text2d("No stepfiles found under assets/stepfiles")
+                Text2d({message})
                 TextColor(Color::srgb(0.9, 0.4, 0.4))
                 at(0.0, 0.0, 20.0)
             },
@@ -347,6 +331,8 @@ fn enter(
     );
 
     let mut wheel = Wheel {
+        players: mode.players(),
+        steps_type: mode.steps_type(),
         entries,
         active,
         slots,
@@ -366,6 +352,7 @@ fn exit(mut commands: Commands, mut music: ResMut<MusicPlayer>) {
     commands.remove_resource::<Wheel>();
 }
 
+/// Every active player scrolls the one wheel; in versus they race for it.
 fn navigate(
     mut pulses: MessageReader<NavPulse>,
     mut wheel: ResMut<Wheel>,
@@ -375,18 +362,20 @@ fn navigate(
         if wheel.entries.is_empty() {
             return;
         }
-        let len = wheel.entries.len();
-        match pulse.action {
-            GameAction::Left => {
-                wheel.active = (wheel.active + len - 1) % len;
-                wheel.scroll_offset += 1.0;
-            }
-            GameAction::Right => {
-                wheel.active = (wheel.active + 1) % len;
-                wheel.scroll_offset -= 1.0;
-            }
-            _ => continue,
+        let Some((player, direction)) = pulse.action.as_step() else {
+            continue;
+        };
+        if !wheel.players.contains(&player) {
+            continue;
         }
+        let step: i64 = match direction {
+            StepDirection::Left => -1,
+            StepDirection::Right => 1,
+            _ => continue,
+        };
+        let len = wheel.entries.len() as i64;
+        wheel.active = (wheel.active as i64 + step).rem_euclid(len) as usize;
+        wheel.scroll_offset -= step as f32;
         wheel.dirty = true;
         wheel.settle = Seconds::ZERO;
         sfx.write(PlaySfx(Sfx::WheelMove));
@@ -412,6 +401,7 @@ fn clear_wheel_flags(mut wheel: ResMut<Wheel>) {
     }
 }
 
+/// Each active player steps their own difficulty with their pad's up/down.
 fn change_difficulty(
     actions: Actions,
     mut wheel: ResMut<Wheel>,
@@ -419,34 +409,36 @@ fn change_difficulty(
     library: Res<StepfileLibrary>,
     mut sfx: MessageWriter<PlaySfx>,
 ) {
-    let mut delta: i32 = 0;
-    if actions.just_pressed(GameAction::Up) {
-        delta += 1;
-    }
-    if actions.just_pressed(GameAction::Down) {
-        delta -= 1;
-    }
-    if delta == 0 {
-        return;
-    }
-    let Some(WheelEntry::Stepfile { id }) = wheel.entries.get(wheel.active) else {
+    let Some(WheelEntry::Stepfile { id }) = wheel.entries.get(wheel.active).copied() else {
         return;
     };
-    let stepfile = &library.stepfile(*id).stepfile;
-    let charts = playable_chart_indices(stepfile);
-    let Some(current) = chart_for_preference(stepfile, preferred.0) else {
-        return;
-    };
-    let position = charts
-        .iter()
-        .position(|&index| index == current)
-        .expect("current chart comes from the same list");
-    let new_position = (position as i32 + delta).clamp(0, charts.len() as i32 - 1) as usize;
-    if new_position != position {
-        preferred.0 = stepfile.charts[charts[new_position]].difficulty.rank();
-        wheel.dirty = true;
-        wheel.mark_settled();
-        sfx.write(PlaySfx(Sfx::Navigate));
+    let stepfile = &library.stepfile(id).stepfile;
+    for player in wheel.players {
+        let mut delta: i32 = 0;
+        if actions.just_pressed(GameAction::step(*player, StepDirection::Up)) {
+            delta += 1;
+        }
+        if actions.just_pressed(GameAction::step(*player, StepDirection::Down)) {
+            delta -= 1;
+        }
+        if delta == 0 {
+            continue;
+        }
+        let charts = stepfile.playable_charts(&wheel.steps_type);
+        let Some(current) = wheel.chart_for(stepfile, &preferred, *player) else {
+            continue;
+        };
+        let position = charts
+            .iter()
+            .position(|&index| index == current)
+            .expect("current chart comes from the same list");
+        let new_position = (position as i32 + delta).clamp(0, charts.len() as i32 - 1) as usize;
+        if new_position != position {
+            preferred.0[*player] = stepfile.charts[charts[new_position]].difficulty.rank();
+            wheel.dirty = true;
+            wheel.mark_settled();
+            sfx.write(PlaySfx(Sfx::Navigate));
+        }
     }
 }
 
@@ -467,43 +459,49 @@ struct SelectHold {
     armed: bool,
 }
 
-/// Recognizes the ¤Select¤ gesture: holding opens the player options modal,
-/// a shorter tap is passed on as a [`WheelTap`].
+/// Recognizes each active player's ¤Select¤ gesture: holding opens the
+/// player options modal (a shared space either player may toggle), a
+/// shorter tap is passed on as a [`WheelTap`].
 fn track_select(
     actions: Actions,
     time: Res<Time>,
-    mut hold: Local<SelectHold>,
+    mut holds: Local<PerPlayer<SelectHold>>,
     wheel: Res<Wheel>,
     mut taps: MessageWriter<WheelTap>,
     mut sfx: MessageWriter<PlaySfx>,
-    mut mode: ResMut<NextState<FileSelectMode>>,
+    mut mode: ResMut<NextState<FileSelectFocus>>,
 ) {
     if wheel.entries.is_empty() {
         return;
     }
-    if actions.just_pressed(GameAction::Select) {
-        hold.armed = true;
-        hold.held = Seconds::ZERO;
-    }
-    if !hold.armed {
-        return;
-    }
-    if actions.pressed(GameAction::Select) {
-        hold.held += Seconds(time.delta_secs_f64());
-        if hold.held >= OPTIONS_HOLD {
-            hold.armed = false;
-            sfx.write(PlaySfx(Sfx::Select));
-            mode.set(FileSelectMode::PlayerOptions);
+    for player in wheel.players {
+        let select = GameAction::select(*player);
+        let hold = &mut holds[*player];
+        if actions.just_pressed(select) {
+            hold.armed = true;
+            hold.held = Seconds::ZERO;
         }
-        return;
-    }
-    if actions.just_released(GameAction::Select) {
-        hold.armed = false;
-        taps.write(WheelTap);
+        if !hold.armed {
+            continue;
+        }
+        if actions.pressed(select) {
+            hold.held += Seconds(time.delta_secs_f64());
+            if hold.held >= OPTIONS_HOLD {
+                hold.armed = false;
+                sfx.write(PlaySfx(Sfx::Select));
+                mode.set(FileSelectFocus::PlayerOptions);
+            }
+            continue;
+        }
+        if actions.just_released(select) {
+            hold.armed = false;
+            taps.write(WheelTap);
+        }
     }
 }
 
-/// A tap acts on the active row: groups toggle open, stepfiles start.
+/// A tap acts on the active row: groups toggle open, stepfiles start with
+/// each active player on their own preferred chart.
 fn handle_tap(
     mut taps: MessageReader<WheelTap>,
     mut wheel: ResMut<Wheel>,
@@ -520,7 +518,7 @@ fn handle_tap(
                 // Only one group is ever expanded: opening a group closes
                 // the previous one, opening it again closes it.
                 wheel.expanded_group = (wheel.expanded_group != Some(index)).then_some(index);
-                wheel.entries = build_entries(&library, wheel.expanded_group);
+                wheel.entries = build_entries(&library, wheel.expanded_group, &wheel.steps_type);
                 wheel.active = wheel
                     .entries
                     .iter()
@@ -534,8 +532,17 @@ fn handle_tap(
             }
             WheelEntry::Stepfile { id } => {
                 let stepfile = &library.stepfile(id).stepfile;
-                let chart = chart_for_preference(stepfile, preferred.0).unwrap_or(0);
-                commands.insert_resource(SelectedStepfile { id, chart });
+                let charts: Vec<PlayerChart> = wheel
+                    .players
+                    .iter()
+                    .map(|player| PlayerChart {
+                        player: *player,
+                        chart: wheel
+                            .chart_for(stepfile, &preferred, *player)
+                            .expect("listed rows have a playable chart of the wheel's type"),
+                    })
+                    .collect();
+                commands.insert_resource(SelectedStepfile { id, charts });
                 sfx.write(PlaySfx(Sfx::StartFile));
                 fade.begin(GameScene::FilePlayer);
             }
@@ -543,10 +550,15 @@ fn handle_tap(
     }
 }
 
-fn cancel(actions: Actions, mut fade: ResMut<SceneFade>, mut sfx: MessageWriter<PlaySfx>) {
-    if actions.just_pressed(GameAction::Cancel) {
+fn cancel(
+    actions: Actions,
+    wheel: Res<Wheel>,
+    mut fade: ResMut<SceneFade>,
+    mut sfx: MessageWriter<PlaySfx>,
+) {
+    if actions.any_just_pressed(wheel.players, GameAction::cancel) {
         sfx.write(PlaySfx(Sfx::Cancel));
-        fade.begin(GameScene::MainMenu);
+        fade.begin(GameScene::ModeSelect);
     }
 }
 
@@ -569,19 +581,6 @@ fn animate_wheel(
         if transform.translation.x != x || transform.translation.y != y {
             transform.translation.x = x;
             transform.translation.y = y;
-        }
-    }
-}
-
-fn pin_rating_column(
-    wheel: Res<Wheel>,
-    mut ratings: Query<(&WheelSlot, &mut Transform), With<SlotRating>>,
-) {
-    for (slot, mut transform) in &mut ratings {
-        let bulge = slot_x(slot.0, wheel.slots, wheel.scroll_offset) - WHEEL_X;
-        let x = RATING_RIGHT_X - bulge;
-        if transform.translation.x != x {
-            transform.translation.x = x;
         }
     }
 }
@@ -652,200 +651,6 @@ fn refresh_wheel_rows(
     }
 }
 
-#[derive(SystemParam)]
-struct BackgroundAssets<'w> {
-    asset_server: Res<'w, AssetServer>,
-    images: ResMut<'w, Assets<Image>>,
-    time: Res<'w, Time>,
-}
-
-fn refresh_scene_background(
-    wheel: Res<Wheel>,
-    library: Res<StepfileLibrary>,
-    mut assets: BackgroundAssets,
-    mut layers: Query<(&mut SceneBackground, &Sprite)>,
-    mut commands: Commands,
-    mut layer_count: Local<u32>,
-) {
-    if !wheel.just_settled {
-        return;
-    }
-    // Rows without a background of their own fall back to the default
-    // BGM's, so the scene always has one to show.
-    let path = match wheel.entries.get(wheel.active) {
-        Some(WheelEntry::Stepfile { id }) => library.stepfile(*id).background_path(),
-        _ => None,
-    }
-    .or_else(|| library.default_bgm.background_path());
-    let Some(path) = path else {
-        // Nothing to show at all: fade everything out.
-        for (mut layer, _) in &mut layers {
-            layer.target = 0.0;
-        }
-        return;
-    };
-    let already_shown = layers
-        .iter()
-        .any(|(layer, _)| layer.target > 0.0 && layer.source == path);
-    if already_shown {
-        return;
-    }
-    // The incoming layer: a looping video stream, or a loaded image.
-    let (image, stream) = if is_video_file(&path.to_string_lossy()) {
-        match VideoStream::open(
-            &path,
-            Seconds(assets.time.elapsed_secs_f64()),
-            true,
-            &mut assets.images,
-        ) {
-            Ok(stream) => (stream.image.clone(), Some(stream)),
-            Err(error) => {
-                warn!(
-                    "video background unavailable for {}: {error}",
-                    path.display()
-                );
-                return;
-            }
-        }
-    } else {
-        let Some(asset) = asset_server_path(&path) else {
-            return;
-        };
-        (assets.asset_server.load(asset), None)
-    };
-    // Newer layers draw above the ones fading out; the small cycling bump
-    // stays well below everything else in the scene.
-    *layer_count += 1;
-    let z = 0.5 + (*layer_count % 100) as f32 * 0.002;
-    let mut layer = commands.spawn_scoped(
-        GameScene::FileSelect,
-        bsn! {
-            ViewportCover
-            Sprite {
-                image: {image},
-                color: Color::srgba(1.0, 1.0, 1.0, 0.0),
-                custom_size: {Some(SCREEN_SIZE)},
-                image_mode: {SpriteImageMode::Scale(SpriteScalingMode::FillCenter)},
-            }
-            at(0.0, 0.0, z)
-        },
-    );
-    layer.insert(SceneBackground {
-        target: BACKGROUND_OPACITY,
-        sequence: *layer_count,
-        source: path,
-    });
-    // The stream owns a live decoder process, so it cannot be a cloneable
-    // template value.
-    if let Some(stream) = stream {
-        layer.insert(stream);
-    }
-}
-
-/// Keeps wash video layers decoding on wall time.
-fn stream_wash_videos(
-    time: Res<Time>,
-    mut images: ResMut<Assets<Image>>,
-    mut videos: Query<&mut VideoStream, With<SceneBackground>>,
-) {
-    let now = Seconds(time.elapsed_secs_f64());
-    for mut video in &mut videos {
-        video.update(now, &mut images);
-    }
-}
-
-/// Eases every background layer toward its target opacity at the wheel's
-/// settle rate and retires the fully faded-out ones. Layers whose image is
-/// still loading hold at zero: only a loaded layer may lead, and only the
-/// leader retires the layers beneath it.
-fn fade_scene_background(
-    time: Res<Time>,
-    images: Res<Assets<Image>>,
-    mut layers: Query<(Entity, &mut SceneBackground, &mut Sprite)>,
-    mut commands: Commands,
-) {
-    let leader = layers
-        .iter()
-        .filter(|(_, layer, sprite)| layer.target > 0.0 && images.contains(&sprite.image))
-        .max_by_key(|(_, layer, _)| layer.sequence)
-        .map(|(entity, layer, _)| (entity, layer.sequence));
-    if let Some((leader, leader_sequence)) = leader {
-        for (entity, mut layer, _) in &mut layers {
-            if entity != leader && layer.sequence < leader_sequence && layer.target > 0.0 {
-                layer.target = 0.0;
-            }
-        }
-    }
-
-    let ease = 1.0 - (-WHEEL_EASE_RATE * time.delta_secs()).exp();
-    for (entity, layer, mut sprite) in &mut layers {
-        if layer.target > 0.0 && !images.contains(&sprite.image) {
-            continue;
-        }
-        let alpha = sprite.color.alpha();
-        let mut next = alpha + (layer.target - alpha) * ease;
-        if (next - layer.target).abs() < 0.002 {
-            next = layer.target;
-        }
-        if next != alpha {
-            sprite.color.set_alpha(next);
-        }
-        if layer.target <= 0.0 && next <= 0.0 {
-            commands.entity(entity).despawn();
-        }
-    }
-}
-
-fn refresh_wheel_ratings(
-    wheel: Res<Wheel>,
-    library: Res<StepfileLibrary>,
-    high_scores: Res<HighScores>,
-    config: Res<GameConfig>,
-    preferred: Res<PreferredDifficulty>,
-    asset_server: Res<AssetServer>,
-    mut ratings: Query<(&WheelSlot, &mut Sprite, &mut Visibility), With<SlotRating>>,
-) {
-    if !wheel.dirty {
-        return;
-    }
-    for (slot, mut sprite, mut visibility) in &mut ratings {
-        let shown = match slot_entry(&wheel, slot.0) {
-            Some(WheelEntry::Stepfile { id }) => {
-                high_score_rating(*id, &library, &high_scores, &config, preferred.0).map(|image| {
-                    let image = asset_server.load(image);
-                    if sprite.image != image {
-                        sprite.image = image;
-                    }
-                })
-            }
-            _ => None,
-        };
-        visibility.set_if_neq(match shown {
-            Some(()) => Visibility::Visible,
-            None => Visibility::Hidden,
-        });
-    }
-}
-
-/// The rating image earned by the high score of the chart this row would
-/// currently play. Only the total points are stored, so grade-based
-/// rating rules never match here.
-fn high_score_rating(
-    id: StepfileId,
-    library: &StepfileLibrary,
-    high_scores: &HighScores,
-    config: &GameConfig,
-    preferred: u8,
-) -> Option<String> {
-    let entry = library.stepfile(id);
-    let chart = &entry.stepfile.charts[chart_for_preference(&entry.stepfile, preferred)?];
-    let key = highscore_key(library.group_name(id), &entry.name(), &chart.difficulty);
-    let points = high_scores.get(&key)?;
-    let stats = chart.stats();
-    let percent = config.score_percent(points, chart.rows.len() as u32, stats.holds as u32);
-    Some(config.rating(percent, None).image.clone())
-}
-
 fn slot_y(slot: usize, slots: usize, scroll_offset: f32) -> f32 {
     ((slots / 2) as f32 - slot as f32 + scroll_offset) * ROW_HEIGHT
 }
@@ -902,6 +707,7 @@ fn fit_wheel_rows(
 }
 
 fn spawn_slot(commands: &mut Commands, slot: usize, slots: usize, bar: Handle<Image>) {
+    let ratings = ratings::slot_ratings(slot);
     commands.spawn_scoped(
         GameScene::FileSelect,
         bsn! {
@@ -932,31 +738,36 @@ fn spawn_slot(commands: &mut Commands, slot: usize, slots: usize, bar: Handle<Im
                     Anchor({Anchor::CENTER_LEFT.0})
                     at(-BAR_WIDTH / 2.0 + 60.0, -15.0, 0.1)
                 ),
-                (
-                    WheelSlot(slot)
-                    SlotRating
-                    Sprite
-                    Anchor({Anchor::CENTER_RIGHT.0})
-                    Visibility::Hidden
-                    Transform {
-                        translation: {Vec3::new(RATING_RIGHT_X, 0.0, 0.1)},
-                        scale: {Vec3::splat(RATING_HEIGHT / 120.0)},
-                    }
-                ),
+                {ratings},
             ]
         },
     );
 }
 
-fn build_entries(library: &StepfileLibrary, expanded_group: Option<usize>) -> Vec<WheelEntry> {
+/// The wheel lists only what the mode can play: selectable stepfiles with
+/// at least one non-empty chart of the given type, and the groups holding
+/// them.
+fn build_entries(
+    library: &StepfileLibrary,
+    expanded_group: Option<usize>,
+    steps_type: &StepsType,
+) -> Vec<WheelEntry> {
     let mut entries = Vec::new();
     for (group_index, group) in library.groups.iter().enumerate() {
-        let is_expanded = expanded_group == Some(group_index);
-        entries.push(WheelEntry::Group { index: group_index });
-        if !is_expanded {
+        let stepfiles: Vec<usize> = (0..group.stepfiles.len())
+            .filter(|index| {
+                let stepfile = &group.stepfiles[*index].stepfile;
+                stepfile.selectable && !stepfile.playable_charts(steps_type).is_empty()
+            })
+            .collect();
+        if stepfiles.is_empty() {
             continue;
         }
-        for stepfile_index in 0..group.stepfiles.len() {
+        entries.push(WheelEntry::Group { index: group_index });
+        if expanded_group != Some(group_index) {
+            continue;
+        }
+        for stepfile_index in stepfiles {
             entries.push(WheelEntry::Stepfile {
                 id: StepfileId {
                     group: group_index,
@@ -993,32 +804,6 @@ fn wheel_default_selection(library: &StepfileLibrary, config: &GameConfig) -> Op
         }
     }
     None
-}
-
-/// Indices of the playable (dance-single, non-empty) charts, easiest first.
-fn playable_chart_indices(stepfile: &Stepfile) -> Vec<usize> {
-    let mut charts: Vec<usize> = stepfile
-        .charts
-        .iter()
-        .enumerate()
-        .filter(|(_, chart)| chart.steps_type == StepsType::DanceSingle && !chart.rows.is_empty())
-        .map(|(index, _)| index)
-        .collect();
-    charts.sort_by_key(|&index| {
-        let chart = &stepfile.charts[index];
-        (chart.difficulty.rank(), chart.meter)
-    });
-    charts
-}
-
-/// The chart whose difficulty is closest to the preferred rank.
-fn chart_for_preference(stepfile: &Stepfile, preferred: u8) -> Option<usize> {
-    playable_chart_indices(stepfile)
-        .into_iter()
-        .min_by_key(|&index| {
-            let rank = stepfile.charts[index].difficulty.rank();
-            ((rank as i16 - preferred as i16).abs(), rank)
-        })
 }
 
 /// A white vertical-gradient rounded rectangle for sprites to tint: every

@@ -1,5 +1,6 @@
 use crate::core::font::game_font;
 use crate::core::input::{Actions, GameAction, NavPulse};
+use crate::core::player::PlayerId;
 use crate::core::scene_flow::{SceneFade, SpawnScoped};
 use crate::core::sfx::{PlaySfx, Sfx};
 use bevy::prelude::*;
@@ -132,13 +133,14 @@ fn menu_navigate(
     }
 }
 
+/// Menus are P1's space: only their ¤Select¤ activates an item.
 fn menu_select(
     actions: Actions,
     menus: Query<&Menu>,
     mut selected: MessageWriter<MenuSelected>,
     mut sfx: MessageWriter<PlaySfx>,
 ) {
-    if !actions.just_pressed(GameAction::Select) {
+    if !actions.just_pressed(GameAction::select(PlayerId::P1)) {
         return;
     }
     for menu in &menus {

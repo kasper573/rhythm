@@ -92,13 +92,19 @@
   "default_keymap": {
     "Next": "ArrowDown",
     "Previous": "ArrowUp",
-    "Select": "Enter",
-    "Cancel": "Escape",
     "Reset": "Delete",
-    "Left": "ArrowLeft",
-    "Down": "ArrowDown",
-    "Up": "ArrowUp",
-    "Right": "ArrowRight",
+    "P1Left": "ArrowLeft",
+    "P1Down": "ArrowDown",
+    "P1Up": "ArrowUp",
+    "P1Right": "ArrowRight",
+    "P1Select": "Enter",
+    "P1Cancel": "Escape",
+    "P2Left": "KeyA",
+    "P2Down": "KeyS",
+    "P2Up": "KeyW",
+    "P2Right": "KeyD",
+    "P2Select": "KeyQ",
+    "P2Cancel": "KeyE",
     "ToggleAutoSync": "F5",
     "ToggleTickAudio": "F6",
     "DecreaseAudioLatency": "F7",
@@ -118,7 +124,7 @@
       "default": 1
     }
   },
-  "default_stepfile_options": {
+  "default_player_options": {
     "note_skin": "ddrextreme_note",
     "note_speed": { "Dynamic": 1 }
   },

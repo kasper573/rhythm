@@ -6,6 +6,7 @@ pub mod scenes;
 #[cfg(target_arch = "wasm32")]
 pub mod web;
 
+use crate::core::audio::AudioPlugin;
 use crate::core::config::GameConfig;
 use crate::core::health_vial::HealthVialPlugin;
 use crate::core::high_scores::HighScoresPlugin;
@@ -13,6 +14,7 @@ use crate::core::input::InputPlugin;
 use crate::core::library::StepfileLibrary;
 use crate::core::note_field::NoteFieldPlugin;
 use crate::core::note_skin::NoteSkinPlugin;
+use crate::core::player::PlayMode;
 use crate::core::settings::SettingsPlugin;
 use crate::core::sfx::SfxPlugin;
 use crate::core::stepfile::MusicPlayerPlugin;
@@ -31,7 +33,7 @@ pub fn app(platform: impl core::platform::Platform + 'static) -> App {
     core::platform::install(platform);
     let config = GameConfig::load();
     let settings_plugin = SettingsPlugin {
-        default_stepfile: config.default_stepfile_options.clone(),
+        default_options: config.default_player_options.clone(),
         default_timing: config.timing_defaults.clone(),
     };
     let mut app = App::new();
@@ -64,9 +66,10 @@ pub fn app(platform: impl core::platform::Platform + 'static) -> App {
     .insert_resource(ClearColor(CLEAR_COLOR))
     .insert_resource(config)
     .insert_resource(StepfileLibrary::scan())
+    .init_resource::<PlayMode>()
     .add_plugins((
         settings_plugin,
-        crate::core::audio::AudioPlugin,
+        AudioPlugin,
         NoteSkinPlugin,
         NoteFieldPlugin,
         HealthVialPlugin,
@@ -77,14 +80,7 @@ pub fn app(platform: impl core::platform::Platform + 'static) -> App {
         scenes::ScenesPlugin,
     ))
     .add_systems(Startup, spawn_camera)
-    .add_systems(
-        Update,
-        (
-            scale_ui_to_window,
-            size_viewport_covers,
-            scenes::stream_default_backgrounds,
-        ),
-    );
+    .add_systems(Update, (scale_ui_to_window, size_viewport_covers));
     app
 }
 

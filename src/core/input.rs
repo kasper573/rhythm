@@ -1,12 +1,17 @@
 use crate::core::config::GameConfig;
-use crate::core::settings::Settings;
+use crate::core::player::PlayerId;
+use crate::core::settings::MachineSettings;
 use crate::core::units::Seconds;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use strum::{EnumCount, EnumIter, IntoStaticStr};
+use strum::{EnumCount, EnumIter, IntoEnumIterator, IntoStaticStr};
 
+/// Every key the machine responds to, as one flat list: machine-wide
+/// actions plus one set of player actions per player slot. Menus listen to
+/// the machine-wide navigation and to P1 alone; shared spaces (the wheel,
+/// the player options modal) listen to every active player.
 #[derive(
     Debug,
     Clone,
@@ -25,17 +30,31 @@ use strum::{EnumCount, EnumIter, IntoStaticStr};
 pub enum GameAction {
     Next,
     Previous,
-    Select,
-    Cancel,
     Reset,
-    #[strum(serialize = "Step left")]
-    Left,
-    #[strum(serialize = "Step down")]
-    Down,
-    #[strum(serialize = "Step up")]
-    Up,
-    #[strum(serialize = "Step right")]
-    Right,
+    #[strum(serialize = "P1 Step left")]
+    P1Left,
+    #[strum(serialize = "P1 Step down")]
+    P1Down,
+    #[strum(serialize = "P1 Step up")]
+    P1Up,
+    #[strum(serialize = "P1 Step right")]
+    P1Right,
+    #[strum(serialize = "P1 Select")]
+    P1Select,
+    #[strum(serialize = "P1 Cancel")]
+    P1Cancel,
+    #[strum(serialize = "P2 Step left")]
+    P2Left,
+    #[strum(serialize = "P2 Step down")]
+    P2Down,
+    #[strum(serialize = "P2 Step up")]
+    P2Up,
+    #[strum(serialize = "P2 Step right")]
+    P2Right,
+    #[strum(serialize = "P2 Select")]
+    P2Select,
+    #[strum(serialize = "P2 Cancel")]
+    P2Cancel,
     #[strum(serialize = "Toggle AutoSync")]
     ToggleAutoSync,
     #[strum(serialize = "Toggle tick audio")]
@@ -54,13 +73,81 @@ pub enum GameAction {
     IncreaseMachineOffset,
 }
 
+/// A step panel's direction, in the fixed Left/Down/Up/Right column order
+/// every 4-panel pad uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StepDirection {
+    Left,
+    Down,
+    Up,
+    Right,
+}
+
+impl StepDirection {
+    /// The direction of a pad-local column (`0..4`).
+    pub fn of_column(column: usize) -> StepDirection {
+        match column {
+            0 => StepDirection::Left,
+            1 => StepDirection::Down,
+            2 => StepDirection::Up,
+            _ => StepDirection::Right,
+        }
+    }
+}
+
+/// Each player's step actions in [`StepDirection`] column order — the one
+/// table both directions of the step mapping read from.
+const STEP_ACTIONS: [[GameAction; 4]; 2] = [
+    [
+        GameAction::P1Left,
+        GameAction::P1Down,
+        GameAction::P1Up,
+        GameAction::P1Right,
+    ],
+    [
+        GameAction::P2Left,
+        GameAction::P2Down,
+        GameAction::P2Up,
+        GameAction::P2Right,
+    ],
+];
+
 impl GameAction {
     pub fn label(self) -> &'static str {
         self.into()
     }
+
+    pub fn step(player: PlayerId, direction: StepDirection) -> GameAction {
+        STEP_ACTIONS[player as usize][direction as usize]
+    }
+
+    /// The `(player, direction)` a step action belongs to; `None` for
+    /// everything that is not a step.
+    pub fn as_step(self) -> Option<(PlayerId, StepDirection)> {
+        PlayerId::iter().find_map(|player| {
+            let column = STEP_ACTIONS[player as usize]
+                .iter()
+                .position(|action| *action == self)?;
+            Some((player, StepDirection::of_column(column)))
+        })
+    }
+
+    pub fn select(player: PlayerId) -> GameAction {
+        match player {
+            PlayerId::P1 => GameAction::P1Select,
+            PlayerId::P2 => GameAction::P2Select,
+        }
+    }
+
+    pub fn cancel(player: PlayerId) -> GameAction {
+        match player {
+            PlayerId::P1 => GameAction::P1Cancel,
+            PlayerId::P2 => GameAction::P2Cancel,
+        }
+    }
 }
 
-/// The player's key overrides; actions without one use the config's default.
+/// The players' key overrides; actions without one use the config's default.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Keymap(BTreeMap<GameAction, KeyCode>);
 
@@ -72,8 +159,8 @@ impl Keymap {
             .unwrap_or(config.default_keymap[&action])
     }
 
-    /// For systems that need mutable [`Settings`](crate::core::settings::Settings)
-    /// access and therefore cannot use the [`Actions`] param.
+    /// For systems that need mutable [`MachineSettings`] access and
+    /// therefore cannot use the [`Actions`] param.
     pub fn just_pressed(
         &self,
         keys: &ButtonInput<KeyCode>,
@@ -95,7 +182,7 @@ impl Keymap {
 #[derive(SystemParam)]
 pub struct Actions<'w> {
     keys: Res<'w, ButtonInput<KeyCode>>,
-    settings: Res<'w, Settings>,
+    settings: Res<'w, MachineSettings>,
     config: Res<'w, GameConfig>,
 }
 
@@ -112,6 +199,18 @@ impl Actions<'_> {
         self.keys.just_released(self.key(action))
     }
 
+    /// Whether any of the given players just pressed their variant of an
+    /// action — the shared-space check for anything both players may drive.
+    pub fn any_just_pressed(
+        &self,
+        players: &[PlayerId],
+        action: fn(PlayerId) -> GameAction,
+    ) -> bool {
+        players
+            .iter()
+            .any(|player| self.just_pressed(action(*player)))
+    }
+
     fn key(&self, action: GameAction) -> KeyCode {
         self.settings.keymap.key(action, &self.config)
     }
@@ -121,7 +220,7 @@ pub fn shift_held(keys: &ButtonInput<KeyCode>) -> bool {
     keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight)
 }
 
-/// A press of ¤Next¤/¤Previous¤/¤Left¤/¤Right¤, re-fired while held so
+/// A press of a menu or step navigation action, re-fired while held so
 /// lists scroll comfortably.
 #[derive(Message)]
 pub struct NavPulse {
@@ -150,21 +249,28 @@ impl Plugin for InputPlugin {
 const REPEAT_DELAY: Seconds = Seconds(0.4);
 const REPEAT_INTERVAL: Seconds = Seconds(0.09);
 
+/// Every action lists and panels scroll by: the machine-wide menu pair
+/// plus each player's step panel.
+const PULSE_ACTIONS: [GameAction; 10] = [
+    GameAction::Next,
+    GameAction::Previous,
+    GameAction::P1Left,
+    GameAction::P1Down,
+    GameAction::P1Up,
+    GameAction::P1Right,
+    GameAction::P2Left,
+    GameAction::P2Down,
+    GameAction::P2Up,
+    GameAction::P2Right,
+];
+
 fn emit_nav_pulses(
     actions: Actions,
     time: Res<Time>,
-    mut held: Local<[Seconds; 4]>,
+    mut held: Local<[Seconds; PULSE_ACTIONS.len()]>,
     mut pulses: MessageWriter<NavPulse>,
 ) {
-    for (slot, action) in [
-        GameAction::Next,
-        GameAction::Previous,
-        GameAction::Left,
-        GameAction::Right,
-    ]
-    .into_iter()
-    .enumerate()
-    {
+    for (slot, action) in PULSE_ACTIONS.into_iter().enumerate() {
         if actions.just_pressed(action) {
             held[slot] = Seconds::ZERO;
             pulses.write(NavPulse { action });

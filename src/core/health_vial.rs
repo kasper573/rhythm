@@ -1,3 +1,4 @@
+use crate::core::SCREEN_EDGE_PADDING;
 use crate::core::config::{GameConfig, HealthColorStop};
 use crate::core::note_field::NoteFieldClock;
 use crate::core::units::Percent;
@@ -46,33 +47,49 @@ fn clamp_vial_width(ui_scale: Res<UiScale>, mut frames: Query<&mut Node, With<He
     }
 }
 
+/// Which screen edge a vial is pinned to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VialSide {
+    Left,
+    Right,
+}
+
 pub fn spawn_health_vial(
     commands: &mut Commands,
     materials: &mut Assets<HealthVialMaterial>,
     fill: f32,
+    side: VialSide,
 ) -> Entity {
     let material = materials.add(HealthVialMaterial {
         params: Vec4::ZERO,
         geometry: Vec4::new(GLOW_MARGIN, 0.0, 0.0, 0.0),
         colors: [Vec4::ZERO; GRADIENT_SAMPLES],
     });
-    // The outer node is the vial's spec rect; the shader node hangs past
-    // it on every side so the glow has room to breathe without moving the
-    // vial itself.
+    let (left, right) = match side {
+        VialSide::Left => (Val::Px(SCREEN_EDGE_PADDING), Val::Auto),
+        VialSide::Right => (Val::Auto, Val::Px(SCREEN_EDGE_PADDING)),
+    };
+    // The outer node is the vial's spec rect and carries the [`HealthVial`]
+    // the owner drives — on the returned entity, so callers can attach
+    // their own markers next to it. The shader node hangs past it on every
+    // side so the glow has room to breathe without moving the vial itself.
     let vial = commands
         .spawn_scene(bsn! {
             HealthVialFrame
             Node {
                 position_type: PositionType::Absolute,
-                left: px(50),
+                left: {left},
+                right: {right},
                 top: percent(10),
                 width: px(VIAL_WIDTH),
                 height: percent(80),
             }
         })
+        // HealthVial rides the insert rather than the scene patch so the
+        // first animation frame is guaranteed to see the real fill, not a
+        // default.
+        .insert(HealthVial { fill })
         .id();
-    // HealthVial rides the insert rather than the scene patch so the first
-    // animation frame is guaranteed to see the real fill, not a default.
     commands
         .spawn_scene(bsn! {
             Node {
@@ -83,12 +100,7 @@ pub fn spawn_health_vial(
                 bottom: px(-GLOW_MARGIN),
             }
         })
-        .insert((
-            HealthVial { fill },
-            MaterialNode(material),
-            VialMotion::default(),
-            ChildOf(vial),
-        ));
+        .insert((MaterialNode(material), VialMotion::default(), ChildOf(vial)));
     vial
 }
 
@@ -142,11 +154,12 @@ fn animate_vials(
     config: Res<GameConfig>,
     clock: Option<Res<NoteFieldClock>>,
     mut materials: ResMut<Assets<HealthVialMaterial>>,
-    mut vials: Query<(
-        &HealthVial,
+    vials: Query<&HealthVial>,
+    mut shader_nodes: Query<(
         &mut VialMotion,
         &MaterialNode<HealthVialMaterial>,
         &ComputedNode,
+        &ChildOf,
     )>,
 ) {
     let delta = time.delta_secs();
@@ -155,7 +168,10 @@ fn animate_vials(
     let glow = config.healthbar.glow.pulse(beat);
     // One full trip through the mirrored gradient (two units) per cycle.
     let scroll = (config.healthbar.liquid.progress(beat) * 2.0).rem_euclid(2.0);
-    for (vial, mut motion, node, computed) in &mut vials {
+    for (mut motion, node, computed, child_of) in &mut shader_nodes {
+        let Ok(vial) = vials.get(child_of.parent()) else {
+            continue;
+        };
         let stops = &config
             .healthbar
             .gradient_at(Percent(vial.fill * 100.0))

@@ -1,11 +1,13 @@
 use super::{
-    ComboText, GradeText, HoldOutcome, OffsetOsd, PlaySession, PlaySet, RowGraded, direction_action,
+    ComboText, ForPlayer, GradeText, HoldOutcome, OffsetOsd, PlaySession, PlaySet, RowGraded,
 };
 use crate::core::config::{GameConfig, Grade, RowOutcome, TimingFeedback};
 use crate::core::health_vial::HealthVial;
 use crate::core::input::Actions;
-use crate::core::note_field::{HoldVisual, HoldVisualState, NoteFieldClock, Receptor};
-use crate::core::settings::Settings;
+use crate::core::note_field::{
+    HoldVisual, HoldVisualState, InField, NoteField, NoteFieldClock, Receptor,
+};
+use crate::core::settings::MachineSettings;
 use crate::core::units::Seconds;
 use bevy::prelude::*;
 
@@ -13,11 +15,11 @@ pub(super) fn plugin(app: &mut App) {
     app.add_message::<OffsetOsdLine>()
         .add_systems(
             Update,
-            (sync_note_field, sync_health_vial).in_set(PlaySet::Sync),
+            (sync_note_field, sync_health_vials).in_set(PlaySet::Sync),
         )
         .add_systems(
             Update,
-            (update_grade_text, update_combo_text, run_offset_osd)
+            (update_grade_texts, update_combo_texts, run_offset_osd)
                 .chain()
                 .in_set(PlaySet::Present),
         );
@@ -27,70 +29,85 @@ pub(super) fn plugin(app: &mut App) {
 #[derive(Message)]
 pub(super) struct OffsetOsdLine(pub(super) String);
 
-fn sync_health_vial(
+fn sync_health_vials(
     session: Res<PlaySession>,
     config: Res<GameConfig>,
-    mut vials: Query<&mut HealthVial>,
+    mut vials: Query<(&mut HealthVial, &ForPlayer)>,
 ) {
-    for mut vial in &mut vials {
-        vial.fill = session.health as f32 / config.player_max_health as f32;
+    for (mut vial, owner) in &mut vials {
+        let Some(stage) = session.stages.iter().find(|stage| stage.player == owner.0) else {
+            continue;
+        };
+        vial.fill = stage.health as f32 / config.player_max_health as f32;
     }
 }
 
-/// Pushes the session's state into the note field: the drawn timeline, the
-/// receptors' pressed panels, and every hold's render state. Runs after
-/// grading and before the field's animation systems.
+/// Pushes the session's state into the note fields: the drawn timeline,
+/// each field's receptors' pressed panels, and every hold's render state.
+/// Runs after grading and before the fields' animation systems.
 fn sync_note_field(
     actions: Actions,
     session: Res<PlaySession>,
-    settings: Res<Settings>,
+    settings: Res<MachineSettings>,
     mut clock: ResMut<NoteFieldClock>,
-    mut receptors: Query<&mut Receptor>,
+    fields: Query<&NoteField>,
+    mut receptors: Query<(&mut Receptor, &InField)>,
     mut holds: Query<&mut HoldVisual>,
 ) {
     clock.visible = session.visible_now(&settings.timing);
 
-    for mut receptor in &mut receptors {
-        let held = actions.pressed(direction_action(receptor.column));
+    for (mut receptor, in_field) in &mut receptors {
+        let Ok(field) = fields.get(in_field.0) else {
+            continue;
+        };
+        let held = actions.pressed(field.step_action(receptor.column));
         if receptor.held != held {
             receptor.held = held;
         }
     }
 
-    for arrow in session.rows.iter().flat_map(|row| &row.arrows) {
-        let Some(hold) = &arrow.hold else { continue };
-        let state = match (hold.engaged, hold.result) {
-            (_, Some(HoldOutcome::Ok)) => HoldVisualState::Ok,
-            (_, Some(HoldOutcome::Ng)) => HoldVisualState::Dropped,
-            (false, None) => HoldVisualState::Pending,
-            (true, None) if hold.held_now => HoldVisualState::Held,
-            (true, None) => HoldVisualState::Released,
-        };
-        if let Ok(mut visual) = holds.get_mut(arrow.entity)
-            && visual.state != state
-        {
-            visual.state = state;
+    for stage in &session.stages {
+        for arrow in stage.rows.iter().flat_map(|row| &row.arrows) {
+            let Some(hold) = &arrow.hold else { continue };
+            let state = match (hold.engaged, hold.result) {
+                (_, Some(HoldOutcome::Ok)) => HoldVisualState::Ok,
+                (_, Some(HoldOutcome::Ng)) => HoldVisualState::Dropped,
+                (false, None) => HoldVisualState::Pending,
+                (true, None) if hold.held_now => HoldVisualState::Held,
+                (true, None) => HoldVisualState::Released,
+            };
+            if let Ok(mut visual) = holds.get_mut(arrow.entity)
+                && visual.state != state
+            {
+                visual.state = state;
+            }
         }
     }
 }
 
-fn update_grade_text(
+fn update_grade_texts(
     time: Res<Time>,
     config: Res<GameConfig>,
     mut graded: MessageReader<RowGraded>,
-    mut label: Single<(&mut Text2d, &mut TextColor), With<GradeText>>,
+    mut labels: Query<(&ForPlayer, &mut Text2d, &mut TextColor), With<GradeText>>,
 ) {
-    let (text, color) = &mut *label;
     for message in graded.read() {
-        let (value, base) = grade_display(&config, message.outcome);
-        text.0 = value;
-        color.0 = base.with_alpha(1.0);
+        for (owner, mut text, mut color) in &mut labels {
+            if owner.0 != message.player {
+                continue;
+            }
+            let (value, base) = grade_display(&config, message.outcome);
+            text.0 = value;
+            color.0 = base.with_alpha(1.0);
+        }
     }
     // Visible while the player keeps hitting arrows, gone within a second
     // once they stop.
-    if color.0.alpha() > 0.0 {
-        let alpha = (color.0.alpha() - time.delta_secs()).max(0.0);
-        color.0.set_alpha(alpha);
+    for (_, _, mut color) in &mut labels {
+        if color.0.alpha() > 0.0 {
+            let alpha = (color.0.alpha() - time.delta_secs()).max(0.0);
+            color.0.set_alpha(alpha);
+        }
     }
 }
 
@@ -122,30 +139,40 @@ fn grade_display(config: &GameConfig, outcome: RowOutcome) -> (String, Color) {
 
 const COMBO_BOUNCE: Seconds = Seconds(0.18);
 
-fn update_combo_text(
+fn update_combo_texts(
     time: Res<Time>,
     mut graded: MessageReader<RowGraded>,
-    mut label: Single<(&mut Text2d, &mut Transform, &mut Visibility), With<ComboText>>,
-    mut bounce: Local<Seconds>,
-    mut last_combo: Local<u32>,
+    mut labels: Query<(
+        &ForPlayer,
+        &mut ComboText,
+        &mut Text2d,
+        &mut Transform,
+        &mut Visibility,
+    )>,
 ) {
-    let (text, transform, visibility) = &mut *label;
     for message in graded.read() {
-        if message.combo > *last_combo {
-            *bounce = COMBO_BOUNCE;
-        }
-        *last_combo = message.combo;
-        if message.combo == 0 {
-            **visibility = Visibility::Hidden;
-        } else {
-            **visibility = Visibility::Visible;
-            text.0 = format!("{} combo", message.combo);
+        for (owner, mut combo, mut text, _, mut visibility) in &mut labels {
+            if owner.0 != message.player {
+                continue;
+            }
+            if message.combo > combo.last_combo {
+                combo.bounce = COMBO_BOUNCE;
+            }
+            combo.last_combo = message.combo;
+            if message.combo == 0 {
+                *visibility = Visibility::Hidden;
+            } else {
+                *visibility = Visibility::Visible;
+                text.0 = format!("{} combo", message.combo);
+            }
         }
     }
-    *bounce = (*bounce - Seconds(time.delta_secs_f64())).max(Seconds::ZERO);
-    let scale = 1.0 + 0.22 * (*bounce / COMBO_BOUNCE) as f32;
-    if transform.scale.x != scale {
-        transform.scale = Vec3::splat(scale);
+    for (_, mut combo, _, mut transform, _) in &mut labels {
+        combo.bounce = (combo.bounce - Seconds(time.delta_secs_f64())).max(Seconds::ZERO);
+        let scale = 1.0 + 0.22 * (combo.bounce / COMBO_BOUNCE) as f32;
+        if transform.scale.x != scale {
+            transform.scale = Vec3::splat(scale);
+        }
     }
 }
 
