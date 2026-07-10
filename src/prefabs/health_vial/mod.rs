@@ -1,75 +1,40 @@
 use crate::core::config::{GameConfig, HealthColorStop};
-use crate::core::note_field::NoteFieldClock;
 use crate::core::units::Percent;
+use bevy::asset::embedded_asset;
 use bevy::prelude::*;
 use bevy::render::render_resource::AsBindGroup;
 use bevy::shader::ShaderRef;
 
-/// The player's health as a glass vial of liquid pinned to the left edge
-/// of the screen. The entire visual — glass, liquid, waves, gradient — is
-/// one fragment shader; the systems here only feed it smoothed uniforms.
-pub struct HealthVialPlugin;
-
-impl Plugin for HealthVialPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_plugins(UiMaterialPlugin::<HealthVialMaterial>::default())
-            .add_systems(Update, (clamp_vial_width, animate_vials));
-    }
-}
-
-/// Set `fill` to the current health fraction; the liquid level eases after
-/// it, any change stirs up waves that settle back to a flat surface, and
-/// the gradient cross-fades between the configured presets.
-#[derive(Component, Clone, Default)]
-pub struct HealthVial {
-    /// `0..=1` of the vial's capacity.
+pub struct HealthVialPrefabOptions {
+    /// Initial `0..=1` of the vial's capacity.
     pub fill: f32,
+    pub side: VialSide,
+    /// Padding between the screen edge and the vial (the stage's
+    /// `screen_edge_padding`).
+    pub edge_padding: f32,
 }
 
-/// The vial's layout rect (the shader node hangs off it by the glow
-/// margin); its width is clamped in real screen pixels.
-#[derive(Component, Clone, Default)]
-struct HealthVialFrame;
-
-/// UI values scale with the window, but the vial must stay a readable
-/// sliver: its on-screen width is clamped by counter-scaling the node.
-fn clamp_vial_width(ui_scale: Res<UiScale>, mut frames: Query<&mut Node, With<HealthVialFrame>>) {
-    if ui_scale.0 <= 0.0 {
-        return;
-    }
-    let on_screen = (VIAL_WIDTH * ui_scale.0).clamp(VIAL_MIN_WIDTH, VIAL_MAX_WIDTH);
-    let width = Val::Px(on_screen / ui_scale.0);
-    for mut node in &mut frames {
-        if node.width != width {
-            node.width = width;
-        }
-    }
-}
-
-/// Which screen edge a vial is pinned to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VialSide {
-    Left,
-    Right,
-}
-
-/// `edge_padding` is the configured screen-edge padding (see
-/// `StageConfig::screen_edge_padding`).
-pub fn spawn_health_vial(
+/// A glass vial of liquid pinned to a screen edge — a health bar. The
+/// entire visual (glass, liquid, waves, gradient) is one fragment shader;
+/// the systems here only feed it smoothed uniforms, with the gradient
+/// presets and pulse cycles coming from [`GameConfig::healthbar`].
+///
+/// The owner drives the returned entity's [`HealthVial`] every frame: the
+/// liquid level eases after `fill` (changes stir up waves that settle back
+/// flat) and the glow and gradient scroll pulse on `beat`.
+pub fn health_vial_prefab(
+    opt: HealthVialPrefabOptions,
     commands: &mut Commands,
     materials: &mut Assets<HealthVialMaterial>,
-    fill: f32,
-    side: VialSide,
-    edge_padding: f32,
 ) -> Entity {
     let material = materials.add(HealthVialMaterial {
         params: Vec4::ZERO,
         geometry: Vec4::new(GLOW_MARGIN, 0.0, 0.0, 0.0),
         colors: [Vec4::ZERO; GRADIENT_SAMPLES],
     });
-    let (left, right) = match side {
-        VialSide::Left => (Val::Px(edge_padding), Val::Auto),
-        VialSide::Right => (Val::Auto, Val::Px(edge_padding)),
+    let (left, right) = match opt.side {
+        VialSide::Left => (Val::Px(opt.edge_padding), Val::Auto),
+        VialSide::Right => (Val::Auto, Val::Px(opt.edge_padding)),
     };
     // The outer node is the vial's spec rect and carries the [`HealthVial`]
     // the owner drives — on the returned entity, so callers can attach
@@ -90,7 +55,10 @@ pub fn spawn_health_vial(
         // HealthVial rides the insert rather than the scene patch so the
         // first animation frame is guaranteed to see the real fill, not a
         // default.
-        .insert(HealthVial { fill })
+        .insert(HealthVial {
+            fill: opt.fill,
+            beat: 0.0,
+        })
         .id();
     commands
         .spawn_scene(bsn! {
@@ -104,6 +72,33 @@ pub fn spawn_health_vial(
         })
         .insert((MaterialNode(material), VialMotion::default(), ChildOf(vial)));
     vial
+}
+
+/// Which screen edge a vial is pinned to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VialSide {
+    Left,
+    Right,
+}
+
+/// The vial's ports, written by the owner every frame.
+#[derive(Component, Clone, Default)]
+pub struct HealthVial {
+    /// `0..=1` of the vial's capacity.
+    pub fill: f32,
+    /// The musical beat the glow and liquid pulse on; hold it still and the
+    /// vial rests.
+    pub beat: f64,
+}
+
+pub struct HealthVialPlugin;
+
+impl Plugin for HealthVialPlugin {
+    fn build(&self, app: &mut App) {
+        embedded_asset!(app, "health_vial.wgsl");
+        app.add_plugins(UiMaterialPlugin::<HealthVialMaterial>::default())
+            .add_systems(Update, (clamp_vial_width, animate_vials));
+    }
 }
 
 #[derive(AsBindGroup, Asset, TypePath, Clone)]
@@ -122,7 +117,27 @@ pub struct HealthVialMaterial {
 
 impl UiMaterial for HealthVialMaterial {
     fn fragment_shader() -> ShaderRef {
-        "shaders/health_vial.wgsl".into()
+        "embedded://rhythm/prefabs/health_vial/health_vial.wgsl".into()
+    }
+}
+
+/// The vial's layout rect (the shader node hangs off it by the glow
+/// margin); its width is clamped in real screen pixels.
+#[derive(Component, Clone, Default)]
+struct HealthVialFrame;
+
+/// UI values scale with the window, but the vial must stay a readable
+/// sliver: its on-screen width is clamped by counter-scaling the node.
+fn clamp_vial_width(ui_scale: Res<UiScale>, mut frames: Query<&mut Node, With<HealthVialFrame>>) {
+    if ui_scale.0 <= 0.0 {
+        return;
+    }
+    let on_screen = (VIAL_WIDTH * ui_scale.0).clamp(VIAL_MIN_WIDTH, VIAL_MAX_WIDTH);
+    let width = Val::Px(on_screen / ui_scale.0);
+    for mut node in &mut frames {
+        if node.width != width {
+            node.width = width;
+        }
     }
 }
 
@@ -154,7 +169,6 @@ struct VialMotion {
 fn animate_vials(
     time: Res<Time>,
     config: Res<GameConfig>,
-    clock: Option<Res<NoteFieldClock>>,
     mut materials: ResMut<Assets<HealthVialMaterial>>,
     vials: Query<&HealthVial>,
     mut shader_nodes: Query<(
@@ -165,15 +179,13 @@ fn animate_vials(
     )>,
 ) {
     let delta = time.delta_secs();
-    // The same beat the arrows animate on, so every pulse shares one clock.
-    let beat = clock.map(|clock| clock.beat()).unwrap_or(0.0);
-    let glow = config.healthbar.glow.pulse(beat);
-    // One full trip through the mirrored gradient (two units) per cycle.
-    let scroll = (config.healthbar.liquid.progress(beat) * 2.0).rem_euclid(2.0);
     for (mut motion, node, computed, child_of) in &mut shader_nodes {
         let Ok(vial) = vials.get(child_of.parent()) else {
             continue;
         };
+        let glow = config.healthbar.glow.pulse(vial.beat);
+        // One full trip through the mirrored gradient (two units) per cycle.
+        let scroll = (config.healthbar.liquid.progress(vial.beat) * 2.0).rem_euclid(2.0);
         let stops = &config
             .healthbar
             .gradient_at(Percent(vial.fill * 100.0))

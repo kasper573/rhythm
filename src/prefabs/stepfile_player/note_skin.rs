@@ -1,4 +1,5 @@
 use crate::core::assets::asset_root;
+use crate::core::jsonc;
 use crate::core::platform::platform;
 use crate::core::player::{PerPlayer, PlayerId};
 use crate::core::settings::PlayerSettings;
@@ -708,7 +709,7 @@ fn read_manifest(name: &str) -> Manifest {
     let bytes = platform()
         .read_asset(&path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
-    crate::core::jsonc::parse(&String::from_utf8_lossy(&bytes))
+    jsonc::parse(&String::from_utf8_lossy(&bytes))
         .unwrap_or_else(|error| panic!("invalid {}: {error}", path.display()))
 }
 

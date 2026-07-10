@@ -20,7 +20,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::sprite::Anchor;
 
-/// The file player scene's entry param.
+/// The play scene's entry param.
 #[derive(Resource, Debug, Clone)]
 pub struct SelectedStepfile {
     pub id: StepfileId,
@@ -35,34 +35,34 @@ pub struct PlayerChart {
     pub chart: usize,
 }
 
-/// The stepfile row the file select scene lands on: inserted by whichever
-/// scene navigates here wanting a specific row active, consumed on enter.
+/// The stepfile row the wheel scene lands on: inserted by whichever scene
+/// navigates here wanting a specific row active, consumed on enter.
 /// Torn-down scenes keep no state of their own — like route params.
 #[derive(Resource, Debug, Clone, Copy)]
-pub(crate) struct FileSelectTarget(pub StepfileId);
+pub(crate) struct WheelTarget(pub StepfileId);
 
 /// Whether the players are browsing the wheel or editing options in the
 /// modal on top of it; input routes to exactly one of the two.
 #[derive(SubStates, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-#[source(GameScene = GameScene::FileSelect)]
-enum FileSelectFocus {
+#[source(GameScene = GameScene::Wheel)]
+enum WheelFocus {
     #[default]
     Browse,
     PlayerOptions,
 }
 
-pub(super) struct FileSelectPlugin;
+pub(super) struct WheelScenePlugin;
 
-impl Plugin for FileSelectPlugin {
+impl Plugin for WheelScenePlugin {
     fn build(&self, app: &mut App) {
-        app.add_sub_state::<FileSelectFocus>()
+        app.add_sub_state::<WheelFocus>()
             .add_plugins(player_options::plugin)
             .add_message::<WheelTap>()
             .init_resource::<PreferredDifficulty>()
-            .add_systems(OnEnter(GameScene::FileSelect), enter)
-            .add_systems(OnExit(GameScene::FileSelect), exit)
-            .add_systems(OnEnter(FileSelectFocus::Browse), clear_nav_pulses)
-            .add_systems(OnEnter(FileSelectFocus::PlayerOptions), clear_nav_pulses)
+            .add_systems(OnEnter(GameScene::Wheel), enter)
+            .add_systems(OnExit(GameScene::Wheel), exit)
+            .add_systems(OnEnter(WheelFocus::Browse), clear_nav_pulses)
+            .add_systems(OnEnter(WheelFocus::PlayerOptions), clear_nav_pulses)
             .add_systems(
                 Update,
                 (
@@ -73,7 +73,7 @@ impl Plugin for FileSelectPlugin {
                         handle_tap,
                         cancel,
                     )
-                        .run_if(scene_accepts_input.and_then(in_state(FileSelectFocus::Browse))),
+                        .run_if(scene_accepts_input.and_then(in_state(WheelFocus::Browse))),
                     fit_wheel_rows,
                     animate_wheel,
                     ratings::pack_player_ratings,
@@ -84,7 +84,6 @@ impl Plugin for FileSelectPlugin {
                     // The cheap refreshers observe `Wheel::dirty` every
                     // step; the heavyweight ones wait for `just_settled`.
                     wash::refresh_scene_background,
-                    wash::stream_wash_videos,
                     wash::fade_scene_background,
                     refresh_wheel_rows,
                     ratings::refresh_wheel_ratings,
@@ -92,7 +91,7 @@ impl Plugin for FileSelectPlugin {
                     clear_wheel_flags,
                 )
                     .chain()
-                    .run_if(in_state(GameScene::FileSelect).and_then(resource_exists::<Wheel>)),
+                    .run_if(in_state(GameScene::Wheel).and_then(resource_exists::<Wheel>)),
             );
     }
 }
@@ -231,7 +230,7 @@ fn enter(
     library: Res<StepfileLibrary>,
     config: Res<GameConfig>,
     mode: Res<PlayMode>,
-    target: Option<Res<FileSelectTarget>>,
+    target: Option<Res<WheelTarget>>,
     windows: Query<&Window>,
     mut images: ResMut<Assets<Image>>,
 ) {
@@ -245,7 +244,7 @@ fn enter(
                 stepfile: 0,
             })
         });
-    commands.remove_resource::<FileSelectTarget>();
+    commands.remove_resource::<WheelTarget>();
     let expanded_group = target.map(|id| id.group);
     let entries = build_entries(&library, expanded_group, &mode.steps_type());
     let active = target
@@ -258,7 +257,7 @@ fn enter(
     let bar_image = images.add(rounded_image(512, 64, 16.0, None));
 
     commands.spawn_scoped(
-        GameScene::FileSelect,
+        GameScene::Wheel,
         bsn! {
             ViewportCover
             Sprite {
@@ -274,7 +273,7 @@ fn enter(
         None,
     ));
     commands.spawn_scoped(
-        GameScene::FileSelect,
+        GameScene::Wheel,
         bsn! {
             Sprite {
                 image: {details_box},
@@ -300,7 +299,7 @@ fn enter(
         Some(5.0),
     ));
     commands.spawn_scoped(
-        GameScene::FileSelect,
+        GameScene::Wheel,
         bsn! {
             ActiveRowHighlight
             Sprite {
@@ -315,7 +314,7 @@ fn enter(
     if entries.is_empty() {
         let message = format!("No stepfiles with {} charts found", mode.label());
         commands.spawn_scoped(
-            GameScene::FileSelect,
+            GameScene::Wheel,
             bsn! {
                 game_font(30.0)
                 Text2d({message})
@@ -326,7 +325,7 @@ fn enter(
     }
 
     commands.spawn_scoped(
-        GameScene::FileSelect,
+        GameScene::Wheel,
         bsn! {
             game_font(20.0)
             Text2d("up/down: change difficulty\nhold select: change options")
@@ -474,7 +473,7 @@ fn track_select(
     wheel: Res<Wheel>,
     mut taps: MessageWriter<WheelTap>,
     mut sfx: MessageWriter<PlaySfx>,
-    mut mode: ResMut<NextState<FileSelectFocus>>,
+    mut mode: ResMut<NextState<WheelFocus>>,
 ) {
     if wheel.entries.is_empty() {
         return;
@@ -494,7 +493,7 @@ fn track_select(
             if hold.held >= OPTIONS_HOLD {
                 hold.armed = false;
                 sfx.write(PlaySfx(Sfx::Select));
-                mode.set(FileSelectFocus::PlayerOptions);
+                mode.set(WheelFocus::PlayerOptions);
             }
             continue;
         }
@@ -549,7 +548,7 @@ fn handle_tap(
                     .collect();
                 commands.insert_resource(SelectedStepfile { id, charts });
                 sfx.write(PlaySfx(Sfx::StartFile));
-                fade.begin(GameScene::FilePlayer);
+                fade.begin(GameScene::Play);
             }
         }
     }
@@ -714,7 +713,7 @@ fn fit_wheel_rows(
 fn spawn_slot(commands: &mut Commands, slot: usize, slots: usize, bar: Handle<Image>) {
     let ratings = ratings::slot_ratings(slot);
     commands.spawn_scoped(
-        GameScene::FileSelect,
+        GameScene::Wheel,
         bsn! {
             WheelSlot(slot)
             SlotRoot

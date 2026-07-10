@@ -1,4 +1,5 @@
-use crate::core::menu::{MenuSelected, spawn_menu};
+use crate::core::scene_flow::SpawnScoped;
+use crate::prefabs::menu::{MenuPrefabOptions, MenuSelected, menu_prefab};
 use crate::scenes::{GameScene, SceneFade, play_default_bgm, spawn_default_background};
 use bevy::prelude::*;
 
@@ -18,11 +19,16 @@ impl Plugin for MainMenuPlugin {
 }
 
 fn enter(mut commands: Commands) {
-    spawn_menu(
-        &mut commands,
+    commands.spawn_scoped(
         GameScene::MainMenu,
-        "Rhythm",
-        &["Start", "Settings", "Quit"],
+        menu_prefab(MenuPrefabOptions {
+            title: "Rhythm".to_string(),
+            items: vec![
+                "Start".to_string(),
+                "Settings".to_string(),
+                "Quit".to_string(),
+            ],
+        }),
     );
 }
 

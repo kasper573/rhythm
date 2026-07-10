@@ -20,18 +20,17 @@ use bevy::window::ExitCondition;
 use bevy::winit::WinitPlugin;
 use clap::Parser;
 use rhythm::core::config::GameConfig;
-use rhythm::core::note_field::{
-    FadeOut, HOLD_OK_FADE_SECONDS, HoldPart, HoldVisual, HoldVisualState, InColumn, LaneEffects,
-    LaneView, MineNote, NoteArrow, NoteField, NoteFieldClock, NoteFieldPlugin, NoteSpawn,
-    NoteSpeed, NoteTail, Perspective, Receptor, SpawnedNote, TARGET_Y, spawn_mine, spawn_note,
-    spawn_receptors,
-};
-use rhythm::core::note_skin::{ActiveNoteSkins, load_note_skin};
 use rhythm::core::player::PlayerId;
-use rhythm::core::settings::{PlayerOptions, PlayerSettings};
+use rhythm::core::settings::{NoteSpeed, Perspective, PlayerOptions, PlayerSettings};
 use rhythm::core::stepfile::StepfileTiming;
 use rhythm::core::units::{Beat, Seconds};
 use rhythm::core::{CLEAR_COLOR, OVERLAY_CAMERA_ORDER, OVERLAY_LAYER};
+use rhythm::prefabs::stepfile_player::note_field::{
+    FadeOut, HOLD_OK_FADE_SECONDS, HoldPart, HoldVisual, HoldVisualState, InColumn, LaneEffects,
+    LaneView, MineNote, NoteArrow, NoteField, NoteFieldClock, NoteFieldPlugin, NoteSpawn, NoteTail,
+    Receptor, SpawnedNote, TARGET_Y, spawn_mine, spawn_note, spawn_receptors,
+};
+use rhythm::prefabs::stepfile_player::note_skin::{ActiveNoteSkins, load_note_skin};
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::PathBuf;

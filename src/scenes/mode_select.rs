@@ -1,7 +1,8 @@
 use crate::core::input::{Actions, GameAction};
-use crate::core::menu::{MenuSelected, spawn_menu};
 use crate::core::player::{PlayMode, PlayerId};
+use crate::core::scene_flow::SpawnScoped;
 use crate::core::sfx::{PlaySfx, Sfx};
+use crate::prefabs::menu::{MenuPrefabOptions, MenuSelected, menu_prefab};
 use crate::scenes::{
     GameScene, SceneFade, play_default_bgm, scene_accepts_input, spawn_default_background,
 };
@@ -25,8 +26,15 @@ impl Plugin for ModeSelectPlugin {
 }
 
 fn enter(mut commands: Commands) {
-    let labels: Vec<&str> = PlayMode::iter().map(PlayMode::label).collect();
-    spawn_menu(&mut commands, GameScene::ModeSelect, "Select Mode", &labels);
+    commands.spawn_scoped(
+        GameScene::ModeSelect,
+        menu_prefab(MenuPrefabOptions {
+            title: "Select Mode".to_string(),
+            items: PlayMode::iter()
+                .map(|mode| mode.label().to_string())
+                .collect(),
+        }),
+    );
 }
 
 fn handle_selection(
@@ -39,7 +47,7 @@ fn handle_selection(
             continue;
         };
         *mode = picked;
-        fade.begin(GameScene::FileSelect);
+        fade.begin(GameScene::Wheel);
     }
 }
 

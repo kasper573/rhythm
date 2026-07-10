@@ -1,17 +1,17 @@
 //! The judgment word that pops on each graded row, shaded live: the word
 //! is rendered white to an offscreen image so its alpha is pure coverage,
 //! then presented on a quad whose material tints it to the grade color and
-//! layers on an additive glow that pulses — one shader, per-grade colors
-//! and strengths (see [`grade_text.wgsl`](../../../assets/shaders/grade_text.wgsl)).
+//! layers on an additive glow that pulses — one shader (the colocated
+//! `grade_text.wgsl`, embedded in the binary), per-grade colors and
+//! strengths.
 
 use super::{ForPlayer, PlaySet, RowGraded};
 use crate::core::config::{DynamicGradeDef, GameConfig, Grade, RowOutcome, TimingFeedback};
 use crate::core::font::game_font;
-use crate::core::note_field::visible_world_size;
 use crate::core::player::PlayerId;
 use crate::core::settings::PlayerSettings;
 use crate::core::units::{Percent, Seconds};
-use crate::scenes::GameScene;
+use bevy::asset::embedded_asset;
 use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{ClearColorConfig, RenderTarget, ScalingMode};
 use bevy::mesh::MeshVertexBufferLayoutRef;
@@ -60,20 +60,16 @@ const GRADE_Z: f32 = 6.0;
 /// only needs to be distinct and out of the window cameras' way.
 const SOURCE_CAMERA_ORDER: isize = -100;
 
-pub(super) fn plugin(app: &mut App) {
-    app.add_plugins(Material2dPlugin::<GradeTextMaterial>::default())
-        .add_systems(
-            Update,
-            (apply_grades, animate_grades)
-                .chain()
-                .in_set(PlaySet::Present),
-        )
-        .add_systems(
-            Update,
-            set_stage_grade_area
-                .in_set(PlaySet::Present)
-                .run_if(in_state(GameScene::FilePlayer)),
-        );
+/// The grade-text material and its embedded shader — everything a rig
+/// needs to render, without the engine's systems. The engine adds this;
+/// headless inspectors can add it alone.
+pub struct GradeTextPlugin;
+
+impl Plugin for GradeTextPlugin {
+    fn build(&self, app: &mut App) {
+        embedded_asset!(app, "grade_text.wgsl");
+        app.add_plugins(Material2dPlugin::<GradeTextMaterial>::default());
+    }
 }
 
 /// The entities of one grade-text rig, for callers to position, re-layer,
@@ -91,8 +87,8 @@ pub struct GradeRig {
 /// Builds a grade-text rig drawing on the private `source_layer`: the
 /// offscreen white word, its camera and image, and the shader quad
 /// presenting it at the origin on the default layer. Callers position,
-/// re-layer, and scope the returned entities. Shared by the play stage,
-/// the options preview, and the `render_grade` inspector.
+/// re-layer, and scope the returned entities. Shared by the live sessions
+/// and the `render_grade` inspector.
 pub fn spawn_rig(
     commands: &mut Commands,
     images: &mut Assets<Image>,
@@ -166,7 +162,7 @@ pub fn spawn_rig(
 /// Where and how a grade-text display is placed: its player, the field's
 /// x center, the private layer its offscreen word renders on, and the layer
 /// its shader quad presents on (`None` for the default layer).
-pub struct GradeSpawn {
+pub(super) struct GradeSpawn {
     pub player: PlayerId,
     pub origin_x: f32,
     pub source_layer: usize,
@@ -175,9 +171,8 @@ pub struct GradeSpawn {
 
 /// Spawns a grade-text display driven by the shared [`apply_grades`] /
 /// [`animate_grades`] systems: the offscreen rig plus the [`GradeText`]
-/// state, scoped to `scope`. Returns the quad entity. Used by the play stage
-/// and the options preview alike.
-pub fn spawn_display(
+/// state, scoped to `scope`. Returns the quad entity.
+pub(super) fn spawn_display(
     commands: &mut Commands,
     images: &mut Assets<Image>,
     asset_server: &AssetServer,
@@ -249,7 +244,7 @@ pub struct GradeTextMaterial {
 
 impl Material2d for GradeTextMaterial {
     fn fragment_shader() -> ShaderRef {
-        "shaders/grade_text.wgsl".into()
+        "embedded://rhythm/prefabs/stepfile_player/grade_text.wgsl".into()
     }
 
     fn alpha_mode(&self) -> AlphaMode2d {
@@ -270,6 +265,16 @@ impl Material2d for GradeTextMaterial {
         }
         Ok(())
     }
+}
+
+/// The engine's grade-word systems, in the frame's `Present` phase.
+pub(super) fn plugin(app: &mut App) {
+    app.add_systems(
+        Update,
+        (apply_grades, animate_grades)
+            .chain()
+            .in_set(PlaySet::Present),
+    );
 }
 
 /// Each graded row refreshes its player's word, color, and glow, and
@@ -341,20 +346,9 @@ fn animate_grades(
     }
 }
 
-/// Publishes the play stage's [`GradeArea`] from the padded window, so grades
-/// map their height option to the screen. The options preview fills its own.
-fn set_stage_grade_area(config: Res<GameConfig>, windows: Query<&Window>, mut commands: Commands) {
-    let Ok(window) = windows.single() else {
-        return;
-    };
-    let half = visible_world_size(window).y / 2.0;
-    let padding = config.stage.screen_edge_padding;
-    commands.insert_resource(grade_area(half - padding, -half + padding));
-}
-
 /// The world Y band the grade group occupies, top (0%) to bottom (100%).
-/// Each context fills it: the play stage from the padded window, the options
-/// preview from the modal stripe.
+/// The session's owner fills it: the play stage from the padded window, the
+/// options preview from its modal stripe.
 #[derive(Resource, Default, Clone, Copy)]
 pub struct GradeArea {
     pub top: f32,
@@ -402,9 +396,6 @@ pub fn apply_style(
 pub fn glow_pulse(seconds: f32) -> f32 {
     GLOW_FLOOR + (1.0 - GLOW_FLOOR) * (-seconds / PULSE_TAU).exp()
 }
-
-/// The glow's drained resting level, so the word stays lit between strikes.
-pub const GLOW_FLOOR_LEVEL: f32 = GLOW_FLOOR;
 
 /// The word, base color, glow color, and glow strength one outcome shows.
 pub struct GradeStyle {

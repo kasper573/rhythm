@@ -3,13 +3,14 @@ use crate::core::font::game_font;
 use crate::core::high_scores::{HighScores, highscore_key};
 use crate::core::input::{Actions, GameAction};
 use crate::core::library::StepfileLibrary;
-use crate::core::menu::TITLE_COLOR;
 use crate::core::player::PlayerId;
 use crate::core::scene_flow::SpawnScoped;
 use crate::core::sfx::{PlaySfx, Sfx};
 use crate::core::units::Percent;
-use crate::scenes::file_player::{PlayerResult, ScoreResults};
-use crate::scenes::file_select::FileSelectTarget;
+use crate::prefabs::menu::TITLE_COLOR;
+use crate::prefabs::stepfile_player::StageResults;
+use crate::scenes::play::{PlayerResult, ScoreResults};
+use crate::scenes::wheel::WheelTarget;
 use crate::scenes::{
     GameScene, SceneFade, play_default_bgm, scene_accepts_input, spawn_default_background,
 };
@@ -45,7 +46,7 @@ fn enter(
     mut fade: ResMut<SceneFade>,
 ) {
     let Some(results) = results else {
-        fade.begin(GameScene::FileSelect);
+        fade.begin(GameScene::Wheel);
         return;
     };
 
@@ -57,12 +58,12 @@ fn enter(
         .map(|player| {
             let chart = &library.stepfile(results.id).stepfile.charts[player.chart];
             let key = highscore_key(&library, results.id, chart);
-            let tally = tally(&config, player);
-            let new_high_score = high_scores.record(player.player, key, tally.total_points);
+            let tally = tally(&config, &player.stage);
+            let new_high_score = high_scores.record(player.stage.player, key, tally.total_points);
             player_column(
                 &config,
                 &asset_server,
-                player,
+                &player.stage,
                 &tally,
                 new_high_score,
                 tagged,
@@ -105,7 +106,7 @@ fn enter(
 fn player_column(
     config: &GameConfig,
     asset_server: &AssetServer,
-    player: &PlayerResult,
+    stage: &StageResults,
     tally: &Tally,
     new_high_score: bool,
     tagged: bool,
@@ -125,15 +126,15 @@ fn player_column(
     ));
     lines.push((
         "Holds".to_string(),
-        format!("{}/{}", player.holds_ok, player.holds_total),
+        format!("{}/{}", stage.holds_ok, stage.holds_total),
         Color::srgb(0.8, 0.85, 0.8),
     ));
     lines.push((
         "Mines".to_string(),
         format!(
             "{}/{}",
-            player.mines_total - player.mines_exploded,
-            player.mines_total
+            stage.mines_total - stage.mines_exploded,
+            stage.mines_total
         ),
         Color::srgb(0.8, 0.85, 0.8),
     ));
@@ -180,7 +181,7 @@ fn player_column(
 
     let header: Vec<_> = tagged
         .then(|| {
-            let tag = player.player.label().to_string();
+            let tag = stage.player.label().to_string();
             bsn! {
                 game_font(36.0)
                 Text({tag})
@@ -190,7 +191,7 @@ fn player_column(
         .into_iter()
         .collect();
 
-    let (result_label, result_color) = if player.failed {
+    let (result_label, result_color) = if stage.failed {
         ("FAILED", Color::srgb(0.95, 0.25, 0.25))
     } else {
         ("CLEARED", Color::srgb(0.5, 0.95, 0.6))
@@ -256,7 +257,7 @@ fn player_column(
         ]
     };
 
-    let combo = format!("Max combo: {}", player.max_combo);
+    let combo = format!("Max combo: {}", stage.max_combo);
     bsn! {
         Node {
             flex_direction: FlexDirection::Column,
@@ -293,10 +294,10 @@ struct Tally {
     worst_grade: Option<Grade>,
 }
 
-fn tally(config: &GameConfig, player: &PlayerResult) -> Tally {
+fn tally(config: &GameConfig, stage: &StageResults) -> Tally {
     let mut grade_counts = vec![0u32; config.grading.dynamic.len()];
     let mut miss_count = 0u32;
-    for outcome in &player.outcomes {
+    for outcome in &stage.outcomes {
         match config.grade(*outcome) {
             Grade::Hit(grade) => grade_counts[grade.0] += 1,
             Grade::Miss => miss_count += 1,
@@ -309,10 +310,10 @@ fn tally(config: &GameConfig, player: &PlayerResult) -> Tally {
         .map(|(count, grade)| count * grade.points)
         .sum::<u32>()
         + miss_count * config.grading.fixed.miss.points
-        + player.holds_ok * config.grading.fixed.ok.points
-        + player.holds_ng * config.grading.fixed.ng.points;
+        + stage.holds_ok * config.grading.fixed.ok.points
+        + stage.holds_ng * config.grading.fixed.ng.points;
 
-    let complete = player.outcomes.len() as u32 == player.rows_total;
+    let complete = stage.outcomes.len() as u32 == stage.rows_total;
     let worst_grade = complete.then(|| {
         if miss_count > 0 {
             Grade::Miss
@@ -327,7 +328,7 @@ fn tally(config: &GameConfig, player: &PlayerResult) -> Tally {
     });
 
     Tally {
-        percent: config.score_percent(total_points, player.rows_total, player.holds_total),
+        percent: config.score_percent(total_points, stage.rows_total, stage.holds_total),
         grade_counts,
         miss_count,
         total_points,
@@ -348,7 +349,7 @@ fn leave(
         results
             .players
             .iter()
-            .any(|player| actions.just_pressed(action(player.player)))
+            .any(|player: &PlayerResult| actions.just_pressed(action(player.stage.player)))
     };
     let sound = if pressed(GameAction::select) {
         Sfx::Select
@@ -358,6 +359,6 @@ fn leave(
         return;
     };
     sfx.write(PlaySfx(sound));
-    commands.insert_resource(FileSelectTarget(results.id));
-    fade.begin(GameScene::FileSelect);
+    commands.insert_resource(WheelTarget(results.id));
+    fade.begin(GameScene::Wheel);
 }

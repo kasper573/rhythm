@@ -1,7 +1,8 @@
 use crate::core::input::{Actions, GameAction};
-use crate::core::menu::{MenuSelected, spawn_menu};
 use crate::core::player::PlayerId;
+use crate::core::scene_flow::SpawnScoped;
 use crate::core::sfx::{PlaySfx, Sfx};
+use crate::prefabs::menu::{MenuPrefabOptions, MenuSelected, menu_prefab};
 use crate::scenes::{
     GameScene, SceneFade, play_default_bgm, scene_accepts_input, spawn_default_background,
 };
@@ -24,11 +25,12 @@ impl Plugin for SettingsMenuPlugin {
 }
 
 fn enter(mut commands: Commands) {
-    spawn_menu(
-        &mut commands,
+    commands.spawn_scoped(
         GameScene::SettingsMenu,
-        "Settings",
-        &["Configure keymap", "Audio settings"],
+        menu_prefab(MenuPrefabOptions {
+            title: "Settings".to_string(),
+            items: vec!["Configure keymap".to_string(), "Audio settings".to_string()],
+        }),
     );
 }
 

@@ -1,9 +1,12 @@
-use super::{AutoSyncText, PlaySession, PlaySet, TickTrack, visuals::OffsetOsdLine};
+use super::TickTrack;
 use crate::core::audio::SoundChannel;
 use crate::core::config::GameConfig;
+use crate::core::font::game_font;
 use crate::core::input::{Actions, GameAction, shift_held};
+use crate::core::scene_flow::SpawnScoped;
 use crate::core::settings::MachineSettings;
-use crate::core::units::Millis;
+use crate::core::units::{Millis, Seconds};
+use crate::prefabs::stepfile_player::{PlaySet, PressBanked};
 use crate::scenes::GameScene;
 use bevy::prelude::*;
 
@@ -11,27 +14,100 @@ use bevy::prelude::*;
 /// AutoSync, and nudging the three synchronization offsets — all surfacing
 /// through the offset OSD.
 pub(super) fn plugin(app: &mut App) {
-    app.add_systems(
-        Update,
-        (
-            toggle_tick_audio,
-            toggle_autosync,
-            fold_autosync,
-            update_autosync_status,
-            adjust_timing_offsets,
-        )
-            .chain()
-            .in_set(PlaySet::Tune)
-            .run_if(in_state(GameScene::FilePlayer)),
+    app.add_message::<OffsetOsdLine>()
+        .add_systems(OnEnter(GameScene::Play), enter)
+        .add_systems(OnExit(GameScene::Play), exit)
+        .add_systems(
+            Update,
+            (
+                toggle_tick_audio,
+                toggle_autosync,
+                collect_autosync_samples,
+                fold_autosync,
+                update_autosync_status,
+                adjust_timing_offsets,
+                run_offset_osd,
+            )
+                .chain()
+                .in_set(PlaySet::Present)
+                .run_if(in_state(GameScene::Play)),
+        );
+}
+
+/// A line to flash on the timing-offset OSD.
+#[derive(Message)]
+struct OffsetOsdLine(String);
+
+/// While enabled, hit errors accumulate and the median of every batch is
+/// folded into the machine offset.
+#[derive(Resource, Default)]
+struct AutoSync {
+    enabled: bool,
+    samples: Vec<Seconds>,
+}
+
+#[derive(Component, Default, Clone)]
+struct OffsetOsd;
+
+#[derive(Component, Default, Clone)]
+struct AutoSyncText;
+
+/// The machine-wide readouts: the timing-offset OSD and AutoSync status.
+fn enter(mut commands: Commands) {
+    commands.init_resource::<AutoSync>();
+    commands.spawn_scoped(
+        GameScene::Play,
+        bsn! {
+            OffsetOsd
+            game_font(24.0)
+            Text("")
+            TextColor(Color::srgba(1.0, 1.0, 1.0, 0.0))
+            Node {
+                position_type: PositionType::Absolute,
+                right: px(24),
+                bottom: px(16),
+            }
+        },
+    );
+    commands.spawn_scoped(
+        GameScene::Play,
+        bsn! {
+            AutoSyncText
+            game_font(24.0)
+            Text("")
+            TextColor(Color::srgb(0.5, 0.9, 1.0))
+            Node {
+                position_type: PositionType::Absolute,
+                right: px(24),
+                bottom: px(48),
+            }
+            Visibility::Hidden
+        },
     );
 }
 
-fn toggle_autosync(actions: Actions, mut session: ResMut<PlaySession>) {
+fn exit(mut commands: Commands) {
+    commands.remove_resource::<AutoSync>();
+}
+
+fn toggle_autosync(actions: Actions, mut autosync: ResMut<AutoSync>) {
     if !actions.just_pressed(GameAction::ToggleAutoSync) {
         return;
     }
-    session.autosync.enabled = !session.autosync.enabled;
-    session.autosync.samples.clear();
+    autosync.enabled = !autosync.enabled;
+    autosync.samples.clear();
+}
+
+/// Samples every banked press's timing error the engine reports.
+fn collect_autosync_samples(
+    mut banked: MessageReader<PressBanked>,
+    mut autosync: ResMut<AutoSync>,
+) {
+    for press in banked.read() {
+        if autosync.enabled {
+            autosync.samples.push(press.error);
+        }
+    }
 }
 
 /// AutoSync: with enough hit samples, fold their median error into the
@@ -40,14 +116,14 @@ fn toggle_autosync(actions: Actions, mut session: ResMut<PlaySession>) {
 const AUTOSYNC_SAMPLES: usize = 24;
 
 fn fold_autosync(
-    mut session: ResMut<PlaySession>,
+    mut autosync: ResMut<AutoSync>,
     mut settings: ResMut<MachineSettings>,
     mut osd: MessageWriter<OffsetOsdLine>,
 ) {
-    if !session.autosync.enabled || session.autosync.samples.len() < AUTOSYNC_SAMPLES {
+    if !autosync.enabled || autosync.samples.len() < AUTOSYNC_SAMPLES {
         return;
     }
-    let mut samples = std::mem::take(&mut session.autosync.samples);
+    let mut samples = std::mem::take(&mut autosync.samples);
     samples.sort_by(|a, b| a.0.total_cmp(&b.0));
     let median = samples[samples.len() / 2];
     let delta = Millis(median.to_millis().round() as i64);
@@ -62,17 +138,17 @@ fn fold_autosync(
 }
 
 fn update_autosync_status(
-    session: Res<PlaySession>,
+    autosync: Res<AutoSync>,
     mut status: Single<(&mut Text, &mut Visibility), With<AutoSyncText>>,
     mut shown: Local<Option<(bool, usize)>>,
 ) {
-    let state = (session.autosync.enabled, session.autosync.samples.len());
+    let state = (autosync.enabled, autosync.samples.len());
     if *shown == Some(state) {
         return;
     }
     *shown = Some(state);
     let (text, visibility) = &mut *status;
-    if session.autosync.enabled {
+    if autosync.enabled {
         text.0 = format!("AutoSync ({}/{AUTOSYNC_SAMPLES} samples)", state.1);
         **visibility = Visibility::Visible;
     } else {
@@ -144,4 +220,20 @@ fn adjust_timing_offsets(
     }
     let Some(line) = osd_line else { return };
     osd.write(OffsetOsdLine(line));
+}
+
+fn run_offset_osd(
+    time: Res<Time>,
+    mut lines: MessageReader<OffsetOsdLine>,
+    mut osd: Single<(&mut Text, &mut TextColor), With<OffsetOsd>>,
+) {
+    let (text, color) = &mut *osd;
+    for line in lines.read() {
+        text.0 = line.0.clone();
+        color.0.set_alpha(1.0);
+    }
+    if color.0.alpha() > 0.0 {
+        let alpha = (color.0.alpha() - time.delta_secs()).max(0.0);
+        color.0.set_alpha(alpha);
+    }
 }

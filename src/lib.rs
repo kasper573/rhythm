@@ -1,6 +1,7 @@
 pub mod core;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod native;
+pub mod prefabs;
 pub mod profiling;
 pub mod scenes;
 #[cfg(target_arch = "wasm32")]
@@ -8,12 +9,9 @@ pub mod web;
 
 use crate::core::audio::AudioPlugin;
 use crate::core::config::GameConfig;
-use crate::core::health_vial::HealthVialPlugin;
 use crate::core::high_scores::HighScoresPlugin;
 use crate::core::input::InputPlugin;
 use crate::core::library::StepfileLibrary;
-use crate::core::note_field::NoteFieldPlugin;
-use crate::core::note_skin::NoteSkinPlugin;
 use crate::core::player::PlayMode;
 use crate::core::settings::SettingsPlugin;
 use crate::core::sfx::SfxPlugin;
@@ -21,6 +19,9 @@ use crate::core::stepfile::MusicPlayerPlugin;
 use crate::core::{
     CLEAR_COLOR, OVERLAY_CAMERA_ORDER, OVERLAY_LAYER, SCREEN_SIZE, size_viewport_covers,
 };
+use crate::prefabs::health_vial::HealthVialPlugin;
+use crate::prefabs::media_cover::MediaCoverPlugin;
+use crate::prefabs::stepfile_player::StepfilePlayerPlugin;
 use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{ClearColorConfig, ScalingMode};
 use bevy::prelude::*;
@@ -69,9 +70,9 @@ pub fn app(platform: impl core::platform::Platform + 'static) -> App {
     .add_plugins((
         SettingsPlugin,
         AudioPlugin,
-        NoteSkinPlugin,
-        NoteFieldPlugin,
+        StepfilePlayerPlugin,
         HealthVialPlugin,
+        MediaCoverPlugin,
         HighScoresPlugin,
         MusicPlayerPlugin,
         InputPlugin,
@@ -88,9 +89,9 @@ pub fn app(platform: impl core::platform::Platform + 'static) -> App {
 /// follows the same factor, so world and UI grow together. The axis the
 /// window has spare space on simply sees a little more room.
 ///
-/// Two 2D cameras bracket the note fields' lane cameras (see
-/// `core::note_field`): the world below them, the overlay — flashes,
-/// popups, and all UI — above them.
+/// Two 2D cameras bracket the note fields' lane cameras (see the stepfile
+/// player prefab): the world below them, the overlay — flashes, popups,
+/// and all UI — above them.
 fn spawn_cameras(mut commands: Commands) {
     commands
         .spawn_scene(bsn! { Camera2d })

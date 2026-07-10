@@ -148,7 +148,7 @@ pub(super) fn refresh_info_panel(
         .collect();
 
     commands.spawn_scoped(
-        GameScene::FileSelect,
+        GameScene::Wheel,
         bsn! {
             InfoPanel
             at(-320.0, 0.0, 5.0)

@@ -33,6 +33,8 @@ These rules cannot be enforced systematically, but must be followed:
 
 - All code in `src` is platform-agnostic; platform-specific code goes only in `src/native.rs` or `src/web.rs`. No exceptions.
 
+- `src/prefabs/` holds prefabs: parameterized, reusable visual building blocks. Whenever something is rendered the same way in more than one context, make it a prefab — and design its interface with deliberate intent: options in, ports (driven components/resources) for live inputs, messages out. Prefabs never couple to global state or scenes; everything arrives via `<Name>PrefabOptions` or injected bevy resources. Each prefab colocates all it owns — shaders included, embedded via `embedded_asset!`, never loaded from `assets/` at runtime. Prefabs never depend on each other: compose them from the outside or inject.
+
 ## Comments
 
 - Default: no comments — write self-explanatory code.

@@ -1,25 +1,24 @@
-use crate::core::config::GameConfig;
-use crate::core::input::{GameAction, StepDirection};
-use crate::core::note_skin::{
+use super::note_skin::{
     ActiveNoteSkin, ActiveNoteSkins, ElementVisual, NOTE_CELL, NoteArt, effect_material,
     tail_material,
 };
+use crate::core::config::GameConfig;
+use crate::core::input::{GameAction, StepDirection};
 use crate::core::player::PlayerId;
-use crate::core::settings::PlayerSettings;
+use crate::core::settings::{NoteSpeed, Perspective, PlayerSettings};
 use crate::core::stepfile::StepfileTiming;
 use crate::core::units::{Beat, Seconds};
-use crate::core::{LANE_LAYER_BASE, SCREEN_SIZE};
+use crate::core::{LANE_LAYER_BASE, SCREEN_SIZE, visible_world_size};
 use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{CameraProjection, ClearColorConfig, RenderTarget};
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::ecs::query::QueryData;
 use bevy::math::{Affine2, Vec3A};
 use bevy::prelude::*;
-use serde::{Deserialize, Serialize};
-use strum::{EnumIter, EnumString, IntoEnumIterator, IntoStaticStr};
+use strum::IntoEnumIterator;
 
 /// The receptor row's y where no window overrides it (headless renderers);
-/// live sessions re-anchor every frame through [`anchor_to_window_top`].
+/// live sessions re-anchor every frame through their own window logic.
 pub const TARGET_Y: f32 = 260.0;
 
 /// Columns sit slightly further apart than the arrows are wide, keeping
@@ -36,13 +35,6 @@ pub fn fitted_arrow_size(spacing_units: f32, available: f32, max_size: f32) -> f
     (available / spacing_units / COLUMN_SPACING_RATIO).min(max_size)
 }
 
-/// The world rect the AutoMin canvas camera shows in `window`: the whole
-/// design canvas plus whatever extra the window's aspect reveals.
-pub fn visible_world_size(window: &Window) -> Vec2 {
-    let size = Vec2::new(window.width().max(1.0), window.height().max(1.0));
-    size * (SCREEN_SIZE.x / size.x).max(SCREEN_SIZE.y / size.y)
-}
-
 /// The configured arrow-size cap — a *screen pixel* budget — as world
 /// units on `window`: the world-to-pixel scale grows with the window, so
 /// the world-unit cap shrinks to keep arrows at most the configured pixel
@@ -53,20 +45,6 @@ pub fn max_arrow_size(config: &GameConfig, window: Option<&Window>) -> f32 {
         .map(|window| window.width().max(1.0) / visible_world_size(window).x)
         .unwrap_or(1.0);
     config.stage.max_arrow_size / pixels_per_world
-}
-
-/// Where a player's lane camera watches their arrows from. The receptor
-/// row stays put on screen; the rest of the lane foreshortens around it.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, EnumIter, EnumString, IntoStaticStr,
-)]
-pub enum Perspective {
-    /// Head on: no perspective.
-    None,
-    /// From above: notes rise out of the distance below.
-    Above,
-    /// From below: the lane recedes upward.
-    Below,
 }
 
 /// One lane group on stage: a player's columns, centered on `origin_x`,
@@ -126,24 +104,6 @@ impl NoteField {
 /// The field an on-stage entity belongs to.
 #[derive(Component, Clone, Copy)]
 pub struct InField(pub Entity);
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub enum NoteSpeed {
-    /// A constant rate regardless of the chart's tempo, expressed as the
-    /// scroll BPM at which [`NoteSpeed::Dynamic`] would move equally fast.
-    Constant(f32),
-    /// Spacing follows the chart's beats — one arrow height per beat at
-    /// multiplier 1 — so BPM changes stretch the scroll and stops freeze it.
-    Dynamic(f32),
-}
-
-impl NoteSpeed {
-    pub fn value(self) -> f32 {
-        match self {
-            NoteSpeed::Constant(value) | NoteSpeed::Dynamic(value) => value,
-        }
-    }
-}
 
 /// Paces every note-field animation: `visible` is the current moment on the
 /// drawn timeline and `timing` converts it to beats — shared by every field
@@ -626,13 +586,17 @@ impl Plugin for NoteFieldPlugin {
                 animate_receptor_press,
                 animate_hold_parts,
                 animate_mines,
-                fade_out,
             )
                 .chain()
                 .in_set(NoteFieldSystems)
                 .run_if(resource_exists::<NoteFieldClock>),
         )
-        .add_systems(Update, sync_lane_cameras);
+        // Fades run even without a clock, so transients spawned during a
+        // session always finish dying after it is torn down.
+        .add_systems(
+            Update,
+            (fade_out.after(NoteFieldSystems), sync_lane_cameras),
+        );
     }
 }
 

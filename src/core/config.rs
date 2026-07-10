@@ -1,7 +1,6 @@
 use crate::core::assets::asset_root;
 use crate::core::input::{GameAction, Keymap};
-use crate::core::note_field::NoteSpeed;
-use crate::core::settings::{PlayerOptions, TimingSettings, VolumeSettings};
+use crate::core::settings::{NoteSpeed, PlayerOptions, TimingSettings, VolumeSettings};
 use crate::core::units::{Percent, Seconds};
 use bevy::math::cubic_splines::CubicSegment;
 use bevy::prelude::*;
@@ -70,7 +69,7 @@ pub struct StageConfig {
     pub screen_edge_padding: f32,
 }
 
-/// The perspective lane cameras (see `core::note_field`).
+/// The perspective lane cameras (see the stepfile player's note field).
 #[derive(Debug, Clone, Deserialize)]
 pub struct LaneCameraConfig {
     /// Vertical field of view; the camera distance derives from it so the
@@ -182,7 +181,7 @@ pub struct FixedGradeDef {
     pub glow: GradeGlow,
 }
 
-/// The grade text's shader shimmer (see `scenes::file_player::grade_text`):
+/// The grade text's shader shimmer (see the stepfile player's grade text):
 /// an additive glow in `color`, oscillating at `strength` (0 = plain text).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]

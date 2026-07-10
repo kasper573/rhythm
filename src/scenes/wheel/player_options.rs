@@ -1,22 +1,24 @@
-use super::{FileSelectFocus, ModalStripe};
+use super::{ModalStripe, WheelFocus};
 use crate::core::SCREEN_SIZE;
 use crate::core::config::GameConfig;
 use crate::core::font::game_font;
 use crate::core::input::{Actions, GameAction, NavPulse, StepDirection};
-use crate::core::menu::{ACTIVE_COLOR, INACTIVE_COLOR, TITLE_COLOR};
-use crate::core::note_field::{
-    LaneView, NoteField, NoteFieldClock, NoteSpeed, Perspective, fitted_arrow_size, max_arrow_size,
-};
-use crate::core::note_skin::{ActiveNoteSkins, NoteSkinLibrary};
 use crate::core::player::{PlayMode, PlayerId};
 use crate::core::scene_flow::SpawnScoped;
-use crate::core::settings::{GradeLayer, MachineSettings, PlayerOptions, PlayerSettings};
+use crate::core::settings::{
+    GradeLayer, MachineSettings, NoteSpeed, Perspective, PlayerOptions, PlayerSettings,
+};
 use crate::core::sfx::{PlaySfx, Sfx};
 use crate::core::stepfile::{Arrow, MusicPlayer, Row, StepfileTiming, Tail};
 use crate::core::units::{Beat, Percent, Seconds};
-use crate::scenes::file_player::{
-    FieldSpec, GameplayDrive, PlayInput, PlayTime, PrefabAssets, SessionSpec, clear_session,
-    grade_text, spawn_session,
+use crate::prefabs::menu::{ACTIVE_COLOR, INACTIVE_COLOR, TITLE_COLOR};
+use crate::prefabs::stepfile_player::note_field::{
+    LaneView, NoteField, NoteFieldClock, fitted_arrow_size, max_arrow_size,
+};
+use crate::prefabs::stepfile_player::note_skin::{ActiveNoteSkins, NoteSkinLibrary};
+use crate::prefabs::stepfile_player::{
+    FieldSpec, GameplayDrive, PlayInput, PlayTime, StepfilePlayerAssets,
+    StepfilePlayerPrefabOptions, clear_session, grade_text, stepfile_player_prefab,
 };
 use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{ClearColorConfig, RenderTarget, ScalingMode};
@@ -28,12 +30,12 @@ use strum::{EnumCount, EnumIter, IntoEnumIterator, IntoStaticStr};
 
 /// The player options modal: edits each active player's options in place
 /// (they live in the player settings, so changes persist immediately) as
-/// an edge-to-edge stripe over the vertical center of the file select,
-/// which stays mounted underneath. One options panel per active player —
-/// P1 to the left, P2 to the right — each driven by its player's own pad.
+/// an edge-to-edge stripe over the vertical center of the wheel, which
+/// stays mounted underneath. One options panel per active player — P1 to
+/// the left, P2 to the right — each driven by its player's own pad.
 pub(super) fn plugin(app: &mut App) {
-    app.add_systems(OnEnter(FileSelectFocus::PlayerOptions), enter)
-        .add_systems(OnExit(FileSelectFocus::PlayerOptions), teardown_preview)
+    app.add_systems(OnEnter(WheelFocus::PlayerOptions), enter)
+        .add_systems(OnExit(WheelFocus::PlayerOptions), teardown_preview)
         .add_systems(
             Update,
             (
@@ -44,23 +46,22 @@ pub(super) fn plugin(app: &mut App) {
                 animate_transition,
             )
                 .chain()
-                .run_if(in_state(FileSelectFocus::PlayerOptions)),
+                .run_if(in_state(WheelFocus::PlayerOptions)),
         )
         .add_systems(
             Update,
             build_preview.run_if(
-                in_state(FileSelectFocus::PlayerOptions)
-                    .and_then(not(resource_exists::<PreviewState>)),
+                in_state(WheelFocus::PlayerOptions).and_then(not(resource_exists::<PreviewState>)),
             ),
         )
         .add_systems(
             Update,
             rebuild_preview.run_if(
-                in_state(FileSelectFocus::PlayerOptions).and_then(resource_exists::<PreviewState>),
+                in_state(WheelFocus::PlayerOptions).and_then(resource_exists::<PreviewState>),
             ),
         )
         // The mocked adapter's port drivers: fill the wheel-music clock and the
-        // deterministic autoplay input, in the prefab's drive phase.
+        // deterministic autoplay input, in the engine's drive phase.
         .add_systems(
             Update,
             (drive_clock, mock_input)
@@ -85,20 +86,20 @@ fn enter(
     // them all so option names render once and the value columns line up.
     for player in players {
         commands.spawn_scoped(
-            FileSelectFocus::PlayerOptions,
+            WheelFocus::PlayerOptions,
             bsn! { OptionsPanel { player: {*player}, active_row: 0 } },
         );
     }
     // Equal flanks on both sides keep the table centered whatever it reads;
     // each active player's flank hosts a preview surface the mocked adapter
-    // fills through the file player prefab (see below).
+    // fills through the stepfile player (see below).
     let left = vec![flank_scene(players.first().copied())];
     let options = vec![options_column_scene(
         players, versus, &settings, &config, &skins,
     )];
     let right = vec![flank_scene(players.get(1).copied())];
     commands.spawn_scoped(
-        FileSelectFocus::PlayerOptions,
+        WheelFocus::PlayerOptions,
         bsn! {
             ModalTransition { t: 0.0, dir: 1.0 }
             Node {
@@ -143,7 +144,8 @@ fn enter(
 
 /// A flex-grow column beside the table. Present on both sides so the table
 /// stays centered; an active player's flank carries a [`PreviewSurface`] the
-/// file player renders their autoplayed field into, an empty one is a spacer.
+/// stepfile player renders their autoplayed field into, an empty one is a
+/// spacer.
 fn flank_scene(player: Option<PlayerId>) -> impl Scene {
     let surface: Vec<_> = player.map(surface_scene).into_iter().collect();
     bsn! {
@@ -169,10 +171,10 @@ fn surface_scene(player: PlayerId) -> impl Scene {
 }
 
 // ===== The mocked gameplay adapter =====
-// Drives the file player prefab (see `file_player::spawn_session`) as an
-// autoplayed preview: a mocked chart on offscreen surfaces, clocked by the
-// wheel music, rebuilt in place whenever an option changes so the preview
-// always reflects the current selection exactly.
+// Drives the stepfile player prefab as an autoplayed preview: a mocked
+// chart on offscreen surfaces, clocked by the wheel music, rebuilt in place
+// whenever an option changes so the preview always reflects the current
+// selection exactly.
 
 /// The UI node a player's preview renders into; the adapter fills it with the
 /// blitted playfield image.
@@ -217,7 +219,7 @@ struct PreviewSurfaceInfo {
     index: usize,
 }
 
-/// The prefab's asset handles, bundled for the spawners.
+/// The engine's asset handles, bundled for the spawners.
 #[derive(SystemParam)]
 struct PreviewAssets<'w> {
     asset_server: Res<'w, AssetServer>,
@@ -227,8 +229,8 @@ struct PreviewAssets<'w> {
 }
 
 impl PreviewAssets<'_> {
-    fn prefab(&mut self) -> PrefabAssets<'_> {
-        PrefabAssets {
+    fn player_assets(&mut self) -> StepfilePlayerAssets<'_> {
+        StepfilePlayerAssets {
             asset_server: &self.asset_server,
             images: &mut self.images,
             config: &self.config,
@@ -290,7 +292,7 @@ fn build_preview(
                 RenderTarget::Image(image.clone().into()),
                 band_projection(),
                 RenderLayers::layer(layer),
-                DespawnOnExit(FileSelectFocus::PlayerOptions),
+                DespawnOnExit(WheelFocus::PlayerOptions),
             ));
         }
         commands.entity(node).insert(ImageNode::new(image.clone()));
@@ -319,7 +321,7 @@ fn build_preview(
     });
 }
 
-/// The mocked adapter's CLOCK driver: fills the prefab's [`PlayTime`] port
+/// The mocked adapter's CLOCK driver: fills the engine's [`PlayTime`] port
 /// from the wheel music and flags a rebuild each time the music loops back.
 fn drive_clock(
     music: Res<MusicPlayer>,
@@ -338,7 +340,7 @@ fn drive_clock(
     play_time.visible = visible;
 }
 
-/// The mocked adapter's INPUT driver: fills the prefab's [`PlayInput`] port
+/// The mocked adapter's INPUT driver: fills the engine's [`PlayInput`] port
 /// deterministically — every note in its hit window is pressed at the offset
 /// that grades it to its tier, held through a hold's tail. No keyboard.
 fn mock_input(
@@ -399,7 +401,7 @@ fn rebuild_preview(
         .filter(|row| row_until(row, &timing) > now)
         .cloned()
         .collect();
-    let specs: Vec<FieldSpec> = state
+    let fields: Vec<FieldSpec> = state
         .surfaces
         .iter()
         .map(|surface| {
@@ -422,23 +424,23 @@ fn rebuild_preview(
                 mines: &[],
                 grade_source_layer: behind_source(surface.index),
                 grade_present_layer: Some(present),
+                popup_layer: Some(front),
                 max_health: u32::MAX,
             }
         })
         .collect();
-    spawn_session(
-        &mut commands,
-        &mut assets.prefab(),
-        SessionSpec {
-            title: String::new(),
-            fields: specs,
+    stepfile_player_prefab(
+        StepfilePlayerPrefabOptions {
+            fields,
             timing: state.timing.clone(),
+            scope: (DespawnOnExit(WheelFocus::PlayerOptions), PreviewField),
         },
-        (DespawnOnExit(FileSelectFocus::PlayerOptions), PreviewField),
+        &mut commands,
+        &mut assets.player_assets(),
     );
 }
 
-/// Leaves the modal: drops the preview's ports (its entities and surfaces are
+/// Leaves the modal: drops the engine's ports (its entities and surfaces are
 /// scoped to the modal and despawn on their own).
 fn teardown_preview(mut commands: Commands) {
     clear_session(&mut commands);
@@ -496,7 +498,7 @@ fn player_order(player: PlayerId) -> u8 {
 }
 
 /// The behind/in-front present layers surface `index` draws on, clear of the
-/// file-select scene's (0, 8) and of every other surface.
+/// wheel scene's (0, 8) and of every other surface.
 fn surface_layers(index: usize) -> (usize, usize) {
     let base = 24 + index * 4;
     (base + 1, base + 2)
@@ -538,8 +540,8 @@ fn image_size(node: Vec2) -> UVec2 {
     )
 }
 
-/// A single field's arrows at the file player's design-canvas size, so the
-/// preview reads as a shrunk file player.
+/// A single field's arrows at the play stage's design-canvas size, so the
+/// preview reads as a shrunk play stage.
 fn preview_arrow_size(config: &GameConfig) -> f32 {
     fitted_arrow_size(
         4.0,
@@ -810,7 +812,7 @@ struct ContentOnly {
 /// leaves the modal state.
 fn animate_transition(
     time: Res<Time>,
-    mut mode: ResMut<NextState<FileSelectFocus>>,
+    mut mode: ResMut<NextState<WheelFocus>>,
     mut modal: Single<&mut ModalTransition>,
     mut background: Single<(&mut Node, &mut BackgroundColor), With<ModalBackground>>,
     mut content: Single<&mut Node, ContentOnly>,
@@ -821,7 +823,7 @@ fn animate_transition(
     }
     modal.t = (modal.t + modal.dir * time.delta_secs() / TRANSITION_SECONDS).clamp(0.0, 1.0);
     if modal.t <= 0.0 && modal.dir < 0.0 {
-        mode.set(FileSelectFocus::Browse);
+        mode.set(WheelFocus::Browse);
     }
     let eased = EaseFunction::CubicOut.sample_clamped(modal.t);
     let (background_node, background_color) = &mut *background;

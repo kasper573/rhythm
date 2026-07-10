@@ -1,13 +1,12 @@
 use crate::core::config::{GameConfig, SettingsDefaults};
 use crate::core::input::Keymap;
-use crate::core::note_field::{NoteSpeed, Perspective};
 use crate::core::persist::{load_user_data, save_user_data};
 use crate::core::player::{PerPlayer, PlayerId};
 use crate::core::units::{Millis, Percent, Seconds};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::ops::{Index, IndexMut};
-use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
+use strum::{EnumIter, EnumString, IntoEnumIterator, IntoStaticStr};
 
 /// Settings that belong to the machine rather than to either player: the
 /// key bindings for both player slots, the rig's timing calibration, and
@@ -89,6 +88,39 @@ pub enum GradeLayer {
     Behind,
     #[strum(serialize = "In front")]
     InFront,
+}
+
+/// How fast notes scroll for one player.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum NoteSpeed {
+    /// A constant rate regardless of the chart's tempo, expressed as the
+    /// scroll BPM at which [`NoteSpeed::Dynamic`] would move equally fast.
+    Constant(f32),
+    /// Spacing follows the chart's beats — one arrow height per beat at
+    /// multiplier 1 — so BPM changes stretch the scroll and stops freeze it.
+    Dynamic(f32),
+}
+
+impl NoteSpeed {
+    pub fn value(self) -> f32 {
+        match self {
+            NoteSpeed::Constant(value) | NoteSpeed::Dynamic(value) => value,
+        }
+    }
+}
+
+/// Where a player's lane camera watches their arrows from. The receptor
+/// row stays put on screen; the rest of the lane foreshortens around it.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, EnumIter, EnumString, IntoStaticStr,
+)]
+pub enum Perspective {
+    /// Head on: no perspective.
+    None,
+    /// From above: notes rise out of the distance below.
+    Above,
+    /// From below: the lane recedes upward.
+    Below,
 }
 
 /// The synchronization model:

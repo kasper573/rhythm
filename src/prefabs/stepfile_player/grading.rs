@@ -1,34 +1,36 @@
-use super::{
-    HoldOutcome, MineOutcome, PlayInput, PlaySession, PlaySet, PlayTime, RowGraded, Stage,
+use super::note_field::{
+    FadeOut, HOLD_OK_FADE_SECONDS, InField, LaneEffects, NoteField, NoteFieldClock,
 };
+use super::note_skin::ActiveNoteSkins;
+use super::{
+    HoldOutcome, MineOutcome, PlayInput, PlaySession, PlaySet, PlayTime, PressBanked, RowGraded,
+    SessionScope, Stage, StageFailed,
+};
+use crate::core::at;
 use crate::core::config::{FixedGradeDef, GameConfig, Grade, RowOutcome};
 use crate::core::font::game_font;
-use crate::core::note_field::{
-    FadeOut, HOLD_OK_FADE_SECONDS, LaneEffects, NoteField, NoteFieldClock,
-};
-use crate::core::note_skin::ActiveNoteSkins;
-use crate::core::scene_flow::SpawnScoped;
-use crate::core::{OVERLAY_LAYER, at};
-use crate::scenes::{GameScene, scene_accepts_input};
 use bevy::camera::visibility::RenderLayers;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
 const HOLD_POPUP_SECONDS: f32 = 0.6;
+const FAIL_FADE_SECONDS: f32 = 0.8;
 
-/// The row is the unit the game grades, independently per stage. Presses
+/// The row is the unit the engine grades, independently per stage. Presses
 /// bank silently into their arrows; the row resolves into one grade when
 /// its last arrow is banked — decided by that completing press — or
 /// expires into a single Miss if any arrow times out, voiding the banked
-/// presses. Failed stages stop grading entirely.
+/// presses. A stage that drains to zero health fails on the spot and stops
+/// grading, its field fading away, while any surviving stage plays on.
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(
         Update,
         (
-            bank_row_inputs.run_if(scene_accepts_input),
+            bank_row_inputs,
             expire_missed_rows,
             update_holds,
             update_mines,
+            fail_drained_stages,
         )
             .chain()
             .in_set(PlaySet::Grade),
@@ -38,7 +40,7 @@ pub(super) fn plugin(app: &mut App) {
 /// The read-only stage state every grading system judges against; each
 /// stage's geometry and input mapping come from its [`NoteField`]. Presses
 /// come solely from the [`PlayInput`] port an adapter fills, so the same
-/// grading runs off the keyboard or the preview's autoplay with no branch.
+/// grading runs off a keyboard or a scripted autoplay with no branch.
 #[derive(SystemParam)]
 struct GradingContext<'w, 's> {
     play_time: Res<'w, PlayTime>,
@@ -69,12 +71,13 @@ fn bank_row_inputs(
     ctx: GradingContext,
     mut session: ResMut<PlaySession>,
     mut graded: MessageWriter<RowGraded>,
+    mut banked: MessageWriter<PressBanked>,
     mut commands: Commands,
 ) {
     let widest = ctx.config.widest_window();
     let input_time = ctx.play_time.graded;
 
-    let session = &mut *session;
+    let scope = session.scope.clone();
     for stage in &mut session.stages {
         let Ok(field) = ctx.fields.get(stage.field) else {
             continue;
@@ -108,9 +111,7 @@ fn bank_row_inputs(
             let Some(index) = candidate else { continue };
 
             let error = stage.rows[index].time - input_time;
-            if session.autosync.enabled {
-                session.autosync.samples.push(error);
-            }
+            banked.write(PressBanked { error });
             let arrow = stage.rows[index]
                 .arrows
                 .iter_mut()
@@ -123,7 +124,15 @@ fn bank_row_inputs(
             }
 
             if stage.rows[index].complete() {
-                resolve_row(stage, field, &ctx, index, &mut graded, &mut commands);
+                resolve_row(
+                    stage,
+                    field,
+                    &ctx,
+                    index,
+                    &mut graded,
+                    &mut commands,
+                    &scope,
+                );
             }
         }
     }
@@ -139,6 +148,7 @@ fn resolve_row(
     index: usize,
     graded: &mut MessageWriter<RowGraded>,
     commands: &mut Commands,
+    scope: &SessionScope,
 ) {
     let error = stage.rows[index]
         .arrows
@@ -166,10 +176,7 @@ fn resolve_row(
     };
     for arrow in &stage.rows[index].arrows {
         let flash = effects.arrow_flash(arrow.column, ctx.clock.target_y, color, bright);
-        effects
-            .commands
-            .entity(flash)
-            .insert(DespawnOnExit(GameScene::FilePlayer));
+        scope(&mut effects.commands.entity(flash));
         if arrow.hold.is_none() {
             effects.commands.entity(arrow.entity).despawn();
         }
@@ -194,6 +201,7 @@ fn expire_missed_rows(
         ..
     } = &ctx;
     let expire_before = ctx.play_time.graded - config.widest_window();
+    let scope = session.scope.clone();
     for stage in &mut session.stages {
         let Ok(field) = fields.get(stage.field) else {
             continue;
@@ -209,22 +217,29 @@ fn expire_missed_rows(
             }
             if row.outcome.is_none() {
                 apply_outcome(stage, config, cursor, RowOutcome::Miss, &mut graded);
-                let Stage { rows, health, .. } = stage;
+                let Stage {
+                    rows,
+                    health,
+                    max_health,
+                    popup_layer,
+                    ..
+                } = stage;
+                let mut popups = HoldPopups {
+                    commands: &mut commands,
+                    config,
+                    field,
+                    target_y: clock.target_y,
+                    popup_layer: *popup_layer,
+                    scope: &scope,
+                };
                 for arrow in &mut rows[cursor].arrows {
                     let Some(hold) = &mut arrow.hold else {
                         continue;
                     };
                     if arrow.error.is_none() {
                         hold.result = Some(HoldOutcome::Ng);
-                        apply_hold_health(health, config, HoldOutcome::Ng);
-                        spawn_hold_popup(
-                            &mut commands,
-                            config,
-                            field,
-                            arrow.column,
-                            clock.target_y,
-                            HoldOutcome::Ng,
-                        );
+                        apply_hold_health(health, *max_health, config, HoldOutcome::Ng);
+                        popups.spawn(arrow.column, HoldOutcome::Ng);
                     }
                 }
             }
@@ -251,6 +266,7 @@ fn update_holds(
     } = &ctx;
     let now = ctx.play_time.graded;
     let delta = time.delta_secs();
+    let scope = session.scope.clone();
     for stage in &mut session.stages {
         let Ok(field) = fields.get(stage.field) else {
             continue;
@@ -258,7 +274,21 @@ fn update_holds(
         if stage.failed {
             continue;
         }
-        let Stage { rows, health, .. } = stage;
+        let Stage {
+            rows,
+            health,
+            max_health,
+            popup_layer,
+            ..
+        } = stage;
+        let mut popups = HoldPopups {
+            commands: &mut commands,
+            config,
+            field,
+            target_y: clock.target_y,
+            popup_layer: *popup_layer,
+            scope: &scope,
+        };
         for arrow in rows.iter_mut().flat_map(|row| row.arrows.iter_mut()) {
             let Some(hold) = &mut arrow.hold else {
                 continue;
@@ -284,29 +314,16 @@ fn update_holds(
 
             if now.0 >= hold.end.0 && hold.life > 0.0 {
                 hold.result = Some(HoldOutcome::Ok);
-                apply_hold_health(health, config, HoldOutcome::Ok);
-                commands
+                apply_hold_health(health, *max_health, config, HoldOutcome::Ok);
+                popups
+                    .commands
                     .entity(arrow.entity)
                     .insert(FadeOut::over(HOLD_OK_FADE_SECONDS));
-                spawn_hold_popup(
-                    &mut commands,
-                    config,
-                    field,
-                    arrow.column,
-                    clock.target_y,
-                    HoldOutcome::Ok,
-                );
+                popups.spawn(arrow.column, HoldOutcome::Ok);
             } else if hold.life <= 0.0 {
                 hold.result = Some(HoldOutcome::Ng);
-                apply_hold_health(health, config, HoldOutcome::Ng);
-                spawn_hold_popup(
-                    &mut commands,
-                    config,
-                    field,
-                    arrow.column,
-                    clock.target_y,
-                    HoldOutcome::Ng,
-                );
+                apply_hold_health(health, *max_health, config, HoldOutcome::Ng);
+                popups.spawn(arrow.column, HoldOutcome::Ng);
             }
         }
     }
@@ -323,6 +340,7 @@ fn update_mines(ctx: GradingContext, mut session: ResMut<PlaySession>, mut comma
         ..
     } = &ctx;
     let now = ctx.play_time.graded;
+    let scope = session.scope.clone();
     for stage in &mut session.stages {
         let Ok(field) = fields.get(stage.field) else {
             continue;
@@ -347,9 +365,36 @@ fn update_mines(ctx: GradingContext, mut session: ResMut<PlaySession>, mut comma
                 layout: field,
             };
             let explosion = effects.mine_explosion(mine.column, clock.target_y);
-            commands
-                .entity(explosion)
-                .insert(DespawnOnExit(GameScene::FilePlayer));
+            scope(&mut commands.entity(explosion));
+        }
+    }
+}
+
+/// Zero health fails that stage on the spot: its remaining notes fade out
+/// and its grading stops, while any surviving stage plays on. Announced
+/// through [`StageFailed`] so the session's owner can react.
+fn fail_drained_stages(
+    mut session: ResMut<PlaySession>,
+    staged: Query<(Entity, &InField)>,
+    mut failures: MessageWriter<StageFailed>,
+    mut commands: Commands,
+) {
+    for stage in &mut session.stages {
+        if stage.failed || stage.health > 0 {
+            continue;
+        }
+        stage.failed = true;
+        failures.write(StageFailed {
+            player: stage.player,
+        });
+        // The whole side shuts down: notes, mines, and receptors shrink
+        // and fade away.
+        for (entity, in_field) in &staged {
+            if in_field.0 == stage.field {
+                commands
+                    .entity(entity)
+                    .insert(FadeOut::growing(FAIL_FADE_SECONDS, -1.0));
+            }
         }
     }
 }
@@ -367,7 +412,7 @@ fn apply_outcome(
     stage.health = stage
         .health
         .saturating_add_signed(config.health_offset(grade))
-        .min(config.player_max_health);
+        .min(stage.max_health);
     if config.breaks_combo(grade) {
         stage.combo = 0;
     } else {
@@ -390,35 +435,40 @@ fn hold_def(config: &GameConfig, outcome: HoldOutcome) -> &FixedGradeDef {
 }
 
 /// Holds pay their fixed grade's health offset the moment they resolve.
-fn apply_hold_health(health: &mut u32, config: &GameConfig, outcome: HoldOutcome) {
+fn apply_hold_health(health: &mut u32, max_health: u32, config: &GameConfig, outcome: HoldOutcome) {
     *health = health
         .saturating_add_signed(hold_def(config, outcome).health_offset)
-        .min(config.player_max_health);
+        .min(max_health);
 }
 
-fn spawn_hold_popup(
-    commands: &mut Commands,
-    config: &GameConfig,
-    field: &NoteField,
-    column: usize,
+/// Spawns a stage's Ok/NG popups above its receptors, on the stage's
+/// popup layer and scoped to its session.
+struct HoldPopups<'a, 'w, 's> {
+    commands: &'a mut Commands<'w, 's>,
+    config: &'a GameConfig,
+    field: &'a NoteField,
     target_y: f32,
-    outcome: HoldOutcome,
-) {
-    let def = hold_def(config, outcome);
-    let label = def.name.clone();
-    let color = def.color;
-    commands
-        .spawn_scoped(
-            GameScene::FilePlayer,
-            bsn! {
-                game_font(30.0)
-                Text2d({label})
-                TextColor({color})
-                at(field.column_x(column), target_y - 54.0, 21.0)
-            },
-        )
-        .insert((
-            FadeOut::growing(HOLD_POPUP_SECONDS, 0.25),
-            RenderLayers::layer(OVERLAY_LAYER),
-        ));
+    popup_layer: Option<usize>,
+    scope: &'a SessionScope,
+}
+
+impl HoldPopups<'_, '_, '_> {
+    fn spawn(&mut self, column: usize, outcome: HoldOutcome) {
+        let def = hold_def(self.config, outcome);
+        let label = def.name.clone();
+        let color = def.color;
+        let x = self.field.column_x(column);
+        let y = self.target_y - 54.0;
+        let mut popup = self.commands.spawn_scene(bsn! {
+            game_font(30.0)
+            Text2d({label})
+            TextColor({color})
+            at(x, y, 21.0)
+        });
+        popup.insert(FadeOut::growing(HOLD_POPUP_SECONDS, 0.25));
+        if let Some(layer) = self.popup_layer {
+            popup.insert(RenderLayers::layer(layer));
+        }
+        (self.scope)(&mut popup);
+    }
 }

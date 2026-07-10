@@ -1,7 +1,7 @@
 use crate::core::font::game_font;
 use crate::core::input::{Actions, GameAction, NavPulse};
 use crate::core::player::PlayerId;
-use crate::core::scene_flow::{SceneFade, SpawnScoped};
+use crate::core::scene_flow::SceneFade;
 use crate::core::sfx::{PlaySfx, Sfx};
 use bevy::prelude::*;
 use bevy::state::state::FreelyMutableState;
@@ -10,6 +10,66 @@ use std::marker::PhantomData;
 pub const TITLE_COLOR: Color = Color::srgb(0.95, 0.85, 0.4);
 pub const ACTIVE_COLOR: Color = Color::WHITE;
 pub const INACTIVE_COLOR: Color = Color::srgb(0.45, 0.45, 0.55);
+
+pub struct MenuPrefabOptions {
+    pub title: String,
+    pub items: Vec<String>,
+}
+
+/// A full-screen titled menu. The caller owns the spawn (and thus scope and
+/// teardown); [`MenuPlugin`] drives every mounted menu: ¤Next¤/¤Previous¤
+/// pulses move the highlight and P1's ¤Select¤ fires [`MenuSelected`] with
+/// the active item's index. Custom layouts get the same driving by carrying
+/// [`Menu`] and [`MenuItem`] themselves.
+pub fn menu_prefab(opt: MenuPrefabOptions) -> impl Scene {
+    let title = opt.title;
+    let len = opt.items.len();
+    let entries: Vec<_> = opt
+        .items
+        .into_iter()
+        .enumerate()
+        .map(|(index, label)| {
+            let color = if index == 0 {
+                ACTIVE_COLOR
+            } else {
+                INACTIVE_COLOR
+            };
+            bsn! {
+                MenuItem(index)
+                game_font(34.0)
+                Text({label})
+                TextColor({color})
+            }
+        })
+        .collect();
+    bsn! {
+        Node {
+            width: percent(100),
+            height: percent(100),
+            flex_direction: FlexDirection::Column,
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            row_gap: px(16),
+        }
+        Children [
+            (
+                game_font(52.0)
+                Text({title})
+                TextColor({TITLE_COLOR})
+                Node { margin: {UiRect::bottom(Val::Px(32.0))} }
+            ),
+            (
+                Menu { active: 0, len: len }
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    row_gap: px(12),
+                }
+                Children [ {entries} ]
+            ),
+        ]
+    }
+}
 
 #[derive(Component, Clone, FromTemplate)]
 pub struct Menu {
@@ -25,61 +85,10 @@ pub struct MenuSelected {
     pub index: usize,
 }
 
+/// While set, menus ignore input — for owners that capture the keyboard
+/// (the keymap scene's rebind prompt).
 #[derive(Resource, Default)]
 pub struct MenuInputLock(pub bool);
-
-pub fn spawn_menu<S: States>(commands: &mut Commands, scene: S, title: &str, items: &[&str]) {
-    let title = title.to_string();
-    let len = items.len();
-    let entries: Vec<_> = items
-        .iter()
-        .enumerate()
-        .map(|(index, item)| {
-            let label = item.to_string();
-            let color = if index == 0 {
-                ACTIVE_COLOR
-            } else {
-                INACTIVE_COLOR
-            };
-            bsn! {
-                MenuItem(index)
-                game_font(34.0)
-                Text({label})
-                TextColor({color})
-            }
-        })
-        .collect();
-    commands.spawn_scoped(
-        scene,
-        bsn! {
-            Node {
-                width: percent(100),
-                height: percent(100),
-                flex_direction: FlexDirection::Column,
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                row_gap: px(16),
-            }
-            Children [
-                (
-                    game_font(52.0)
-                    Text({title})
-                    TextColor({TITLE_COLOR})
-                    Node { margin: {UiRect::bottom(Val::Px(32.0))} }
-                ),
-                (
-                    Menu { active: 0, len: len }
-                    Node {
-                        flex_direction: FlexDirection::Column,
-                        align_items: AlignItems::Center,
-                        row_gap: px(12),
-                    }
-                    Children [ {entries} ]
-                ),
-            ]
-        },
-    );
-}
 
 /// Menus pause while the scene fade for `S` is running, so the plugin is
 /// generic over the app's scene state.

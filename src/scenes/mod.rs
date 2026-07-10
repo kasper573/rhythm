@@ -1,21 +1,19 @@
 pub mod audio_settings;
-pub mod file_player;
-pub mod file_select;
 pub mod keymap;
 pub mod main_menu;
 pub mod mode_select;
+pub mod play;
 pub mod score;
 pub mod settings_menu;
+pub mod wheel;
 
-use crate::core::assets::asset_server_path;
-use crate::core::library::{StepfileLibrary, is_video_file};
-use crate::core::menu::MenuPlugin;
-use crate::core::scene_flow::{SceneFlowPlugin, SpawnScoped};
+use crate::core::library::StepfileLibrary;
+use crate::core::scene_flow::SceneFlowPlugin;
+use crate::core::stepfile::MusicPlayer;
 use crate::core::units::Seconds;
-use crate::core::video::VideoStream;
-use crate::core::{SCREEN_SIZE, ViewportCover, at};
+use crate::prefabs::media_cover::{MediaCoverPrefabOptions, MediaPace, media_cover_prefab};
+use crate::prefabs::menu::MenuPlugin;
 use bevy::prelude::*;
-use bevy::sprite::{SpriteImageMode, SpriteScalingMode};
 
 #[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum GameScene {
@@ -25,8 +23,8 @@ pub enum GameScene {
     SettingsMenu,
     Keymap,
     AudioSettings,
-    FileSelect,
-    FilePlayer,
+    Wheel,
+    Play,
     Score,
 }
 
@@ -35,9 +33,6 @@ pub type SceneFade = crate::core::scene_flow::SceneFade<GameScene>;
 /// The default BGM's background — its looping video, dimmed — behind the
 /// entered scene's UI. Registered on the `OnEnter` of scenes that want
 /// it, torn down with the scene; the scene fade masks the remount.
-#[derive(Component, Default, Clone)]
-struct DefaultSceneBackground;
-
 fn spawn_default_background(
     mut commands: Commands,
     library: Res<StepfileLibrary>,
@@ -49,63 +44,28 @@ fn spawn_default_background(
     let Some(path) = library.default_bgm.background_path() else {
         return;
     };
-    let (image, stream) = if is_video_file(&path.to_string_lossy()) {
-        match VideoStream::open(&path, Seconds(time.elapsed_secs_f64()), true, &mut images) {
-            Ok(stream) => (stream.image.clone(), Some(stream)),
-            Err(error) => {
-                warn!(
-                    "scene background unavailable for {}: {error}",
-                    path.display()
-                );
-                return;
-            }
-        }
-    } else {
-        let Some(asset) = asset_server_path(&path) else {
-            return;
-        };
-        (asset_server.load(asset), None)
-    };
-    let mut background = commands.spawn_scoped(
-        *scene.get(),
-        bsn! {
-            DefaultSceneBackground
-            ViewportCover
-            Sprite {
-                image: {image},
-                // Dimmed so the scene's text stays readable in front.
-                color: Color::srgb(0.5, 0.5, 0.5),
-                custom_size: {Some(SCREEN_SIZE)},
-                image_mode: {SpriteImageMode::Scale(SpriteScalingMode::FillCenter)},
-            }
-            at(0.0, 0.0, -10.0)
+    let cover = media_cover_prefab(
+        MediaCoverPrefabOptions {
+            path,
+            // Dimmed so the scene's text stays readable in front.
+            color: Color::srgb(0.5, 0.5, 0.5),
+            z: -10.0,
+            start: Seconds(time.elapsed_secs_f64()),
+            looping: true,
+            pace: MediaPace::Wall,
         },
+        &mut commands,
+        &asset_server,
+        &mut images,
     );
-    // The stream owns a live decoder, so it cannot be a cloneable
-    // template value.
-    if let Some(stream) = stream {
-        background.insert(stream);
-    }
-}
-
-/// Keeps the scene backgrounds' videos decoding on wall time.
-fn stream_default_backgrounds(
-    time: Res<Time>,
-    mut images: ResMut<Assets<Image>>,
-    mut videos: Query<&mut VideoStream, With<DefaultSceneBackground>>,
-) {
-    let now = Seconds(time.elapsed_secs_f64());
-    for mut video in &mut videos {
-        video.update(now, &mut images);
+    if let Some(cover) = cover {
+        commands.entity(cover).insert(DespawnOnExit(*scene.get()));
     }
 }
 
 /// Scenes without music of their own start the default BGM on enter; the
 /// player keeps it running across such scenes uninterrupted.
-fn play_default_bgm(
-    library: Res<crate::core::library::StepfileLibrary>,
-    mut music: ResMut<crate::core::stepfile::MusicPlayer>,
-) {
+fn play_default_bgm(library: Res<StepfileLibrary>, mut music: ResMut<MusicPlayer>) {
     music.play(library.default_bgm.bgm());
 }
 
@@ -117,18 +77,17 @@ pub(crate) struct ScenesPlugin;
 
 impl Plugin for ScenesPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, stream_default_backgrounds)
-            .add_plugins((
-                SceneFlowPlugin::<GameScene>::default(),
-                MenuPlugin::<GameScene>::default(),
-                main_menu::MainMenuPlugin,
-                mode_select::ModeSelectPlugin,
-                settings_menu::SettingsMenuPlugin,
-                keymap::KeymapScenePlugin,
-                audio_settings::AudioSettingsPlugin,
-                file_select::FileSelectPlugin,
-                file_player::FilePlayerPlugin,
-                score::ScoreScenePlugin,
-            ));
+        app.add_plugins((
+            SceneFlowPlugin::<GameScene>::default(),
+            MenuPlugin::<GameScene>::default(),
+            main_menu::MainMenuPlugin,
+            mode_select::ModeSelectPlugin,
+            settings_menu::SettingsMenuPlugin,
+            keymap::KeymapScenePlugin,
+            audio_settings::AudioSettingsPlugin,
+            wheel::WheelScenePlugin,
+            play::PlayScenePlugin,
+            score::ScoreScenePlugin,
+        ));
     }
 }

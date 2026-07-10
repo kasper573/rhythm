@@ -14,20 +14,21 @@ use rhythm::core::player::PlayerId;
 use rhythm::core::stepfile::{Difficulty, StepsType};
 use rhythm::core::units::Seconds;
 use rhythm::native::NativePlatform;
-use rhythm::scenes::file_player::{PlayerResult, ScoreResults};
-use rhythm::scenes::file_select::{PlayerChart, SelectedStepfile};
+use rhythm::prefabs::stepfile_player::StageResults;
+use rhythm::scenes::play::{PlayerResult, ScoreResults};
+use rhythm::scenes::wheel::{PlayerChart, SelectedStepfile};
 use rhythm::scenes::{GameScene, SceneFade};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// The stepfile the file player and score scenarios run on.
+/// The stepfile the play and score scenarios run on.
 const BENCH_GROUP: &str = "EXTREME";
 const BENCH_TITLE: &str = "Dance Dance Revolution";
 
 const BOOT_SECONDS: f64 = 1.5;
 const SETTLE_SECONDS: f64 = 2.0;
-/// The file player needs its lead-in to pass so music and arrows flow.
+/// The play scene needs its lead-in to pass so music and arrows flow.
 const PLAYER_SETTLE_SECONDS: f64 = 4.5;
 const MEASURE_SECONDS: f64 = 5.0;
 const TAP_INTERVAL_SECONDS: f64 = 0.5;
@@ -48,14 +49,14 @@ struct Cli {
 enum Scenario {
     /// Idle on the main menu.
     MainMenu,
-    /// Idle on the file select wheel.
-    FileSelect,
+    /// Idle on the wheel.
+    Wheel,
     /// Tapping right twice per second on the wheel.
-    FileSelectTap,
+    WheelTap,
     /// Holding right, scrolling the wheel at full speed.
-    FileSelectHold,
+    WheelHold,
     /// Playing a stepfile, hands off.
-    FilePlayer,
+    Play,
     /// Idle on the score screen.
     Score,
 }
@@ -72,17 +73,15 @@ impl Scenario {
     fn target_scene(self) -> GameScene {
         match self {
             Scenario::MainMenu => GameScene::MainMenu,
-            Scenario::FileSelect | Scenario::FileSelectTap | Scenario::FileSelectHold => {
-                GameScene::FileSelect
-            }
-            Scenario::FilePlayer => GameScene::FilePlayer,
+            Scenario::Wheel | Scenario::WheelTap | Scenario::WheelHold => GameScene::Wheel,
+            Scenario::Play => GameScene::Play,
             Scenario::Score => GameScene::Score,
         }
     }
 
     fn settle_seconds(self) -> f64 {
         match self {
-            Scenario::FilePlayer => PLAYER_SETTLE_SECONDS,
+            Scenario::Play => PLAYER_SETTLE_SECONDS,
             _ => SETTLE_SECONDS,
         }
     }
@@ -240,7 +239,7 @@ fn setup_scenario(
         return;
     }
     match target {
-        GameScene::FilePlayer => {
+        GameScene::Play => {
             commands.insert_resource(bench_selection(library));
         }
         GameScene::Score => {
@@ -262,8 +261,8 @@ fn synthesize_input(
         return;
     }
     match bench.scenario() {
-        Scenario::FileSelectHold => keys.press(KeyCode::ArrowRight),
-        Scenario::FileSelectTap => {
+        Scenario::WheelHold => keys.press(KeyCode::ArrowRight),
+        Scenario::WheelTap => {
             bench.tap.since += time.delta_secs_f64();
             if bench.tap.down {
                 keys.release(KeyCode::ArrowRight);
@@ -369,17 +368,19 @@ fn bench_score(library: &StepfileLibrary) -> ScoreResults {
         id,
         title: entry.display_title(),
         players: vec![PlayerResult {
-            player: PlayerId::P1,
-            failed: false,
             chart: chart_index,
-            outcomes,
-            rows_total,
-            max_combo: rows_total / 3,
-            holds_ok: stats.holds as u32,
-            holds_ng: 0,
-            holds_total: stats.holds as u32,
-            mines_exploded: 0,
-            mines_total: stats.mines as u32,
+            stage: StageResults {
+                player: PlayerId::P1,
+                failed: false,
+                outcomes,
+                rows_total,
+                max_combo: rows_total / 3,
+                holds_ok: stats.holds as u32,
+                holds_ng: 0,
+                holds_total: stats.holds as u32,
+                mines_exploded: 0,
+                mines_total: stats.mines as u32,
+            },
         }],
     }
 }

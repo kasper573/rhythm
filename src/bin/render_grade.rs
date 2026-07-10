@@ -14,7 +14,7 @@ use bevy::render::RenderPlugin;
 use bevy::render::render_resource::{PollType, TextureFormat, TextureUsages};
 use bevy::render::renderer::RenderDevice;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
-use bevy::sprite_render::{Material2dPlugin, MeshMaterial2d};
+use bevy::sprite_render::MeshMaterial2d;
 use bevy::time::TimeUpdateStrategy;
 use bevy::window::ExitCondition;
 use bevy::winit::WinitPlugin;
@@ -22,7 +22,9 @@ use rhythm::core::CLEAR_COLOR;
 use rhythm::core::config::{GameConfig, RowOutcome};
 use rhythm::core::font::game_font;
 use rhythm::core::units::Seconds;
-use rhythm::scenes::file_player::grade_text::{self, GradeTextMaterial, spawn_rig};
+use rhythm::prefabs::stepfile_player::grade_text::{
+    self, GradeTextMaterial, GradeTextPlugin, spawn_rig,
+};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -64,7 +66,7 @@ fn main() {
             })
             .disable::<WinitPlugin>(),
     )
-    .add_plugins(Material2dPlugin::<GradeTextMaterial>::default())
+    .add_plugins(GradeTextPlugin)
     .insert_resource(ClearColor(CLEAR_COLOR))
     .insert_resource(GameConfig::load())
     .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(

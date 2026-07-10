@@ -1,11 +1,13 @@
 use crate::core::config::GameConfig;
 use crate::core::font::game_font;
 use crate::core::input::{Actions, GameAction};
-use crate::core::menu::{INACTIVE_COLOR, Menu, MenuInputLock, MenuItem, MenuSelected, TITLE_COLOR};
 use crate::core::player::PlayerId;
 use crate::core::scene_flow::SpawnScoped;
 use crate::core::settings::MachineSettings;
 use crate::core::sfx::{PlaySfx, Sfx};
+use crate::prefabs::menu::{
+    INACTIVE_COLOR, Menu, MenuInputLock, MenuItem, MenuSelected, TITLE_COLOR,
+};
 use crate::scenes::{
     GameScene, SceneFade, play_default_bgm, scene_accepts_input, spawn_default_background,
 };

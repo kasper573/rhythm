@@ -1,23 +1,18 @@
 use super::{WHEEL_EASE_RATE, Wheel, WheelEntry};
-use crate::core::assets::asset_server_path;
-use crate::core::at;
-use crate::core::library::{StepfileLibrary, is_video_file};
-use crate::core::scene_flow::SpawnScoped;
+use crate::core::library::StepfileLibrary;
 use crate::core::units::Seconds;
-use crate::core::video::VideoStream;
-use crate::core::{SCREEN_SIZE, ViewportCover};
+use crate::prefabs::media_cover::{MediaCoverPrefabOptions, MediaPace, media_cover_prefab};
 use crate::scenes::GameScene;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
-use bevy::sprite::{SpriteImageMode, SpriteScalingMode};
 use std::path::PathBuf;
 
 /// One layer of the scene background wash: the active row's background —
-/// image or looping video — over the green backdrop. Changing rows
-/// cross-fades: the incoming layer waits invisible until its image has
-/// actually loaded, then retires every older layer while it eases in — so
-/// the old background always fades under a renderable new one, never
-/// against a gap that a late-loading image would pop into.
+/// image or looping video — over the green backdrop, as a media cover.
+/// Changing rows cross-fades: the incoming layer waits invisible until its
+/// image has actually loaded, then retires every older layer while it
+/// eases in — so the old background always fades under a renderable new
+/// one, never against a gap that a late-loading image would pop into.
 #[derive(Component)]
 pub(super) struct SceneBackground {
     /// The opacity this layer eases toward; reaching zero retires it.
@@ -70,68 +65,32 @@ pub(super) fn refresh_scene_background(
     if already_shown {
         return;
     }
-    // The incoming layer: a looping video stream, or a loaded image.
-    let (image, stream) = if is_video_file(&path.to_string_lossy()) {
-        match VideoStream::open(
-            &path,
-            Seconds(assets.time.elapsed_secs_f64()),
-            true,
-            &mut assets.images,
-        ) {
-            Ok(stream) => (stream.image.clone(), Some(stream)),
-            Err(error) => {
-                warn!(
-                    "video background unavailable for {}: {error}",
-                    path.display()
-                );
-                return;
-            }
-        }
-    } else {
-        let Some(asset) = asset_server_path(&path) else {
-            return;
-        };
-        (assets.asset_server.load(asset), None)
-    };
     // Newer layers draw above the ones fading out; the small cycling bump
     // stays well below everything else in the scene.
-    *layer_count += 1;
-    let z = 0.5 + (*layer_count % 100) as f32 * 0.002;
-    let mut layer = commands.spawn_scoped(
-        GameScene::FileSelect,
-        bsn! {
-            ViewportCover
-            Sprite {
-                image: {image},
-                color: Color::srgba(1.0, 1.0, 1.0, 0.0),
-                custom_size: {Some(SCREEN_SIZE)},
-                image_mode: {SpriteImageMode::Scale(SpriteScalingMode::FillCenter)},
-            }
-            at(0.0, 0.0, z)
+    let z = 0.5 + ((*layer_count + 1) % 100) as f32 * 0.002;
+    let cover = media_cover_prefab(
+        MediaCoverPrefabOptions {
+            path: path.clone(),
+            color: Color::srgba(1.0, 1.0, 1.0, 0.0),
+            z,
+            start: Seconds(assets.time.elapsed_secs_f64()),
+            looping: true,
+            pace: MediaPace::Wall,
         },
+        &mut commands,
+        &assets.asset_server,
+        &mut assets.images,
     );
-    layer.insert(SceneBackground {
-        target: BACKGROUND_OPACITY,
-        sequence: *layer_count,
-        source: path,
-    });
-    // The stream owns a live decoder process, so it cannot be a cloneable
-    // template value.
-    if let Some(stream) = stream {
-        layer.insert(stream);
-    }
-}
-
-/// Keeps wash video layers decoding on wall time.
-pub(super) fn stream_wash_videos(
-    time: Res<Time>,
-    mut images: ResMut<Assets<Image>>,
-    mut videos: Query<&mut VideoStream, With<SceneBackground>>,
-) {
-    let now = Seconds(time.elapsed_secs_f64());
-    for mut video in &mut videos {
-        video.update(now, &mut images);
-    }
+    let Some(cover) = cover else { return };
+    *layer_count += 1;
+    commands.entity(cover).insert((
+        SceneBackground {
+            target: BACKGROUND_OPACITY,
+            sequence: *layer_count,
+            source: path,
+        },
+        DespawnOnExit(GameScene::Wheel),
+    ));
 }
 
 /// Eases every background layer toward its target opacity at the wheel's
