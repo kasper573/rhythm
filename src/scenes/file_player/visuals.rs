@@ -1,3 +1,4 @@
+use super::grade_text::{COMBO_GAP, grade_y};
 use super::{ComboText, ForPlayer, HoldOutcome, OffsetOsd, PlaySession, PlaySet, RowGraded};
 use crate::core::config::GameConfig;
 use crate::core::health_vial::HealthVial;
@@ -6,7 +7,7 @@ use crate::core::note_field::{
     HoldVisual, HoldVisualState, InColumn, InField, NoteField, NoteFieldClock, Receptor,
     visible_world_size,
 };
-use crate::core::settings::MachineSettings;
+use crate::core::settings::{MachineSettings, PlayerSettings};
 use crate::core::units::Seconds;
 use bevy::prelude::*;
 
@@ -110,6 +111,9 @@ const COMBO_BOUNCE: Seconds = Seconds(0.18);
 
 fn update_combo_texts(
     time: Res<Time>,
+    config: Res<GameConfig>,
+    settings: Res<PlayerSettings>,
+    windows: Query<&Window>,
     mut graded: MessageReader<RowGraded>,
     mut labels: Query<(
         &ForPlayer,
@@ -136,11 +140,24 @@ fn update_combo_texts(
             }
         }
     }
-    for (_, mut combo, _, mut transform, _) in &mut labels {
+    let visible_height = windows
+        .single()
+        .map(|window| visible_world_size(window).y)
+        .ok();
+    for (owner, mut combo, _, mut transform, _) in &mut labels {
         combo.bounce = (combo.bounce - Seconds(time.delta_secs_f64())).max(Seconds::ZERO);
         let scale = 1.0 + 0.22 * (combo.bounce / COMBO_BOUNCE) as f32;
         if transform.scale.x != scale {
             transform.scale = Vec3::splat(scale);
+        }
+        // Tracks under the grade, whose height is the player's grade-position
+        // option; headless renderers keep the spawn position.
+        if let Some(height) = visible_height {
+            let padding = config.stage.screen_edge_padding;
+            let y = grade_y(height, padding, settings[owner.0].grade_position) - COMBO_GAP;
+            if transform.translation.y != y {
+                transform.translation.y = y;
+            }
         }
     }
 }

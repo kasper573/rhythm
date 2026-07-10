@@ -1,6 +1,6 @@
 mod background;
 mod clock;
-mod grade_text;
+pub mod grade_text;
 mod grading;
 mod tuning;
 mod visuals;
@@ -21,14 +21,15 @@ use crate::core::note_skin::{ActiveNoteSkin, ActiveNoteSkins};
 use crate::core::platform::SoundOptions;
 use crate::core::player::PlayerId;
 use crate::core::scene_flow::SpawnScoped;
-use crate::core::settings::{MachineSettings, PlayerSettings, TimingSettings};
+use crate::core::settings::{GradeLayer, MachineSettings, PlayerSettings, TimingSettings};
 use crate::core::sfx::{PlaySfx, Sfx};
 use crate::core::stepfile::{Chart, MusicPlayer, StepfileClock, StepfileTiming};
 use crate::core::tick_track::render_tick_track;
 use crate::core::units::Seconds;
-use crate::core::{SCREEN_SIZE, at};
+use crate::core::{OVERLAY_LAYER, SCREEN_SIZE, at};
 use crate::scenes::file_select::{FileSelectTarget, SelectedStepfile};
 use crate::scenes::{GameScene, SceneFade, scene_accepts_input};
+use bevy::camera::visibility::RenderLayers;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
@@ -364,14 +365,15 @@ fn enter(
         commands
             .entity(vial)
             .insert((ForPlayer(player), DespawnOnExit(GameScene::FilePlayer)));
-        spawn_stage_hud(&mut commands, player, origin_x);
+        let grade_layer = player_settings[player].grade_layer;
+        spawn_stage_hud(&mut commands, player, origin_x, grade_layer);
         grade_text::spawn(
             &mut commands,
             &assets.asset_server,
             &mut assets.images,
             player,
             origin_x,
-            player_settings[player].grade_layer,
+            grade_layer,
         );
 
         let (rows, mines, stage_last) = spawn_chart(
@@ -691,21 +693,34 @@ fn spawn_audio_tracks(
     }
 }
 
-/// The per-stage combo readout, centered over the stage's field. The grade
-/// text is a shader rig spawned separately by [`grade_text::spawn`].
-fn spawn_stage_hud(commands: &mut Commands, player: PlayerId, origin_x: f32) {
-    commands.spawn_scoped(
-        GameScene::FilePlayer,
-        bsn! {
-            ComboText
-            ForPlayer({player})
-            game_font(44.0)
-            Text2d("")
-            TextColor(Color::WHITE)
-            at(origin_x, -60.0, 5.0)
-            Visibility::Hidden
-        },
-    );
+/// The per-stage combo readout, tracked under the grade text (see
+/// [`visuals::update_combo_texts`]) and sharing its behind/in-front layer.
+/// The grade text itself is a shader rig spawned by [`grade_text::spawn`].
+fn spawn_stage_hud(
+    commands: &mut Commands,
+    player: PlayerId,
+    origin_x: f32,
+    grade_layer: GradeLayer,
+) {
+    let combo = commands
+        .spawn_scoped(
+            GameScene::FilePlayer,
+            bsn! {
+                ComboText
+                ForPlayer({player})
+                game_font(44.0)
+                Text2d("")
+                TextColor(Color::WHITE)
+                at(origin_x, 0.0, 5.0)
+                Visibility::Hidden
+            },
+        )
+        .id();
+    if grade_layer == GradeLayer::InFront {
+        commands
+            .entity(combo)
+            .insert(RenderLayers::layer(OVERLAY_LAYER));
+    }
 }
 
 /// The machine-wide readouts: the timing-offset OSD and AutoSync status.
