@@ -1,22 +1,24 @@
 use crate::core::config::GameConfig;
 use crate::core::font::game_font;
-use crate::core::input::{Actions, GameAction};
-use crate::core::player::PlayerId;
+use crate::core::input::GameAction;
 use crate::core::scene_flow::SpawnScoped;
 use crate::core::settings::MachineSettings;
 use crate::core::sfx::{PlaySfx, Sfx};
-use crate::prefabs::menu::{
-    INACTIVE_COLOR, Menu, MenuInputLock, MenuItem, MenuSelected, TITLE_COLOR,
-};
+use crate::core::units::Seconds;
+use crate::prefabs::menu::{INACTIVE_COLOR, Menu, MenuItem, OwnerDrivenMenu, TITLE_COLOR};
 use crate::scenes::{
     GameScene, SceneFade, play_default_bgm, scene_accepts_input, spawn_default_background,
 };
 use bevy::ecs::query::QueryFilter;
+use bevy::ecs::system::SystemParam;
 use bevy::input::ButtonState;
 use bevy::input::keyboard::KeyboardInput;
 use bevy::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
 
+/// resolve through the config's DEFAULT keymap, never the live one it edits:
+/// however broken the stored bindings get, this scene stays operable to
+/// repair them.
 pub(super) struct KeymapScenePlugin;
 
 impl Plugin for KeymapScenePlugin {
@@ -26,13 +28,16 @@ impl Plugin for KeymapScenePlugin {
             (enter, play_default_bgm, spawn_default_background),
         )
         .add_systems(OnExit(GameScene::Keymap), exit)
+        // The scene's own systems act only while no prompt is open and run
+        // before the capture, so the key that closes a prompt can never
+        // double as navigation or scene exit in the same frame.
         .add_systems(
             Update,
             (
-                open_prompt,
+                (navigate_rows, open_prompt, cancel_gesture)
+                    .chain()
+                    .distributive_run_if(prompt_closed),
                 capture_prompt_key,
-                reset_active_binding,
-                handle_cancel,
                 refresh_rows,
             )
                 .chain()
@@ -41,9 +46,38 @@ impl Plugin for KeymapScenePlugin {
     }
 }
 
+/// The scene's own controls act only between prompts; outside the scene
+/// the resource is gone and they stay off.
+fn prompt_closed(prompt: Option<Res<Prompt>>) -> bool {
+    prompt.is_some_and(|prompt| prompt.action.is_none())
+}
+
+/// The scene's fixed input: raw key state resolved through the config's
+/// default keymap (see [`default_key`]), with [`Actions`](crate::core::input::Actions)'
+/// vocabulary.
+#[derive(SystemParam)]
+struct DefaultKeys<'w> {
+    keys: Res<'w, ButtonInput<KeyCode>>,
+    config: Res<'w, GameConfig>,
+}
+
+impl DefaultKeys<'_> {
+    fn just_pressed(&self, action: GameAction) -> bool {
+        self.keys.just_pressed(default_key(&self.config, action))
+    }
+
+    fn pressed(&self, action: GameAction) -> bool {
+        self.keys.pressed(default_key(&self.config, action))
+    }
+
+    fn just_released(&self, action: GameAction) -> bool {
+        self.keys.just_released(default_key(&self.config, action))
+    }
+}
+
 /// The rebind prompt: which action we are listening for, and whether the
 /// prompt was opened this frame (whose key events must be ignored so the
-/// ¤Select¤ press that opened it doesn't bind itself).
+/// ¤P1Select¤ press that opened it doesn't bind itself).
 #[derive(Resource, Default)]
 struct Prompt {
     action: Option<GameAction>,
@@ -93,6 +127,10 @@ fn enter(mut commands: Commands, settings: Res<MachineSettings>, config: Res<Gam
             }
         })
         .collect();
+    let reset_help = format!(
+        "Hold {:?} to reset selected key to default",
+        default_key(&config, GameAction::P1Cancel)
+    );
     commands.spawn_scoped(
         GameScene::Keymap,
         bsn! {
@@ -113,6 +151,7 @@ fn enter(mut commands: Commands, settings: Res<MachineSettings>, config: Res<Gam
                 ),
                 (
                     Menu { active: 0, len: {GameAction::COUNT} }
+                    OwnerDrivenMenu
                     Node {
                         display: Display::Grid,
                         grid_auto_flow: GridAutoFlow::Column,
@@ -130,34 +169,130 @@ fn enter(mut commands: Commands, settings: Res<MachineSettings>, config: Res<Gam
                     TextColor(Color::srgb(0.4, 0.9, 0.6))
                     Node { margin: {UiRect::top(Val::Px(12.0))} }
                 ),
+                (
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: px(0),
+                        right: px(0),
+                        bottom: px(16),
+                        justify_content: JustifyContent::Center,
+                    }
+                    Children [(
+                        game_font(18.0)
+                        Text({reset_help})
+                        TextColor({INACTIVE_COLOR})
+                    )]
+                ),
             ]
         },
     );
 }
 
-fn exit(mut commands: Commands, mut lock: ResMut<MenuInputLock>) {
+fn exit(mut commands: Commands) {
     commands.remove_resource::<Prompt>();
-    lock.0 = false;
+}
+
+/// The scene's fixed resolution: an action's key in the config's default
+/// keymap, untouched by the live overrides this scene edits.
+fn default_key(config: &GameConfig, action: GameAction) -> KeyCode {
+    config
+        .defaults
+        .keymap
+        .binding(action)
+        .expect("validated: defaults.keymap binds every action")
+}
+
+fn navigate_rows(input: DefaultKeys, mut menus: Query<&mut Menu>, mut sfx: MessageWriter<PlaySfx>) {
+    let step_back = match (
+        input.just_pressed(GameAction::P1Up),
+        input.just_pressed(GameAction::P1Down),
+    ) {
+        (true, false) => true,
+        (false, true) => false,
+        _ => return,
+    };
+    for mut menu in &mut menus {
+        menu.active = if step_back {
+            (menu.active + menu.len - 1) % menu.len
+        } else {
+            (menu.active + 1) % menu.len
+        };
+        sfx.write(PlaySfx(Sfx::Navigate));
+    }
 }
 
 fn open_prompt(
-    mut selected: MessageReader<MenuSelected>,
+    input: DefaultKeys,
+    menus: Query<&Menu>,
     mut prompt: ResMut<Prompt>,
-    mut lock: ResMut<MenuInputLock>,
+    mut sfx: MessageWriter<PlaySfx>,
 ) {
-    for selection in selected.read() {
-        prompt.action = GameAction::iter().nth(selection.index);
+    if !input.just_pressed(GameAction::P1Select) {
+        return;
+    }
+    for menu in &menus {
+        prompt.action = GameAction::iter().nth(menu.active);
         prompt.just_opened = true;
-        lock.0 = true;
+        sfx.write(PlaySfx(Sfx::Select));
+    }
+}
+
+/// How long ¤P1Cancel¤ must be held to reset instead of leave.
+const RESET_HOLD: Seconds = Seconds(0.5);
+
+/// The ¤P1Cancel¤ hold state; only presses that began while no prompt was
+/// open are armed, so the press that aborts a prompt neither taps nor
+/// resets.
+#[derive(Default)]
+struct CancelHold {
+    held: Seconds,
+    armed: bool,
+}
+
+/// The ¤P1Cancel¤ gesture: holding resets the active row's binding to its
+/// default, a shorter tap leaves the scene.
+fn cancel_gesture(
+    input: DefaultKeys,
+    time: Res<Time>,
+    menus: Query<&Menu>,
+    mut hold: Local<CancelHold>,
+    mut settings: ResMut<MachineSettings>,
+    mut fade: ResMut<SceneFade>,
+    mut sfx: MessageWriter<PlaySfx>,
+) {
+    if input.just_pressed(GameAction::P1Cancel) {
+        hold.armed = true;
+        hold.held = Seconds::ZERO;
+    }
+    if !hold.armed {
+        return;
+    }
+    if input.pressed(GameAction::P1Cancel) {
+        hold.held += Seconds(time.delta_secs_f64());
+        if hold.held >= RESET_HOLD {
+            hold.armed = false;
+            for menu in &menus {
+                let Some(action) = GameAction::iter().nth(menu.active) else {
+                    continue;
+                };
+                settings.keymap.reset(action);
+                sfx.write(PlaySfx(Sfx::Select));
+            }
+        }
+        return;
+    }
+    if input.just_released(GameAction::P1Cancel) {
+        hold.armed = false;
+        sfx.write(PlaySfx(Sfx::Cancel));
+        fade.begin(GameScene::SettingsMenu);
     }
 }
 
 fn capture_prompt_key(
+    config: Res<GameConfig>,
     mut prompt: ResMut<Prompt>,
     mut keyboard: MessageReader<KeyboardInput>,
     mut settings: ResMut<MachineSettings>,
-    config: Res<GameConfig>,
-    mut lock: ResMut<MenuInputLock>,
     mut sfx: MessageWriter<PlaySfx>,
 ) {
     let Some(action) = prompt.action else {
@@ -173,55 +308,14 @@ fn capture_prompt_key(
         if event.state != ButtonState::Pressed || event.repeat {
             continue;
         }
-        if event.key_code
-            == settings
-                .keymap
-                .key(GameAction::cancel(PlayerId::P1), &config)
-        {
+        if event.key_code == default_key(&config, GameAction::P1Cancel) {
             sfx.write(PlaySfx(Sfx::Cancel));
         } else {
             settings.keymap.set(action, event.key_code);
             sfx.write(PlaySfx(Sfx::Select));
         }
         prompt.action = None;
-        lock.0 = false;
         break;
-    }
-}
-
-fn reset_active_binding(
-    keys: Res<ButtonInput<KeyCode>>,
-    prompt: Res<Prompt>,
-    menus: Query<&Menu>,
-    mut settings: ResMut<MachineSettings>,
-    config: Res<GameConfig>,
-    mut sfx: MessageWriter<PlaySfx>,
-) {
-    if prompt.action.is_some()
-        || !settings
-            .keymap
-            .just_pressed(&keys, GameAction::Reset, &config)
-    {
-        return;
-    }
-    for menu in &menus {
-        let Some(action) = GameAction::iter().nth(menu.active) else {
-            continue;
-        };
-        settings.keymap.reset(action);
-        sfx.write(PlaySfx(Sfx::Select));
-    }
-}
-
-fn handle_cancel(
-    actions: Actions,
-    prompt: Res<Prompt>,
-    mut fade: ResMut<SceneFade>,
-    mut sfx: MessageWriter<PlaySfx>,
-) {
-    if prompt.action.is_none() && actions.just_pressed(GameAction::cancel(PlayerId::P1)) {
-        sfx.write(PlaySfx(Sfx::Cancel));
-        fade.begin(GameScene::SettingsMenu);
     }
 }
 
@@ -242,7 +336,11 @@ fn refresh_rows(
     }
     if prompt.is_changed() {
         prompt_label.0 = match prompt.action {
-            Some(action) => format!("Press a key for \"{}\" (Cancel aborts)", action.label()),
+            Some(action) => format!(
+                "Press a key for \"{}\" ({:?} aborts)",
+                action.label(),
+                default_key(&config, GameAction::P1Cancel)
+            ),
             None => String::new(),
         };
     }

@@ -1,8 +1,9 @@
 use crate::core::font::game_font;
-use crate::core::input::{Actions, GameAction, NavPulse};
+use crate::core::input::{Actions, GameAction, StepDirection};
 use crate::core::player::PlayerId;
 use crate::core::scene_flow::SceneFade;
 use crate::core::sfx::{PlaySfx, Sfx};
+use crate::core::units::Seconds;
 use bevy::prelude::*;
 use bevy::state::state::FreelyMutableState;
 use std::marker::PhantomData;
@@ -17,10 +18,10 @@ pub struct MenuPrefabOptions {
 }
 
 /// A full-screen titled menu. The caller owns the spawn (and thus scope and
-/// teardown); [`MenuPlugin`] drives every mounted menu: ¤Next¤/¤Previous¤
-/// pulses move the highlight and P1's ¤Select¤ fires [`MenuSelected`] with
-/// the active item's index. Custom layouts get the same driving by carrying
-/// [`Menu`] and [`MenuItem`] themselves.
+/// teardown); [`MenuPlugin`] drives every mounted menu: P1's ¤Up¤/¤Down¤
+/// step pulses move the highlight and their ¤Select¤ fires [`MenuSelected`]
+/// with the active item's index. Custom layouts get the same driving by
+/// carrying [`Menu`] and [`MenuItem`] themselves.
 pub fn menu_prefab(opt: MenuPrefabOptions) -> impl Scene {
     let title = opt.title;
     let len = opt.items.len();
@@ -85,10 +86,26 @@ pub struct MenuSelected {
     pub index: usize,
 }
 
-/// While set, menus ignore input — for owners that capture the keyboard
-/// (the keymap scene's rebind prompt).
-#[derive(Resource, Default)]
-pub struct MenuInputLock(pub bool);
+/// Marks a menu whose owner drives `Menu::active` and selection itself; the
+/// plugin only runs its highlight. For owners that must not depend on the
+/// rebindable keymap — a keymap editor has to stay operable however broken
+/// the stored bindings are.
+#[derive(Component, Default, Clone)]
+pub struct OwnerDrivenMenu;
+
+/// A press of a step action, re-fired while held so lists scroll
+/// comfortably — the navigation vocabulary menus and menu-like scenes
+/// (the wheel, options panels) consume instead of raw key state.
+#[derive(Message)]
+pub struct NavPulse {
+    pub action: GameAction,
+}
+
+/// The pulse emitter's slot in `PreUpdate`: synthetic key state (the
+/// bench scenarios) must land after bevy's input update and before this
+/// set to register on the frame it was written.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct NavPulseSystems;
 
 /// Menus pause while the scene fade for `S` is running, so the plugin is
 /// generic over the app's scene state.
@@ -102,8 +119,14 @@ impl<S> Default for MenuPlugin<S> {
 
 impl<S: FreelyMutableState> Plugin for MenuPlugin<S> {
     fn build(&self, app: &mut App) {
-        app.init_resource::<MenuInputLock>()
+        app.add_message::<NavPulse>()
             .add_message::<MenuSelected>()
+            .add_systems(
+                PreUpdate,
+                emit_nav_pulses
+                    .in_set(NavPulseSystems)
+                    .after(bevy::input::InputSystems),
+            )
             .add_systems(
                 Update,
                 (menu_navigate, menu_select, menu_highlight)
@@ -113,19 +136,62 @@ impl<S: FreelyMutableState> Plugin for MenuPlugin<S> {
     }
 }
 
-fn menus_active<S: FreelyMutableState>(lock: Res<MenuInputLock>, fade: Res<SceneFade<S>>) -> bool {
-    !lock.0 && fade.accepts_input()
+fn menus_active<S: FreelyMutableState>(fade: Res<SceneFade<S>>) -> bool {
+    fade.accepts_input()
 }
 
+const REPEAT_DELAY: Seconds = Seconds(0.4);
+const REPEAT_INTERVAL: Seconds = Seconds(0.09);
+
+/// Every action lists and panels scroll by: each player's step panel.
+const PULSE_ACTIONS: [GameAction; 8] = [
+    GameAction::P1Left,
+    GameAction::P1Down,
+    GameAction::P1Up,
+    GameAction::P1Right,
+    GameAction::P2Left,
+    GameAction::P2Down,
+    GameAction::P2Up,
+    GameAction::P2Right,
+];
+
+fn emit_nav_pulses(
+    actions: Actions,
+    time: Res<Time>,
+    mut held: Local<[Seconds; PULSE_ACTIONS.len()]>,
+    mut pulses: MessageWriter<NavPulse>,
+) {
+    for (slot, action) in PULSE_ACTIONS.into_iter().enumerate() {
+        if actions.just_pressed(action) {
+            held[slot] = Seconds::ZERO;
+            pulses.write(NavPulse { action });
+        } else if actions.pressed(action) {
+            let before = held[slot];
+            held[slot] += Seconds(time.delta_secs_f64());
+            let repeats_before = ((before - REPEAT_DELAY) / REPEAT_INTERVAL).floor();
+            let repeats_after = ((held[slot] - REPEAT_DELAY) / REPEAT_INTERVAL).floor();
+            if held[slot] >= REPEAT_DELAY && repeats_after > repeats_before {
+                pulses.write(NavPulse { action });
+            }
+        } else {
+            held[slot] = Seconds::ZERO;
+        }
+    }
+}
+
+/// Menus are P1's space: their ¤Up¤/¤Down¤ steps move the highlight.
 fn menu_navigate(
     mut pulses: MessageReader<NavPulse>,
-    mut menus: Query<&mut Menu>,
+    mut menus: Query<&mut Menu, Without<OwnerDrivenMenu>>,
     mut sfx: MessageWriter<PlaySfx>,
 ) {
     for pulse in pulses.read() {
-        let step_back = match pulse.action {
-            GameAction::Previous => true,
-            GameAction::Next => false,
+        let Some((PlayerId::P1, direction)) = pulse.action.as_step() else {
+            continue;
+        };
+        let step_back = match direction {
+            StepDirection::Up => true,
+            StepDirection::Down => false,
             _ => continue,
         };
         for mut menu in &mut menus {
@@ -145,7 +211,7 @@ fn menu_navigate(
 /// Menus are P1's space: only their ¤Select¤ activates an item.
 fn menu_select(
     actions: Actions,
-    menus: Query<&Menu>,
+    menus: Query<&Menu, Without<OwnerDrivenMenu>>,
     mut selected: MessageWriter<MenuSelected>,
     mut sfx: MessageWriter<PlaySfx>,
 ) {

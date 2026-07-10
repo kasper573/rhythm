@@ -2,9 +2,6 @@
   "wheel_default": ["EXTREME", "Dance Dance Revolution"],
   "defaults": {
     "keymap": {
-      "Next": "ArrowDown",
-      "Previous": "ArrowUp",
-      "Reset": "Delete",
       "P1Left": "ArrowLeft",
       "P1Down": "ArrowDown",
       "P1Up": "ArrowUp",

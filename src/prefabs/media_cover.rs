@@ -1,8 +1,8 @@
 use crate::core::assets::asset_server_path;
 use crate::core::library::is_video_file;
+use crate::core::screen::{SCREEN_SIZE, ViewportCover, at};
 use crate::core::units::Seconds;
 use crate::core::video::VideoStream;
-use crate::core::{SCREEN_SIZE, ViewportCover, at};
 use bevy::prelude::*;
 use bevy::sprite::{SpriteImageMode, SpriteScalingMode};
 use std::path::PathBuf;

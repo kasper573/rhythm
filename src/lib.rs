@@ -10,22 +10,16 @@ pub mod web;
 use crate::core::audio::AudioPlugin;
 use crate::core::config::GameConfig;
 use crate::core::high_scores::HighScoresPlugin;
-use crate::core::input::InputPlugin;
 use crate::core::library::StepfileLibrary;
 use crate::core::player::PlayMode;
+use crate::core::screen::{SCREEN_SIZE, ScreenPlugin};
 use crate::core::settings::SettingsPlugin;
 use crate::core::sfx::SfxPlugin;
 use crate::core::stepfile::MusicPlayerPlugin;
-use crate::core::{
-    CLEAR_COLOR, OVERLAY_CAMERA_ORDER, OVERLAY_LAYER, SCREEN_SIZE, size_viewport_covers,
-};
 use crate::prefabs::health_vial::HealthVialPlugin;
 use crate::prefabs::media_cover::MediaCoverPlugin;
 use crate::prefabs::stepfile_player::StepfilePlayerPlugin;
-use bevy::camera::visibility::RenderLayers;
-use bevy::camera::{ClearColorConfig, ScalingMode};
 use bevy::prelude::*;
-use bevy::ui::{IsDefaultUiCamera, UiScale};
 
 pub fn run(platform: impl core::platform::Platform + 'static) {
     app(platform).run();
@@ -63,11 +57,11 @@ pub fn app(platform: impl core::platform::Platform + 'static) -> App {
                 ..default()
             }),
     )
-    .insert_resource(ClearColor(CLEAR_COLOR))
     .insert_resource(config)
     .insert_resource(StepfileLibrary::scan())
     .init_resource::<PlayMode>()
     .add_plugins((
+        ScreenPlugin,
         SettingsPlugin,
         AudioPlugin,
         StepfilePlayerPlugin,
@@ -75,53 +69,8 @@ pub fn app(platform: impl core::platform::Platform + 'static) -> App {
         MediaCoverPlugin,
         HighScoresPlugin,
         MusicPlayerPlugin,
-        InputPlugin,
         SfxPlugin,
         scenes::ScenesPlugin,
-    ))
-    .add_systems(Startup, spawn_cameras)
-    .add_systems(Update, (scale_ui_to_window, size_viewport_covers));
-    app
-}
-
-/// The game is designed on a fixed 1280x720 canvas and scales uniformly
-/// with the window: the cameras keep the whole canvas visible and the UI
-/// follows the same factor, so world and UI grow together. The axis the
-/// window has spare space on simply sees a little more room.
-///
-/// Two 2D cameras bracket the note fields' lane cameras (see the stepfile
-/// player prefab): the world below them, the overlay — flashes, popups,
-/// and all UI — above them.
-fn spawn_cameras(mut commands: Commands) {
-    commands
-        .spawn_scene(bsn! { Camera2d })
-        .insert(canvas_projection());
-    commands.spawn_scene(bsn! { Camera2d }).insert((
-        canvas_projection(),
-        Camera {
-            order: OVERLAY_CAMERA_ORDER,
-            clear_color: ClearColorConfig::None,
-            ..default()
-        },
-        RenderLayers::layer(OVERLAY_LAYER),
-        IsDefaultUiCamera,
     ));
-}
-
-fn canvas_projection() -> Projection {
-    Projection::Orthographic(OrthographicProjection {
-        scaling_mode: ScalingMode::AutoMin {
-            min_width: SCREEN_SIZE.x,
-            min_height: SCREEN_SIZE.y,
-        },
-        ..OrthographicProjection::default_2d()
-    })
-}
-
-fn scale_ui_to_window(windows: Query<&Window, Changed<Window>>, mut ui_scale: ResMut<UiScale>) {
-    let Ok(window) = windows.single() else { return };
-    let scale = (window.width() / SCREEN_SIZE.x).min(window.height() / SCREEN_SIZE.y);
-    if scale > 0.0 && ui_scale.0 != scale {
-        ui_scale.0 = scale;
-    }
+    app
 }

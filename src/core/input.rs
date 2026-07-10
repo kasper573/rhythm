@@ -1,17 +1,16 @@
 use crate::core::config::GameConfig;
 use crate::core::player::{PerPlayer, PlayerId};
 use crate::core::settings::MachineSettings;
-use crate::core::units::Seconds;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use strum::{EnumCount, EnumIter, IntoEnumIterator, IntoStaticStr};
 
-/// Every key the machine responds to, as one flat list: machine-wide
-/// actions plus one set of player actions per player slot. Menus listen to
-/// the machine-wide navigation and to P1 alone; shared spaces (the wheel,
-/// the player options modal) listen to every active player.
+/// Every key the machine responds to, as one flat list: one set of player
+/// actions per player slot, plus the machine-wide tuning toggles. Menus
+/// listen to P1 alone; shared spaces (the wheel, the player options modal)
+/// listen to every active player.
 #[derive(
     Debug,
     Clone,
@@ -28,9 +27,6 @@ use strum::{EnumCount, EnumIter, IntoEnumIterator, IntoStaticStr};
     IntoStaticStr,
 )]
 pub enum GameAction {
-    Next,
-    Previous,
-    Reset,
     #[strum(serialize = "P1 Step left")]
     P1Left,
     #[strum(serialize = "P1 Step down")]
@@ -233,72 +229,4 @@ impl Actions<'_> {
 
 pub fn shift_held(keys: &ButtonInput<KeyCode>) -> bool {
     keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight)
-}
-
-/// A press of a menu or step navigation action, re-fired while held so
-/// lists scroll comfortably.
-#[derive(Message)]
-pub struct NavPulse {
-    pub action: GameAction,
-}
-
-/// The pulse emitter's slot in `PreUpdate`: synthetic key state (the
-/// bench scenarios) must land after bevy's input update and before this
-/// set to register on the frame it was written.
-#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct NavPulseSystems;
-
-pub struct InputPlugin;
-
-impl Plugin for InputPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_message::<NavPulse>().add_systems(
-            PreUpdate,
-            emit_nav_pulses
-                .in_set(NavPulseSystems)
-                .after(bevy::input::InputSystems),
-        );
-    }
-}
-
-const REPEAT_DELAY: Seconds = Seconds(0.4);
-const REPEAT_INTERVAL: Seconds = Seconds(0.09);
-
-/// Every action lists and panels scroll by: the machine-wide menu pair
-/// plus each player's step panel.
-const PULSE_ACTIONS: [GameAction; 10] = [
-    GameAction::Next,
-    GameAction::Previous,
-    GameAction::P1Left,
-    GameAction::P1Down,
-    GameAction::P1Up,
-    GameAction::P1Right,
-    GameAction::P2Left,
-    GameAction::P2Down,
-    GameAction::P2Up,
-    GameAction::P2Right,
-];
-
-fn emit_nav_pulses(
-    actions: Actions,
-    time: Res<Time>,
-    mut held: Local<[Seconds; PULSE_ACTIONS.len()]>,
-    mut pulses: MessageWriter<NavPulse>,
-) {
-    for (slot, action) in PULSE_ACTIONS.into_iter().enumerate() {
-        if actions.just_pressed(action) {
-            held[slot] = Seconds::ZERO;
-            pulses.write(NavPulse { action });
-        } else if actions.pressed(action) {
-            let before = held[slot];
-            held[slot] += Seconds(time.delta_secs_f64());
-            let repeats_before = ((before - REPEAT_DELAY) / REPEAT_INTERVAL).floor();
-            let repeats_after = ((held[slot] - REPEAT_DELAY) / REPEAT_INTERVAL).floor();
-            if held[slot] >= REPEAT_DELAY && repeats_after > repeats_before {
-                pulses.write(NavPulse { action });
-            }
-        } else {
-            held[slot] = Seconds::ZERO;
-        }
-    }
 }

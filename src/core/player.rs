@@ -21,6 +21,11 @@ impl PlayerId {
     }
 }
 
+/// Tags an entity — HUD readouts, stage furniture — with the player it
+/// belongs to.
+#[derive(Component, Clone, Copy, FromTemplate)]
+pub struct ForPlayer(pub PlayerId);
+
 /// One value per player slot, for state that always exists for both
 /// players regardless of how many are active.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]

@@ -2,19 +2,35 @@ use crate::core::config::{GameConfig, Grade, GradeIndex};
 use crate::core::font::game_font;
 use crate::core::high_scores::{HighScores, highscore_key};
 use crate::core::input::{Actions, GameAction};
-use crate::core::library::StepfileLibrary;
+use crate::core::library::{StepfileId, StepfileLibrary};
 use crate::core::player::PlayerId;
 use crate::core::scene_flow::SpawnScoped;
 use crate::core::sfx::{PlaySfx, Sfx};
 use crate::core::units::Percent;
 use crate::prefabs::menu::TITLE_COLOR;
 use crate::prefabs::stepfile_player::StageResults;
-use crate::scenes::play::{PlayerResult, ScoreResults};
 use crate::scenes::wheel::WheelTarget;
 use crate::scenes::{
     GameScene, SceneFade, play_default_bgm, scene_accepts_input, spawn_default_background,
 };
 use bevy::prelude::*;
+
+/// The score scene's entry param: a finished session's results, inserted
+/// by the play scene (or the bench), consumed on enter.
+#[derive(Resource, Debug, Clone)]
+pub struct ScoreResults {
+    pub id: StepfileId,
+    pub title: String,
+    pub players: Vec<PlayerResult>,
+}
+
+/// One player's complete run: the chart they played and its results.
+#[derive(Debug, Clone)]
+pub struct PlayerResult {
+    /// Index into the played stepfile's `charts`.
+    pub chart: usize,
+    pub stage: StageResults,
+}
 
 pub(super) struct ScoreScenePlugin;
 

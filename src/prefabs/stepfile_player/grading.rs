@@ -6,9 +6,9 @@ use super::{
     HoldOutcome, MineOutcome, PlayInput, PlaySession, PlaySet, PlayTime, PressBanked, RowGraded,
     SessionScope, Stage, StageFailed,
 };
-use crate::core::at;
 use crate::core::config::{FixedGradeDef, GameConfig, Grade, RowOutcome};
 use crate::core::font::game_font;
+use crate::core::screen::at;
 use bevy::camera::visibility::RenderLayers;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;

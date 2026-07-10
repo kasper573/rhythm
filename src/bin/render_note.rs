@@ -21,10 +21,10 @@ use bevy::winit::WinitPlugin;
 use clap::Parser;
 use rhythm::core::config::GameConfig;
 use rhythm::core::player::PlayerId;
+use rhythm::core::screen::{CLEAR_COLOR, OVERLAY_CAMERA_ORDER, OVERLAY_LAYER};
 use rhythm::core::settings::{NoteSpeed, Perspective, PlayerOptions, PlayerSettings};
 use rhythm::core::stepfile::StepfileTiming;
 use rhythm::core::units::{Beat, Bpm, Seconds};
-use rhythm::core::{CLEAR_COLOR, OVERLAY_CAMERA_ORDER, OVERLAY_LAYER};
 use rhythm::prefabs::stepfile_player::note_field::{
     FadeOut, HOLD_OK_FADE_SECONDS, HoldPart, HoldVisual, HoldVisualState, InColumn, LaneEffects,
     LaneView, MineNote, NoteArrow, NoteField, NoteFieldClock, NoteFieldPlugin, NoteSpawn, NoteTail,

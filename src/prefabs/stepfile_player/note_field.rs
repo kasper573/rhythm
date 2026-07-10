@@ -5,10 +5,10 @@ use super::note_skin::{
 use crate::core::config::GameConfig;
 use crate::core::input::{GameAction, StepDirection};
 use crate::core::player::PlayerId;
+use crate::core::screen::{LANE_LAYER_BASE, SCREEN_SIZE, visible_world_size};
 use crate::core::settings::{NoteSpeed, Perspective, PlayerSettings};
 use crate::core::stepfile::StepfileTiming;
 use crate::core::units::{Beat, Seconds};
-use crate::core::{LANE_LAYER_BASE, SCREEN_SIZE, visible_world_size};
 use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{CameraProjection, ClearColorConfig, RenderTarget};
 use bevy::core_pipeline::tonemapping::Tonemapping;

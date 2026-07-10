@@ -6,34 +6,21 @@ mod wash;
 
 use crate::core::config::GameConfig;
 use crate::core::font::game_font;
-use crate::core::input::{Actions, GameAction, NavPulse, StepDirection};
+use crate::core::input::{Actions, GameAction, StepDirection};
 use crate::core::library::{StepfileId, StepfileLibrary};
 use crate::core::player::{PerPlayer, PlayMode, PlayerId};
 use crate::core::scene_flow::SpawnScoped;
+use crate::core::screen::{SCREEN_SIZE, ViewportCover, at, visible_world_size};
 use crate::core::sfx::{PlaySfx, Sfx};
 use crate::core::stepfile::{Difficulty, MusicPlayer, Stepfile, StepsType};
 use crate::core::units::Seconds;
-use crate::core::{SCREEN_SIZE, ViewportCover, at, visible_world_size};
+use crate::prefabs::menu::NavPulse;
+use crate::scenes::play::{PlayerChart, SelectedStepfile};
 use crate::scenes::{GameScene, SceneFade, scene_accepts_input};
 use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::sprite::Anchor;
-
-/// The play scene's entry param.
-#[derive(Resource, Debug, Clone)]
-pub struct SelectedStepfile {
-    pub id: StepfileId,
-    /// The chart each active player steps.
-    pub charts: Vec<PlayerChart>,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct PlayerChart {
-    pub player: PlayerId,
-    /// Index into the stepfile's `charts`.
-    pub chart: usize,
-}
 
 /// The stepfile row the wheel scene lands on: inserted by whichever scene
 /// navigates here wanting a specific row active, consumed on enter.

@@ -19,9 +19,9 @@ use bevy::sprite_render::MeshMaterial2d;
 use bevy::time::TimeUpdateStrategy;
 use bevy::window::ExitCondition;
 use bevy::winit::WinitPlugin;
-use rhythm::core::CLEAR_COLOR;
 use rhythm::core::config::{GameConfig, RowOutcome};
 use rhythm::core::font::game_font;
+use rhythm::core::screen::CLEAR_COLOR;
 use rhythm::core::units::Seconds;
 use rhythm::prefabs::stepfile_player::grade_text::{
     self, GradeTextMaterial, GradeTextPlugin, spawn_rig,

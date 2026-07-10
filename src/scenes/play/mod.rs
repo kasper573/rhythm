@@ -8,14 +8,14 @@ use crate::core::config::GameConfig;
 use crate::core::input::{Actions, GameAction, StepDirection};
 use crate::core::library::{StepfileEntry, StepfileId, StepfileLibrary};
 use crate::core::platform::SoundOptions;
-use crate::core::player::PlayerId;
+use crate::core::player::{ForPlayer, PlayerId};
 use crate::core::scene_flow::SpawnScoped;
+use crate::core::screen::{OVERLAY_LAYER, SCREEN_SIZE, visible_world_size};
 use crate::core::settings::{GradeLayer, MachineSettings, NoteSpeed, PlayerSettings};
 use crate::core::sfx::{PlaySfx, Sfx};
 use crate::core::stepfile::{MusicPlayer, StepfileClock};
 use crate::core::tick_track::render_tick_track;
 use crate::core::units::Seconds;
-use crate::core::{OVERLAY_LAYER, SCREEN_SIZE, visible_world_size};
 use crate::prefabs::health_vial::{
     HealthVial, HealthVialMaterial, HealthVialPrefabOptions, VialSide, health_vial_prefab,
 };
@@ -24,30 +24,30 @@ use crate::prefabs::stepfile_player::note_field::{
 };
 use crate::prefabs::stepfile_player::note_skin::ActiveNoteSkins;
 use crate::prefabs::stepfile_player::{
-    FieldSpec, ForPlayer, GameplayDrive, PlayInput, PlaySession, PlaySet, StageFailed,
-    StageResults, StepfilePlayerAssets, StepfilePlayerPrefabOptions, clear_session, grade_text,
-    stepfile_player_prefab,
+    FieldSpec, GameplayDrive, PlayInput, PlaySession, PlaySet, StageFailed, StepfilePlayerAssets,
+    StepfilePlayerPrefabOptions, clear_session, grade_text, stepfile_player_prefab,
 };
-use crate::scenes::wheel::{SelectedStepfile, WheelTarget};
+use crate::scenes::score::{PlayerResult, ScoreResults};
+use crate::scenes::wheel::WheelTarget;
 use crate::scenes::{GameScene, SceneFade, scene_accepts_input};
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use strum::IntoEnumIterator;
 
-/// The play scene's outcome, read by the score scene.
+/// The play scene's entry param: inserted by whichever scene starts a
+/// session (the wheel, the bench), consumed on enter.
 #[derive(Resource, Debug, Clone)]
-pub struct ScoreResults {
+pub struct SelectedStepfile {
     pub id: StepfileId,
-    pub title: String,
-    pub players: Vec<PlayerResult>,
+    /// The chart each active player steps.
+    pub charts: Vec<PlayerChart>,
 }
 
-/// One player's complete run: the chart they played and its results.
-#[derive(Debug, Clone)]
-pub struct PlayerResult {
-    /// Index into the played stepfile's `charts`.
+#[derive(Debug, Clone, Copy)]
+pub struct PlayerChart {
+    pub player: PlayerId,
+    /// Index into the stepfile's `charts`.
     pub chart: usize,
-    pub stage: StageResults,
 }
 
 /// The play scene: the real gameplay adapter around the stepfile player.

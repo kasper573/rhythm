@@ -3,10 +3,10 @@ use super::{
     PreferredDifficulty, STATS_TEXT, Wheel, WheelEntry,
 };
 use crate::core::assets::asset_server_path;
-use crate::core::at;
 use crate::core::font::game_font;
 use crate::core::library::StepfileLibrary;
 use crate::core::scene_flow::SpawnScoped;
+use crate::core::screen::at;
 use crate::core::stepfile::{Difficulty, DisplayBpm, Stepfile};
 use crate::core::units::Seconds;
 use crate::scenes::GameScene;

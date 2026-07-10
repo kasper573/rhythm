@@ -1,17 +1,17 @@
 use super::{ModalStripe, WheelFocus};
-use crate::core::SCREEN_SIZE;
 use crate::core::config::GameConfig;
 use crate::core::font::game_font;
-use crate::core::input::{Actions, GameAction, NavPulse, StepDirection};
+use crate::core::input::{Actions, GameAction, StepDirection};
 use crate::core::player::{PlayMode, PlayerId};
 use crate::core::scene_flow::SpawnScoped;
+use crate::core::screen::SCREEN_SIZE;
 use crate::core::settings::{
     GradeLayer, MachineSettings, NoteSpeed, Perspective, PlayerOptions, PlayerSettings,
 };
 use crate::core::sfx::{PlaySfx, Sfx};
 use crate::core::stepfile::{Arrow, MusicPlayer, Row, StepfileTiming, Tail};
 use crate::core::units::{Beat, Percent, Seconds};
-use crate::prefabs::menu::{ACTIVE_COLOR, INACTIVE_COLOR, TITLE_COLOR};
+use crate::prefabs::menu::{ACTIVE_COLOR, INACTIVE_COLOR, NavPulse, TITLE_COLOR};
 use crate::prefabs::stepfile_player::note_field::{
     LaneView, NoteField, NoteFieldClock, fitted_arrow_size, max_arrow_size,
 };

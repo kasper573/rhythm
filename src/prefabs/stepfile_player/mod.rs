@@ -24,11 +24,11 @@ use self::note_field::{
     spawn_receptors,
 };
 use self::note_skin::{ActiveNoteSkin, ActiveNoteSkins, NoteSkinPlugin};
-use crate::core::at;
 use crate::core::config::{GameConfig, RowOutcome};
 use crate::core::font::game_font;
 use crate::core::input::GameAction;
-use crate::core::player::PlayerId;
+use crate::core::player::{ForPlayer, PlayerId};
+use crate::core::screen::at;
 use crate::core::settings::PlayerSettings;
 use crate::core::stepfile::{Mine, Row, StepfileTiming};
 use crate::core::units::Seconds;
@@ -324,11 +324,6 @@ pub enum MineOutcome {
     Exploded,
     Avoided,
 }
-
-/// Tags a session HUD element (grade text, combo, a caller's own widgets)
-/// with the stage player it reports on.
-#[derive(Component, Clone, Copy, FromTemplate)]
-pub struct ForPlayer(pub PlayerId);
 
 /// The engine's systems and asset plugins. Requires `GameConfig` and the
 /// settings resources to already be inserted (skins load from them).

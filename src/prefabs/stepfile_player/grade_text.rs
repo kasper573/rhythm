@@ -5,10 +5,10 @@
 //! `grade_text.wgsl`, embedded in the binary), per-grade colors and
 //! strengths.
 
-use super::{ForPlayer, PlaySet, RowGraded};
+use super::{PlaySet, RowGraded};
 use crate::core::config::{DynamicGradeDef, GameConfig, Grade, RowOutcome, TimingFeedback};
 use crate::core::font::game_font;
-use crate::core::player::PlayerId;
+use crate::core::player::{ForPlayer, PlayerId};
 use crate::core::settings::PlayerSettings;
 use crate::core::units::{Percent, Seconds};
 use bevy::asset::embedded_asset;
