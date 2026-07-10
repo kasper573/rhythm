@@ -98,6 +98,21 @@ struct BindingCell {
     _not_prompt: Without<PromptLabel>,
 }
 
+/// The table is centered by fixed positioning inside a box of these
+/// dimensions, never by flex centering: content sits within the box, so
+/// neither the prompt appearing nor a binding's width changing can shift it.
+const TABLE_WIDTH: f32 = 560.0;
+const TABLE_HEIGHT: f32 = 620.0;
+
+/// A fixed key column keeps the grid's own width constant as bindings change
+/// length, so the centering above never recomputes.
+const KEY_COLUMN_WIDTH: f32 = 200.0;
+
+/// The key column's trailing slack (short keys don't fill it) pulls the
+/// visible ink left of the box's true center; a positive left inset against
+/// the auto margins nudges the box right by half this to rebalance it.
+const CENTER_BIAS: f32 = 130.0;
+
 fn enter(mut commands: Commands, settings: Res<MachineSettings>, config: Res<GameConfig>) {
     commands.init_resource::<Prompt>();
     // A column-major grid of left-aligned action/key pairs: the first
@@ -134,40 +149,64 @@ fn enter(mut commands: Commands, settings: Res<MachineSettings>, config: Res<Gam
     commands.spawn_scoped(
         GameScene::Keymap,
         bsn! {
-            Node {
-                width: percent(100),
-                height: percent(100),
-                flex_direction: FlexDirection::Column,
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                row_gap: px(8),
-            }
+            Node { width: percent(100), height: percent(100) }
             Children [
+                // Fixed-size box centered by auto margins, not flex centering:
+                // its position is immune to what its content does.
                 (
-                    game_font(44.0)
-                    Text("Keymap")
-                    TextColor({TITLE_COLOR})
-                    Node { margin: {UiRect::bottom(Val::Px(12.0))} }
-                ),
-                (
-                    Menu { active: 0, len: {GameAction::COUNT} }
-                    OwnerDrivenMenu
                     Node {
-                        display: Display::Grid,
-                        grid_auto_flow: GridAutoFlow::Column,
-                        grid_template_rows: {vec![RepeatedGridTrack::auto(GameAction::COUNT as u16)]},
-                        justify_items: JustifyItems::Start,
-                        column_gap: px(48),
-                        row_gap: px(2),
+                        position_type: PositionType::Absolute,
+                        left: {Val::Px(CENTER_BIAS)},
+                        right: px(0),
+                        top: px(0),
+                        bottom: px(0),
+                        margin: {UiRect::all(Val::Auto)},
+                        width: {Val::Px(TABLE_WIDTH)},
+                        height: {Val::Px(TABLE_HEIGHT)},
+                        flex_direction: FlexDirection::Column,
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        row_gap: px(8),
                     }
-                    Children [ {labels}, {keys} ]
+                    Children [
+                        (
+                            game_font(44.0)
+                            Text("Keymap")
+                            TextColor({TITLE_COLOR})
+                            Node { margin: {UiRect::bottom(Val::Px(12.0))} }
+                        ),
+                        (
+                            Menu { active: 0, len: {GameAction::COUNT} }
+                            OwnerDrivenMenu
+                            Node {
+                                display: Display::Grid,
+                                grid_auto_flow: GridAutoFlow::Column,
+                                grid_template_rows: {vec![RepeatedGridTrack::auto(GameAction::COUNT as u16)]},
+                                grid_template_columns: {vec![RepeatedGridTrack::auto(1), RepeatedGridTrack::px(1, KEY_COLUMN_WIDTH)]},
+                                justify_items: JustifyItems::Start,
+                                column_gap: px(48),
+                                row_gap: px(2),
+                            }
+                            Children [ {labels}, {keys} ]
+                        ),
+                    ]
                 ),
+                // Out of the table's flow: a viewport-anchored line whose text
+                // may grow without disturbing the table above it.
                 (
-                    PromptLabel
-                    game_font(22.0)
-                    Text("")
-                    TextColor(Color::srgb(0.4, 0.9, 0.6))
-                    Node { margin: {UiRect::top(Val::Px(12.0))} }
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: px(0),
+                        right: px(0),
+                        bottom: px(56),
+                        justify_content: JustifyContent::Center,
+                    }
+                    Children [(
+                        PromptLabel
+                        game_font(22.0)
+                        Text("")
+                        TextColor(Color::srgb(0.4, 0.9, 0.6))
+                    )]
                 ),
                 (
                     Node {
