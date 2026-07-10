@@ -71,8 +71,19 @@ impl SfxPlayer {
 
 #[godot_api]
 impl INode for SfxPlayer {
+    /// Construction stays empty — the editor instantiates registered
+    /// classes while scanning, where no game state exists. The sounds
+    /// load on entering the booted game's tree.
     fn init(base: Base<Node>) -> SfxPlayer {
-        let streams = Sfx::iter()
+        SfxPlayer {
+            streams: HashMap::new(),
+            pool: Vec::new(),
+            base,
+        }
+    }
+
+    fn enter_tree(&mut self) {
+        self.streams = Sfx::iter()
             .filter_map(|sfx| {
                 let path = asset_root().join(sfx.asset_path());
                 let bytes = match platform().read_asset(&path) {
@@ -91,10 +102,5 @@ impl INode for SfxPlayer {
                 }
             })
             .collect();
-        SfxPlayer {
-            streams,
-            pool: Vec::new(),
-            base,
-        }
     }
 }

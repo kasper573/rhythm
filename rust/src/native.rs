@@ -30,10 +30,17 @@ impl Platform for NativePlatform {
             }
         }
         let executable = PathBuf::from(Os::singleton().get_executable_path().to_string());
-        executable
+        let mut dir = executable
             .parent()
-            .expect("executable has a parent directory")
-            .join("assets")
+            .expect("executable has a parent directory");
+        // On macOS the executable sits inside the .app bundle; the assets
+        // folder ships beside the bundle.
+        if dir.ends_with("Contents/MacOS")
+            && let Some(outside) = dir.ancestors().nth(3)
+        {
+            dir = outside;
+        }
+        dir.join("assets")
     }
 
     fn read_asset(&self, path: &Path) -> io::Result<Vec<u8>> {

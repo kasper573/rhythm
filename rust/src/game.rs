@@ -267,8 +267,8 @@ impl INode for Game {
         label.set_anchors_and_offsets_preset(LayoutPreset::CENTER);
         self.base_mut().add_child(&label);
         self.loading = Some(label);
-        let mut host = self.base().clone().upcast::<Node>();
-        self.web_boot = Some(crate::web::WebBoot::start(&mut host));
+        let host = self.base().clone().upcast::<Node>();
+        self.web_boot = Some(crate::web::WebBoot::start(host));
     }
 
     fn process(&mut self, delta: f64) {

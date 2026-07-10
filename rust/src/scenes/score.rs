@@ -206,6 +206,9 @@ impl ScoreScene {
         tallies.add_child(&values_column);
         column.add_child(&tallies);
 
+        let mut combo_gap = Control::new_alloc();
+        combo_gap.set_custom_minimum_size(Vector2::new(0.0, 8.0));
+        column.add_child(&combo_gap);
         let mut combo = label(
             &format!("Max combo: {}", stage.max_combo),
             32.0,

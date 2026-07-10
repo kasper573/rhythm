@@ -47,14 +47,21 @@ impl HighScores {
 
 #[godot_api]
 impl INode for HighScores {
+    /// Construction stays empty — the editor instantiates registered
+    /// classes while scanning; the books load on entering the booted
+    /// game's tree.
     fn init(base: Base<Node>) -> HighScores {
         HighScores {
-            books: PerPlayer {
-                p1: load_user_data(high_scores_file(PlayerId::P1)),
-                p2: load_user_data(high_scores_file(PlayerId::P2)),
-            },
+            books: PerPlayer::default(),
             base,
         }
+    }
+
+    fn enter_tree(&mut self) {
+        self.books = PerPlayer {
+            p1: load_user_data(high_scores_file(PlayerId::P1)),
+            p2: load_user_data(high_scores_file(PlayerId::P2)),
+        };
     }
 }
 

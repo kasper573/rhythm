@@ -1,5 +1,7 @@
 # The browser build: a single-threaded emscripten side module, per the
-# godot-rust web toolchain (nightly + -Zbuild-std, driven by `serve`).
+# godot-rust web toolchain, driven by `serve` on the pinned nightly (see
+# WEB_TOOLCHAIN there). JS exception handling must match the emscripten
+# the Godot web templates were built with, hence the wasm-eh opt-out.
 [target.wasm32-unknown-emscripten]
 rustflags = [
     "-C", "link-args=-sSIDE_MODULE=2",

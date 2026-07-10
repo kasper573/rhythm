@@ -22,13 +22,16 @@ const COLUMN_X: [f32; 2] = [-210.0, 210.0];
 /// Frames to let the offscreen words render before capturing.
 const SETTLE_FRAMES: u32 = 30;
 
-pub(super) fn start(game: &mut Game) {
+pub(super) fn start(game: &mut Game, out: PathBuf) {
     let mut window = game.base().get_window().expect("the game runs in a window");
     window.set_content_scale_mode(ContentScaleMode::DISABLED);
     window.set_size(Vector2i::new(WIDTH, HEIGHT));
 
+    // The host enters the tree before any text is placed: label metrics
+    // only resolve inside the tree.
     let mut host = Control::new_alloc();
     host.set_anchors_and_offsets_preset(godot::classes::control::LayoutPreset::FULL_RECT);
+    game.base_mut().add_child(&host);
     let mut backdrop = ColorRect::new_alloc();
     backdrop.set_color(CLEAR_COLOR);
     backdrop.set_anchors_and_offsets_preset(godot::classes::control::LayoutPreset::FULL_RECT);
@@ -49,6 +52,7 @@ pub(super) fn start(game: &mut Game) {
 
     let mut canvas = Node2D::new_alloc();
     canvas.set_position(Vector2::new(WIDTH as f32 / 2.0, HEIGHT as f32 / 2.0));
+    host.add_child(&canvas);
     for (column, text) in ["on black", "on gray"].into_iter().enumerate() {
         let mut caption = label(text, 24.0, Color::from_rgb(0.6, 0.6, 0.6));
         canvas.add_child(&caption);
@@ -81,10 +85,9 @@ pub(super) fn start(game: &mut Game) {
             rig.sprite.set_position(Vector2::new(x, -y));
         }
     }
-    host.add_child(&canvas);
-    game.base_mut().add_child(&host);
 
-    let driver = RenderGradeDriver::new_alloc();
+    let mut driver = RenderGradeDriver::new_alloc();
+    driver.bind_mut().out = out;
     game.base_mut().add_child(&driver);
 }
 
@@ -92,13 +95,18 @@ pub(super) fn start(game: &mut Game) {
 #[class(base=Node)]
 struct RenderGradeDriver {
     frames: u32,
+    out: PathBuf,
     base: Base<Node>,
 }
 
 #[godot_api]
 impl INode for RenderGradeDriver {
     fn init(base: Base<Node>) -> RenderGradeDriver {
-        RenderGradeDriver { frames: 0, base }
+        RenderGradeDriver {
+            frames: 0,
+            out: PathBuf::from("out"),
+            base,
+        }
     }
 
     fn process(&mut self, _delta: f64) {
@@ -106,8 +114,8 @@ impl INode for RenderGradeDriver {
         if self.frames < SETTLE_FRAMES {
             return;
         }
-        let path = PathBuf::from("out").join("grades.png");
-        std::fs::create_dir_all("out").expect("failed to create the output directory");
+        let path = self.out.join("grades.png");
+        std::fs::create_dir_all(&self.out).expect("failed to create the output directory");
         let viewport = self
             .base()
             .get_viewport()

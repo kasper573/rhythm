@@ -4,15 +4,22 @@
 //! `--emit` writes the whole site out as static files instead, which is
 //! how the deploy workflow produces the published site.
 //!
-//! Building the wasm extension needs the nightly toolchain with the
-//! `wasm32-unknown-emscripten` target, an emsdk matching the Godot
-//! version's emscripten, and Godot 4 export templates installed.
+//! Building the wasm extension needs the pinned nightly toolchain (see
+//! [`WEB_TOOLCHAIN`]) with the `wasm32-unknown-emscripten` target, an
+//! emsdk matching the Godot version's emscripten, and Godot 4 export
+//! templates installed.
 
 use clap::Parser;
 use rhythm::dev::launcher;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
+
+/// The toolchain the browser build compiles with: the Godot 4.7 web
+/// templates use emscripten's JS exception handling, and this is the last
+/// nightly line whose emscripten target can still opt out of wasm-eh to
+/// match them.
+const WEB_TOOLCHAIN: &str = "+nightly-2026-01-01";
 
 #[derive(Parser)]
 struct Cli {
@@ -47,7 +54,7 @@ fn build_site(repo: &Path) -> PathBuf {
         repo,
         "cargo",
         &[
-            "+nightly",
+            WEB_TOOLCHAIN,
             "build",
             "-p",
             "rhythm",

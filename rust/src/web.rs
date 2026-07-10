@@ -1,11 +1,11 @@
 use crate::core::platform::{AssetEntry, AssetFetch, FetchPoll, Platform, VideoFrame, VideoSource};
 use crate::core::units::Seconds;
-use godot::classes::{HttpRequest, JavaScriptBridge, Node};
-use godot::obj::Singleton;
+use godot::classes::{HttpRequest, Node};
 use godot::prelude::*;
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap};
+use std::ffi::{CString, c_char, c_int};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -64,9 +64,9 @@ pub struct WebBoot {
 const PARALLEL_FETCHES: usize = 8;
 
 impl WebBoot {
-    pub fn start(host: &mut Node) -> WebBoot {
+    pub fn start(host: Gd<Node>) -> WebBoot {
         let mut boot = WebBoot {
-            host: host.to_gd(),
+            host,
             index: None,
             files: Vec::new(),
             queue: Vec::new(),
@@ -227,8 +227,8 @@ impl Platform for WebPlatform {
         let loops = if looping { "true" } else { "false" };
         let open = format!(
             r#"(function() {{
-                window.__rhythm_videos = window.__rhythm_videos || {{ seq: 0, map: {{}} }};
-                const store = window.__rhythm_videos;
+                globalThis.__rhythm_videos = globalThis.__rhythm_videos || {{ seq: 0, map: {{}} }};
+                const store = globalThis.__rhythm_videos;
                 const video = document.createElement('video');
                 video.muted = true;
                 video.loop = {loops};
@@ -246,18 +246,41 @@ impl Platform for WebPlatform {
                 return id;
             }})()"#
         );
-        let id = JavaScriptBridge::singleton()
-            .eval_ex(&open)
-            .use_global_execution_context(true)
-            .done();
-        let id = id
-            .try_to::<f64>()
-            .map_err(|_| "cannot create a video element")? as i64;
+        let id = run_script_int(&open);
         if id <= 0 {
             return Err("cannot create a video element".to_string());
         }
         Ok(Box::new(WebVideoSource { id }))
     }
+}
+
+unsafe extern "C" {
+    fn emscripten_run_script(script: *const c_char);
+    fn emscripten_run_script_int(script: *const c_char) -> c_int;
+    fn emscripten_run_script_string(script: *const c_char) -> *const c_char;
+}
+
+/// Evaluates JS inside the engine's emscripten module scope, so scripts
+/// reach both the DOM and the wasm heap views.
+fn run_script(script: &str) {
+    let script = CString::new(script).expect("scripts contain no NUL");
+    unsafe { emscripten_run_script(script.as_ptr()) };
+}
+
+fn run_script_int(script: &str) -> i32 {
+    let script = CString::new(script).expect("scripts contain no NUL");
+    unsafe { emscripten_run_script_int(script.as_ptr()) }
+}
+
+fn run_script_string(script: &str) -> String {
+    let script = CString::new(script).expect("scripts contain no NUL");
+    let result = unsafe { emscripten_run_script_string(script.as_ptr()) };
+    if result.is_null() {
+        return String::new();
+    }
+    unsafe { std::ffi::CStr::from_ptr(result) }
+        .to_string_lossy()
+        .into_owned()
 }
 
 struct WebFetch {
@@ -281,52 +304,61 @@ impl AssetFetch for WebFetch {
 /// the element's own time moves. The returned buffer carries the frame
 /// size in its first eight bytes.
 struct WebVideoSource {
-    id: i64,
+    id: i32,
 }
 
 impl VideoSource for WebVideoSource {
     fn poll(&mut self, _position: Seconds) -> Option<VideoFrame> {
         let id = self.id;
-        let poll = format!(
+        // First pass sizes the frame (packed as width<<16 | height, both
+        // far below 65k); the second copies it into our buffer on the
+        // shared heap.
+        let measure = format!(
             r#"(function() {{
-                const state = window.__rhythm_videos && window.__rhythm_videos.map[{id}];
-                if (!state || state.video.readyState < 2) return null;
-                const time = state.video.currentTime;
-                if (time === state.last) return null;
-                state.last = time;
+                const state = globalThis.__rhythm_videos && globalThis.__rhythm_videos.map[{id}];
+                if (!state || state.video.readyState < 2) return 0;
+                if (state.video.currentTime === state.last) return 0;
                 const source_width = state.video.videoWidth;
                 const source_height = state.video.videoHeight;
-                if (!source_width || !source_height) return null;
+                if (!source_width || !source_height) return 0;
                 const budget = window.innerWidth * (window.devicePixelRatio || 1);
                 const scale = Math.min(1, budget / source_width);
                 const width = Math.max(1, Math.round(source_width * scale));
                 const height = Math.max(1, Math.round(source_height * scale));
+                if (width > 65535 || height > 65535) return 0;
+                state.pending = [width, height];
+                return (width << 16) | height;
+            }})()"#
+        );
+        let packed = run_script_int(&measure);
+        if packed <= 0 {
+            return None;
+        }
+        let width = (packed as u32) >> 16;
+        let height = (packed as u32) & 0xffff;
+        let mut rgba = vec![0u8; (width * height * 4) as usize];
+        let copy = format!(
+            r#"(function() {{
+                const state = globalThis.__rhythm_videos.map[{id}];
+                const width = state.pending[0];
+                const height = state.pending[1];
+                state.last = state.video.currentTime;
                 if (state.canvas.width !== width) state.canvas.width = width;
                 if (state.canvas.height !== height) state.canvas.height = height;
                 state.context.drawImage(state.video, 0, 0, width, height);
                 const data = state.context.getImageData(0, 0, width, height);
-                const packed = new Uint8Array(8 + data.data.length);
-                new DataView(packed.buffer).setUint32(0, width, true);
-                new DataView(packed.buffer).setUint32(4, height, true);
-                packed.set(data.data, 8);
-                return packed;
-            }})()"#
+                HEAPU8.set(data.data, {pointer});
+                return 1;
+            }})()"#,
+            pointer = rgba.as_mut_ptr() as usize
         );
-        let result = JavaScriptBridge::singleton()
-            .eval_ex(&poll)
-            .use_global_execution_context(true)
-            .done();
-        let bytes = result.try_to::<PackedByteArray>().ok()?;
-        let bytes = bytes.to_vec();
-        if bytes.len() < 8 {
+        if run_script_int(&copy) != 1 {
             return None;
         }
-        let width = u32::from_le_bytes(bytes[0..4].try_into().expect("prefix is 4 bytes"));
-        let height = u32::from_le_bytes(bytes[4..8].try_into().expect("prefix is 4 bytes"));
         Some(VideoFrame {
             width,
             height,
-            rgba: bytes[8..].to_vec(),
+            rgba,
         })
     }
 }
@@ -334,20 +366,16 @@ impl VideoSource for WebVideoSource {
 impl Drop for WebVideoSource {
     fn drop(&mut self) {
         let id = self.id;
-        let close = format!(
+        run_script(&format!(
             r#"(function() {{
-                const store = window.__rhythm_videos;
+                const store = globalThis.__rhythm_videos;
                 const state = store && store.map[{id}];
                 if (!state) return;
                 state.video.pause();
                 state.video.remove();
                 delete store.map[{id}];
             }})()"#
-        );
-        JavaScriptBridge::singleton()
-            .eval_ex(&close)
-            .use_global_execution_context(true)
-            .done();
+        ));
     }
 }
 
@@ -361,6 +389,16 @@ const URL_PATH_SET: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'~')
     .remove(b'/');
 
+/// The page's own directory URL; HTTPRequest only accepts absolute URLs.
+fn page_base() -> &'static str {
+    static BASE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    BASE.get_or_init(|| {
+        run_script_string("location.href.slice(0, location.href.lastIndexOf('/') + 1)")
+    })
+}
+
 fn url(file: &str) -> String {
-    utf8_percent_encode(&format!("{ASSET_ROOT}/{file}"), URL_PATH_SET).to_string()
+    let relative = format!("{ASSET_ROOT}/{file}");
+    let path = utf8_percent_encode(&relative, URL_PATH_SET);
+    format!("{}{path}", page_base())
 }

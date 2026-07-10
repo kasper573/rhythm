@@ -52,7 +52,10 @@ pub fn dispatch(game: &mut Game, args: &[String]) -> bool {
         return true;
     }
     if args.iter().any(|arg| arg == "--render-grade") {
-        render_grade::start(game);
+        render_grade::start(
+            game,
+            value("--out").unwrap_or_else(|| "out".to_string()).into(),
+        );
         return true;
     }
     false

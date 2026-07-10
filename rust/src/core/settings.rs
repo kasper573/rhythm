@@ -73,11 +73,31 @@ impl Settings {
 
 #[godot_api]
 impl INode for Settings {
+    /// Construction stays empty — the editor instantiates registered
+    /// classes while scanning, where no game state exists. The real load
+    /// happens on entering the booted game's tree.
     fn init(base: Base<Node>) -> Settings {
-        let defaults = &config().defaults;
         Settings {
-            machine: load_machine_settings(defaults),
-            players: load_player_settings(defaults),
+            machine: MachineSettings {
+                keymap: Keymap::default(),
+                timing: TimingSettings {
+                    machine_offset: Millis(0),
+                    visual_delay: Millis(0),
+                    audio_latency: None,
+                },
+                volume: VolumeSettings {
+                    master: 0.0,
+                    sfx: 0.0,
+                    music: 0.0,
+                },
+            },
+            players: PlayerSettings::uniform(PlayerOptions {
+                note_skin: String::new(),
+                note_speed: NoteSpeed::Dynamic(1.0),
+                perspective: Perspective::None,
+                grade_layer: GradeLayer::Behind,
+                grade_position: Percent(50.0),
+            }),
             revision: 0,
             dirty_machine: false,
             dirty_players: false,
@@ -85,7 +105,10 @@ impl INode for Settings {
         }
     }
 
-    fn ready(&mut self) {
+    fn enter_tree(&mut self) {
+        let defaults = &config().defaults;
+        self.machine = load_machine_settings(defaults);
+        self.players = load_player_settings(defaults);
         audio::ensure_buses();
         self.apply_machine();
     }

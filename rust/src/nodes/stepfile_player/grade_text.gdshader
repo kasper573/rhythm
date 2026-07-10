@@ -48,9 +48,12 @@ void fragment() {
 
     // Bright white letter core, opaque; plus the additive colored bloom,
     // held off the solid cores (`1 - core`) so the letters stay white-hot
-    // while the color blooms out from their edges into the halo.
+    // while the color blooms out from their edges into the halo. The 2D
+    // pipeline blends in sRGB space, so the bloom intensity is encoded
+    // with the sRGB exponent to add light the way a linear pipeline would.
     vec3 core_pm = base_color.rgb * core;
-    vec3 glow_pm = glow_color.rgb * (bloom * amount * shape.z) * (1.0 - core);
+    float strength = pow(max(bloom * amount * shape.z, 0.0), 1.0 / 2.2);
+    vec3 glow_pm = glow_color.rgb * strength * (1.0 - core);
     vec3 rgb_pm = core_pm + glow_pm;
     COLOR = vec4(rgb_pm * fade, core * fade);
 }
