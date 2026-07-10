@@ -104,6 +104,9 @@ struct BindingCell {
 const TABLE_WIDTH: f32 = 560.0;
 const TABLE_HEIGHT: f32 = 620.0;
 
+/// The title rides above the table at a fixed distance from the top edge.
+const TITLE_TOP: f32 = 44.0;
+
 /// A fixed key column keeps the grid's own width constant as bindings change
 /// length, so the centering above never recomputes.
 const KEY_COLUMN_WIDTH: f32 = 200.0;
@@ -111,7 +114,7 @@ const KEY_COLUMN_WIDTH: f32 = 200.0;
 /// The key column's trailing slack (short keys don't fill it) pulls the
 /// visible ink left of the box's true center; a positive left inset against
 /// the auto margins nudges the box right by half this to rebalance it.
-const CENTER_BIAS: f32 = 130.0;
+const CENTER_BIAS: f32 = 60.0;
 
 fn enter(mut commands: Commands, settings: Res<MachineSettings>, config: Res<GameConfig>) {
     commands.init_resource::<Prompt>();
@@ -151,6 +154,22 @@ fn enter(mut commands: Commands, settings: Res<MachineSettings>, config: Res<Gam
         bsn! {
             Node { width: percent(100), height: percent(100) }
             Children [
+                // Always centered across the viewport, independent of the
+                // table's rightward bias below.
+                (
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: px(0),
+                        right: px(0),
+                        top: {Val::Px(TITLE_TOP)},
+                        justify_content: JustifyContent::Center,
+                    }
+                    Children [(
+                        game_font(44.0)
+                        Text("Keymap")
+                        TextColor({TITLE_COLOR})
+                    )]
+                ),
                 // Fixed-size box centered by auto margins, not flex centering:
                 // its position is immune to what its content does.
                 (
@@ -163,33 +182,23 @@ fn enter(mut commands: Commands, settings: Res<MachineSettings>, config: Res<Gam
                         margin: {UiRect::all(Val::Auto)},
                         width: {Val::Px(TABLE_WIDTH)},
                         height: {Val::Px(TABLE_HEIGHT)},
-                        flex_direction: FlexDirection::Column,
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
-                        row_gap: px(8),
                     }
-                    Children [
-                        (
-                            game_font(44.0)
-                            Text("Keymap")
-                            TextColor({TITLE_COLOR})
-                            Node { margin: {UiRect::bottom(Val::Px(12.0))} }
-                        ),
-                        (
-                            Menu { active: 0, len: {GameAction::COUNT} }
-                            OwnerDrivenMenu
-                            Node {
-                                display: Display::Grid,
-                                grid_auto_flow: GridAutoFlow::Column,
-                                grid_template_rows: {vec![RepeatedGridTrack::auto(GameAction::COUNT as u16)]},
-                                grid_template_columns: {vec![RepeatedGridTrack::auto(1), RepeatedGridTrack::px(1, KEY_COLUMN_WIDTH)]},
-                                justify_items: JustifyItems::Start,
-                                column_gap: px(48),
-                                row_gap: px(2),
-                            }
-                            Children [ {labels}, {keys} ]
-                        ),
-                    ]
+                    Children [(
+                        Menu { active: 0, len: {GameAction::COUNT} }
+                        OwnerDrivenMenu
+                        Node {
+                            display: Display::Grid,
+                            grid_auto_flow: GridAutoFlow::Column,
+                            grid_template_rows: {vec![RepeatedGridTrack::auto(GameAction::COUNT as u16)]},
+                            grid_template_columns: {vec![RepeatedGridTrack::auto(1), RepeatedGridTrack::px(1, KEY_COLUMN_WIDTH)]},
+                            justify_items: JustifyItems::Start,
+                            column_gap: px(48),
+                            row_gap: px(2),
+                        }
+                        Children [ {labels}, {keys} ]
+                    )]
                 ),
                 // Out of the table's flow: a viewport-anchored line whose text
                 // may grow without disturbing the table above it.
