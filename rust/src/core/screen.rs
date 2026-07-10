@@ -8,6 +8,11 @@ pub const SCREEN_SIZE: Vector2 = Vector2::new(1280.0, 720.0);
 
 pub const CLEAR_COLOR: Color = Color::from_rgb(0.04, 0.04, 0.07);
 
+/// The interface palette every menu-like surface shares.
+pub const TITLE_COLOR: Color = Color::from_rgb(0.95, 0.85, 0.4);
+pub const ACTIVE_COLOR: Color = Color::WHITE;
+pub const INACTIVE_COLOR: Color = Color::from_rgb(0.45, 0.45, 0.55);
+
 /// The canvas rect the window currently shows: the whole design canvas
 /// plus whatever extra the window's aspect reveals. Layout that hugs
 /// screen edges or centers on the screen derives from this every frame.

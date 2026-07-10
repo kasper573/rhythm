@@ -1,10 +1,10 @@
 use crate::core::config::{GameConfig, config};
 use crate::core::font::label;
 use crate::core::input::{GameAction, GameKey};
+use crate::core::screen::{INACTIVE_COLOR, TITLE_COLOR};
 use crate::core::settings::Settings;
 use crate::core::sfx::Sfx;
 use crate::core::units::Seconds;
-use crate::nodes::menu::{INACTIVE_COLOR, TITLE_COLOR};
 use crate::scenes::{
     GameScene, change_scene, play_default_bgm, scene_accepts_input, spawn_default_background,
 };

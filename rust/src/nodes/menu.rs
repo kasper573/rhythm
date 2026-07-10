@@ -1,15 +1,12 @@
 use crate::core::font::label;
 use crate::core::input::{Actions, GameAction, StepDirection};
 use crate::core::player::PlayerId;
+use crate::core::screen::{ACTIVE_COLOR, INACTIVE_COLOR, TITLE_COLOR};
 use crate::core::sfx::Sfx;
 use crate::core::units::Seconds;
 use godot::classes::control::LayoutPreset;
 use godot::classes::{CenterContainer, Control, Engine, IControl, Label, VBoxContainer};
 use godot::prelude::*;
-
-pub const TITLE_COLOR: Color = Color::from_rgb(0.95, 0.85, 0.4);
-pub const ACTIVE_COLOR: Color = Color::WHITE;
-pub const INACTIVE_COLOR: Color = Color::from_rgb(0.45, 0.45, 0.55);
 
 pub struct MenuOptions {
     pub title: String,

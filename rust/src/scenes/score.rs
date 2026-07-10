@@ -5,11 +5,11 @@ use crate::core::high_scores::{HighScores, highscore_key};
 use crate::core::input::{Actions, GameAction};
 use crate::core::library::{StepfileId, library};
 use crate::core::player::PlayerId;
+use crate::core::screen::TITLE_COLOR;
 use crate::core::sfx::Sfx;
 use crate::core::textures::PendingTexture;
 use crate::core::units::Percent;
 use crate::game::Game;
-use crate::nodes::menu::TITLE_COLOR;
 use crate::nodes::stepfile_player::StageResults;
 use crate::scenes::{
     GameScene, change_scene, play_default_bgm, scene_accepts_input, spawn_default_background,

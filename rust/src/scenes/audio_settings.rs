@@ -1,9 +1,10 @@
 use crate::core::font::label;
 use crate::core::input::{Actions, GameAction, StepDirection};
 use crate::core::player::PlayerId;
+use crate::core::screen::{ACTIVE_COLOR, INACTIVE_COLOR, TITLE_COLOR};
 use crate::core::settings::{Settings, VolumeSettings};
 use crate::core::sfx::Sfx;
-use crate::nodes::menu::{ACTIVE_COLOR, INACTIVE_COLOR, NavInput, TITLE_COLOR};
+use crate::nodes::menu::NavInput;
 use crate::scenes::{
     GameScene, change_scene, play_default_bgm, scene_accepts_input, spawn_default_background,
 };

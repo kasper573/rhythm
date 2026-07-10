@@ -107,6 +107,59 @@ fn nodes_export_their_entry_points() {
     }
 }
 
+/// Scenes never reach into each other, with one earned exception: a route
+/// param's type lives with the scene that consumes it, so the scene
+/// PRODUCING the handoff may name the consumer's module. The allowed
+/// targets are derived from `game.rs` itself — exactly the scenes whose
+/// params `Game`'s mailboxes carry — so a new cross-scene edge only
+/// becomes legal by routing it through `Game`.
+#[test]
+fn scenes_are_isolated() {
+    let scene_names: Vec<String> = units(&src_dir().join("scenes"))
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    let game = src_dir().join("game.rs");
+    let game_text = std::fs::read_to_string(&game).expect("game.rs is readable");
+    let mailbox_scenes: Vec<String> = referenced_paths(&game, &game_text)
+        .into_iter()
+        .filter(|(target, _)| target.first().map(String::as_str) == Some("scenes"))
+        .filter_map(|(target, _)| target.get(1).cloned())
+        .filter(|module| scene_names.contains(module))
+        .collect();
+    let mut violations = Vec::new();
+    for (name, root) in units(&src_dir().join("scenes")) {
+        let files = if root.is_dir() {
+            rust_files(&root)
+        } else {
+            vec![root.clone()]
+        };
+        for file in files {
+            let text = std::fs::read_to_string(&file).expect("source file is readable");
+            for (target, line) in referenced_paths(&file, &text) {
+                let foreign = target.first().map(String::as_str) == Some("scenes")
+                    && target.get(1).is_some_and(|module| {
+                        *module != name
+                            && scene_names.contains(module)
+                            && !mailbox_scenes.contains(module)
+                    });
+                if foreign {
+                    violations.push(format!(
+                        "{}:{line}: crate::{}",
+                        file.display(),
+                        target.join("::")
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "scenes may not reach into other scenes — route params travel through Game:\n{}",
+        violations.join("\n")
+    );
+}
+
 #[test]
 fn nodes_index_is_pure() {
     let index = src_dir().join("nodes/mod.rs");
@@ -130,24 +183,30 @@ fn src_dir() -> PathBuf {
 /// Every custom node as `(name, root)`: a `<name>.rs` file or a `<name>/`
 /// folder directly under `src/nodes`.
 fn nodes() -> Vec<(String, PathBuf)> {
-    let dir = src_dir().join("nodes");
-    let mut nodes = Vec::new();
-    for entry in std::fs::read_dir(&dir).expect("src/nodes exists and is readable") {
+    let nodes = units(&src_dir().join("nodes"));
+    assert!(!nodes.is_empty(), "src/nodes must hold the game's nodes");
+    nodes
+}
+
+/// Every submodule as `(name, root)`: a `<name>.rs` file or a `<name>/`
+/// folder directly under `dir`.
+fn units(dir: &Path) -> Vec<(String, PathBuf)> {
+    let mut units = Vec::new();
+    for entry in std::fs::read_dir(dir).expect("source directory is readable") {
         let path = entry.expect("directory entry is readable").path();
         let stem = path
             .file_stem()
-            .expect("node entries are named")
+            .expect("module entries are named")
             .to_string_lossy()
             .into_owned();
         let is_module_file =
             path.extension().is_some_and(|extension| extension == "rs") && stem != "mod";
         if path.is_dir() || is_module_file {
-            nodes.push((stem, path));
+            units.push((stem, path));
         }
     }
-    nodes.sort();
-    assert!(!nodes.is_empty(), "src/nodes must hold the game's nodes");
-    nodes
+    units.sort();
+    units
 }
 
 fn rust_files(dir: &Path) -> Vec<PathBuf> {
