@@ -1,27 +1,37 @@
-use super::grade_text::{COMBO_GAP, grade_y};
-use super::{ComboText, ForPlayer, HoldOutcome, OffsetOsd, PlaySession, PlaySet, RowGraded};
+use super::grade_text::{COMBO_GAP, GradeArea, grade_y};
+use super::{
+    ComboText, ForPlayer, HoldOutcome, OffsetOsd, PlayInput, PlaySession, PlaySet, PlayTime,
+    RowGraded,
+};
 use crate::core::config::GameConfig;
 use crate::core::health_vial::HealthVial;
-use crate::core::input::Actions;
 use crate::core::note_field::{
     HoldVisual, HoldVisualState, InColumn, InField, NoteField, NoteFieldClock, Receptor,
     visible_world_size,
 };
-use crate::core::settings::{MachineSettings, PlayerSettings};
+use crate::core::settings::PlayerSettings;
 use crate::core::units::Seconds;
+use crate::scenes::GameScene;
 use bevy::prelude::*;
 
 pub(super) fn plugin(app: &mut App) {
     app.add_message::<OffsetOsdLine>()
         .add_systems(
             Update,
-            (sync_note_field, anchor_stage_to_window, sync_health_vials).in_set(PlaySet::Sync),
+            (sync_note_field, sync_health_vials).in_set(PlaySet::Sync),
         )
         .add_systems(
             Update,
-            (update_combo_texts, run_offset_osd)
-                .chain()
-                .in_set(PlaySet::Present),
+            anchor_stage_to_window
+                .in_set(PlaySet::Sync)
+                .run_if(in_state(GameScene::FilePlayer)),
+        )
+        .add_systems(Update, update_combo_texts.in_set(PlaySet::Present))
+        .add_systems(
+            Update,
+            run_offset_osd
+                .in_set(PlaySet::Present)
+                .run_if(in_state(GameScene::FilePlayer)),
         );
 }
 
@@ -68,21 +78,21 @@ fn sync_health_vials(
 /// each field's receptors' pressed panels, and every hold's render state.
 /// Runs after grading and before the fields' animation systems.
 fn sync_note_field(
-    actions: Actions,
+    input: Res<PlayInput>,
     session: Res<PlaySession>,
-    settings: Res<MachineSettings>,
+    play_time: Res<PlayTime>,
     mut clock: ResMut<NoteFieldClock>,
     fields: Query<&NoteField>,
     mut receptors: Query<(&mut Receptor, &InColumn, &InField)>,
     mut holds: Query<&mut HoldVisual>,
 ) {
-    clock.visible = session.visible_now(&settings.timing);
+    clock.visible = play_time.visible;
 
     for (mut receptor, anchor, in_field) in &mut receptors {
         let Ok(field) = fields.get(in_field.0) else {
             continue;
         };
-        let held = actions.pressed(field.step_action(anchor.column));
+        let held = input.held(field.step_action(anchor.column));
         if receptor.held != held {
             receptor.held = held;
         }
@@ -111,9 +121,8 @@ const COMBO_BOUNCE: Seconds = Seconds(0.18);
 
 fn update_combo_texts(
     time: Res<Time>,
-    config: Res<GameConfig>,
     settings: Res<PlayerSettings>,
-    windows: Query<&Window>,
+    area: Option<Res<GradeArea>>,
     mut graded: MessageReader<RowGraded>,
     mut labels: Query<(
         &ForPlayer,
@@ -140,21 +149,16 @@ fn update_combo_texts(
             }
         }
     }
-    let visible_height = windows
-        .single()
-        .map(|window| visible_world_size(window).y)
-        .ok();
     for (owner, mut combo, _, mut transform, _) in &mut labels {
         combo.bounce = (combo.bounce - Seconds(time.delta_secs_f64())).max(Seconds::ZERO);
         let scale = 1.0 + 0.22 * (combo.bounce / COMBO_BOUNCE) as f32;
         if transform.scale.x != scale {
             transform.scale = Vec3::splat(scale);
         }
-        // Tracks under the grade, whose height is the player's grade-position
-        // option; headless renderers keep the spawn position.
-        if let Some(height) = visible_height {
-            let padding = config.stage.screen_edge_padding;
-            let y = grade_y(height, padding, settings[owner.0].grade_position) - COMBO_GAP;
+        // Tracks under the grade, at the height its grade area maps the
+        // player's grade-position option to (screen or preview stripe).
+        if let Some(area) = &area {
+            let y = grade_y(area, settings[owner.0].grade_position) - COMBO_GAP;
             if transform.translation.y != y {
                 transform.translation.y = y;
             }

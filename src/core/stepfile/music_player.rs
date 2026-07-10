@@ -67,6 +67,20 @@ impl MusicPlayer {
         let clock = playing.clock.as_ref()?;
         Some((clock.visible_now(settings), &playing.bgm.stepfile.timing))
     }
+
+    /// The looping sample window a preview can lay a chart over: the
+    /// stepfile's timing and the `[start, start+length)` window the music
+    /// loops. `None` until the clock exists (the music is playing).
+    pub fn loop_window(&self) -> Option<(StepfileTiming, Seconds, Seconds)> {
+        let playing = self.playing.as_ref()?;
+        playing.clock.as_ref()?;
+        let stepfile = &playing.bgm.stepfile;
+        Some((
+            stepfile.timing.clone(),
+            stepfile.sample_start,
+            stepfile.sample_length,
+        ))
+    }
 }
 
 pub struct MusicPlayerPlugin;

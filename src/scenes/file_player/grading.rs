@@ -1,13 +1,13 @@
-use super::{HoldOutcome, MineOutcome, PlaySession, PlaySet, RowGraded, Stage};
+use super::{
+    HoldOutcome, MineOutcome, PlayInput, PlaySession, PlaySet, PlayTime, RowGraded, Stage,
+};
 use crate::core::config::{FixedGradeDef, GameConfig, Grade, RowOutcome};
 use crate::core::font::game_font;
-use crate::core::input::Actions;
 use crate::core::note_field::{
     FadeOut, HOLD_OK_FADE_SECONDS, LaneEffects, NoteField, NoteFieldClock,
 };
 use crate::core::note_skin::ActiveNoteSkins;
 use crate::core::scene_flow::SpawnScoped;
-use crate::core::settings::MachineSettings;
 use crate::core::{OVERLAY_LAYER, at};
 use crate::scenes::{GameScene, scene_accepts_input};
 use bevy::camera::visibility::RenderLayers;
@@ -36,46 +36,54 @@ pub(super) fn plugin(app: &mut App) {
 }
 
 /// The read-only stage state every grading system judges against; each
-/// stage's geometry and input mapping come from its [`NoteField`].
+/// stage's geometry and input mapping come from its [`NoteField`]. Presses
+/// come solely from the [`PlayInput`] port an adapter fills, so the same
+/// grading runs off the keyboard or the preview's autoplay with no branch.
 #[derive(SystemParam)]
 struct GradingContext<'w, 's> {
-    settings: Res<'w, MachineSettings>,
+    play_time: Res<'w, PlayTime>,
     config: Res<'w, GameConfig>,
     skins: Res<'w, ActiveNoteSkins>,
     asset_server: Res<'w, AssetServer>,
     clock: Res<'w, NoteFieldClock>,
+    input: Res<'w, PlayInput>,
     fields: Query<'w, 's, &'static NoteField>,
+}
+
+impl GradingContext<'_, '_> {
+    /// Whether `column` of `field` is held this frame.
+    fn held(&self, field: &NoteField, column: usize) -> bool {
+        self.input.held(field.step_action(column))
+    }
+
+    /// Whether `column` of `field` went down this frame.
+    fn struck(&self, field: &NoteField, column: usize) -> bool {
+        self.input.struck(field.step_action(column))
+    }
 }
 
 /// Banks step presses into the nearest unresolved row with an unbanked
 /// arrow in that column, per stage, and resolves rows whose last arrow
 /// just arrived. Inputs that hit no grading window are no-ops.
 fn bank_row_inputs(
-    actions: Actions,
     ctx: GradingContext,
     mut session: ResMut<PlaySession>,
     mut graded: MessageWriter<RowGraded>,
     mut commands: Commands,
 ) {
-    let GradingContext {
-        settings,
-        config,
-        fields,
-        ..
-    } = &ctx;
-    let widest = config.widest_window();
-    let input_time = session.graded_now(&settings.timing);
+    let widest = ctx.config.widest_window();
+    let input_time = ctx.play_time.graded;
 
     let session = &mut *session;
     for stage in &mut session.stages {
-        let Ok(field) = fields.get(stage.field) else {
+        let Ok(field) = ctx.fields.get(stage.field) else {
             continue;
         };
         if stage.failed {
             continue;
         }
         for column in 0..field.columns {
-            if !actions.just_pressed(field.step_action(column)) {
+            if !ctx.struck(field, column) {
                 continue;
             }
             let candidate = stage
@@ -180,13 +188,12 @@ fn expire_missed_rows(
     mut commands: Commands,
 ) {
     let GradingContext {
-        settings,
         config,
         clock,
         fields,
         ..
     } = &ctx;
-    let expire_before = session.graded_now(&settings.timing) - config.widest_window();
+    let expire_before = ctx.play_time.graded - config.widest_window();
     for stage in &mut session.stages {
         let Ok(field) = fields.get(stage.field) else {
             continue;
@@ -231,20 +238,18 @@ fn expire_missed_rows(
 /// and refill on fresh steps. Life zero drops the hold (NG); reaching the
 /// tail with life left keeps it (OK).
 fn update_holds(
-    actions: Actions,
     time: Res<Time>,
     ctx: GradingContext,
     mut session: ResMut<PlaySession>,
     mut commands: Commands,
 ) {
     let GradingContext {
-        settings,
         config,
         clock,
         fields,
         ..
     } = &ctx;
-    let now = session.graded_now(&settings.timing);
+    let now = ctx.play_time.graded;
     let delta = time.delta_secs();
     for stage in &mut session.stages {
         let Ok(field) = fields.get(stage.field) else {
@@ -262,14 +267,13 @@ fn update_holds(
                 continue;
             }
 
-            let action = field.step_action(arrow.column);
             if hold.roll {
-                if actions.just_pressed(action) {
+                if ctx.struck(field, arrow.column) {
                     hold.life = 1.0;
                 }
-                hold.held_now = actions.pressed(action);
+                hold.held_now = ctx.held(field, arrow.column);
                 hold.life -= delta / config.grading.roll_grace_seconds;
-            } else if actions.pressed(action) {
+            } else if ctx.held(field, arrow.column) {
                 hold.held_now = true;
                 hold.life = 1.0;
             } else {
@@ -310,21 +314,15 @@ fn update_holds(
 
 /// A mine explodes if its panel is being held as the mine crosses the
 /// receptors; otherwise it passes by harmlessly.
-fn update_mines(
-    actions: Actions,
-    ctx: GradingContext,
-    mut session: ResMut<PlaySession>,
-    mut commands: Commands,
-) {
+fn update_mines(ctx: GradingContext, mut session: ResMut<PlaySession>, mut commands: Commands) {
     let GradingContext {
-        settings,
         skins,
         asset_server,
         clock,
         fields,
         ..
     } = &ctx;
-    let now = session.graded_now(&settings.timing);
+    let now = ctx.play_time.graded;
     for stage in &mut session.stages {
         let Ok(field) = fields.get(stage.field) else {
             continue;
@@ -336,7 +334,7 @@ fn update_mines(
             if mine.outcome.is_some() || mine.time.0 > now.0 {
                 continue;
             }
-            if !actions.pressed(field.step_action(mine.column)) {
+            if !ctx.held(field, mine.column) {
                 mine.outcome = Some(MineOutcome::Avoided);
                 continue;
             }

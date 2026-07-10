@@ -1,8 +1,7 @@
-use super::{PlaySession, PlaySet};
+use super::{PlaySet, PlayTime};
 use crate::core::assets::asset_server_path;
 use crate::core::library::{StepfileEntry, is_video_file};
 use crate::core::scene_flow::SpawnScoped;
-use crate::core::settings::MachineSettings;
 use crate::core::stepfile::StepfileTiming;
 use crate::core::units::Seconds;
 use crate::core::video::VideoStream;
@@ -24,7 +23,8 @@ pub(super) fn plugin(app: &mut App) {
                 stream_video_frames,
             )
                 .chain()
-                .in_set(PlaySet::Present),
+                .in_set(PlaySet::Present)
+                .run_if(in_state(GameScene::FilePlayer)),
         );
 }
 
@@ -100,8 +100,7 @@ struct BackgroundCue {
 }
 
 fn cue_background_changes(
-    session: Res<PlaySession>,
-    settings: Res<MachineSettings>,
+    play_time: Res<PlayTime>,
     mut timeline: ResMut<BackgroundTimeline>,
     mut cues: MessageWriter<BackgroundCue>,
 ) {
@@ -113,7 +112,7 @@ fn cue_background_changes(
             loops: false,
         });
     }
-    let now = session.visible_now(&settings.timing);
+    let now = play_time.visible;
     while timeline.next < timeline.changes.len() && timeline.changes[timeline.next].time.0 <= now.0
     {
         let change = &timeline.changes[timeline.next];
@@ -214,12 +213,11 @@ fn fade_background_layers(
 }
 
 fn stream_video_frames(
-    session: Res<PlaySession>,
-    settings: Res<MachineSettings>,
+    play_time: Res<PlayTime>,
     mut images: ResMut<Assets<Image>>,
     mut videos: Query<&mut VideoStream>,
 ) {
-    let now = session.visible_now(&settings.timing);
+    let now = play_time.visible;
     for mut video in &mut videos {
         video.update(now, &mut images);
     }

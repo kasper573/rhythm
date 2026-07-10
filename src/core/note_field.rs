@@ -87,6 +87,10 @@ pub struct NoteField {
     pub columns: usize,
     pub speed: NoteSpeed,
     pub arrow_size: f32,
+    /// Where this field's lane camera renders and the canvas it maps there:
+    /// the window for the play stage, an offscreen image for headless
+    /// renderers and the embedded options preview.
+    pub view: LaneView,
 }
 
 impl NoteField {
@@ -173,9 +177,9 @@ impl NoteFieldClock {
 /// What the lane cameras must line up with: where they draw, and the
 /// design canvas the world camera keeps visible there (`AutoMin`), so the
 /// lane plane renders 1:1 with the 2D world. The game's default is the
-/// primary window and its 1280x720 canvas; headless renderers point it at
-/// their capture image, whose world is the image itself.
-#[derive(Resource)]
+/// primary window and its 1280x720 canvas; headless renderers and embedded
+/// previews point it at their own image, whose world is the image itself.
+#[derive(Clone)]
 pub struct LaneView {
     pub target: RenderTarget,
     pub canvas: Vec2,
@@ -610,26 +614,25 @@ pub struct NoteFieldPlugin;
 
 impl Plugin for NoteFieldPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<LaneView>()
-            .add_systems(
-                Update,
-                (
-                    place_field_elements,
-                    position_receptors,
-                    scroll_arrows,
-                    animate_sheet_taps,
-                    animate_hold_heads,
-                    animate_receptor_frames,
-                    animate_receptor_press,
-                    animate_hold_parts,
-                    animate_mines,
-                    fade_out,
-                )
-                    .chain()
-                    .in_set(NoteFieldSystems)
-                    .run_if(resource_exists::<NoteFieldClock>),
+        app.add_systems(
+            Update,
+            (
+                place_field_elements,
+                position_receptors,
+                scroll_arrows,
+                animate_sheet_taps,
+                animate_hold_heads,
+                animate_receptor_frames,
+                animate_receptor_press,
+                animate_hold_parts,
+                animate_mines,
+                fade_out,
             )
-            .add_systems(Update, sync_lane_cameras);
+                .chain()
+                .in_set(NoteFieldSystems)
+                .run_if(resource_exists::<NoteFieldClock>),
+        )
+        .add_systems(Update, sync_lane_cameras);
     }
 }
 
@@ -732,7 +735,6 @@ fn sync_lane_cameras(
     fields: Query<(Entity, &NoteField)>,
     settings: Res<PlayerSettings>,
     clock: Option<Res<NoteFieldClock>>,
-    view: Res<LaneView>,
     mut cameras: Query<(
         Entity,
         &LaneCamera,
@@ -763,7 +765,7 @@ fn sync_lane_cameras(
                     clear_color: ClearColorConfig::None,
                     ..default()
                 },
-                view.target.clone(),
+                field.view.target.clone(),
                 Tonemapping::None,
                 field.render_layers(),
                 Projection::custom(LanePerspective {
@@ -779,9 +781,10 @@ fn sync_lane_cameras(
         let perspective = settings[field.player].perspective;
 
         // The world rect the main ortho camera shows, covering the canvas.
+        let canvas = field.view.canvas;
         let visible = Vec2::new(
-            size.x * (view.canvas.x / size.x).max(view.canvas.y / size.y),
-            size.y * (view.canvas.x / size.x).max(view.canvas.y / size.y),
+            size.x * (canvas.x / size.x).max(canvas.y / size.y),
+            size.y * (canvas.x / size.x).max(canvas.y / size.y),
         );
         let distance = visible.y * 0.5 / (fov * 0.5).tan();
         let tilt_magnitude = config.lane_camera.tilt_degrees.to_radians();

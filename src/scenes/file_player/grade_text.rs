@@ -5,12 +5,11 @@
 //! and strengths (see [`grade_text.wgsl`](../../../assets/shaders/grade_text.wgsl)).
 
 use super::{ForPlayer, PlaySet, RowGraded};
-use crate::core::OVERLAY_LAYER;
 use crate::core::config::{DynamicGradeDef, GameConfig, Grade, RowOutcome, TimingFeedback};
 use crate::core::font::game_font;
 use crate::core::note_field::visible_world_size;
 use crate::core::player::PlayerId;
-use crate::core::settings::{GradeLayer, PlayerSettings};
+use crate::core::settings::PlayerSettings;
 use crate::core::units::{Percent, Seconds};
 use crate::scenes::GameScene;
 use bevy::camera::visibility::RenderLayers;
@@ -57,9 +56,6 @@ const BOUNCE_AMOUNT: f32 = 0.18;
 /// Seconds a grade takes to fade out once the player stops hitting.
 const FADE_SECONDS: f32 = 1.0;
 const GRADE_Z: f32 = 6.0;
-/// Private render layers the offscreen word cameras draw, one per rig,
-/// clear of the lane and overlay layers.
-const SOURCE_LAYER_BASE: usize = 20;
 /// The offscreen cameras render to images, not the window, so their order
 /// only needs to be distinct and out of the window cameras' way.
 const SOURCE_CAMERA_ORDER: isize = -100;
@@ -71,6 +67,12 @@ pub(super) fn plugin(app: &mut App) {
             (apply_grades, animate_grades)
                 .chain()
                 .in_set(PlaySet::Present),
+        )
+        .add_systems(
+            Update,
+            set_stage_grade_area
+                .in_set(PlaySet::Present)
+                .run_if(in_state(GameScene::FilePlayer)),
         );
 }
 
@@ -161,31 +163,35 @@ pub fn spawn_rig(
     }
 }
 
-/// Spawns one player's grade-text rig on the play stage, positioned over
-/// the field and layered behind or in front of the arrows per `layer`.
-pub(super) fn spawn(
+/// Where and how a grade-text display is placed: its player, the field's
+/// x center, the private layer its offscreen word renders on, and the layer
+/// its shader quad presents on (`None` for the default layer).
+pub struct GradeSpawn {
+    pub player: PlayerId,
+    pub origin_x: f32,
+    pub source_layer: usize,
+    pub present_layer: Option<usize>,
+}
+
+/// Spawns a grade-text display driven by the shared [`apply_grades`] /
+/// [`animate_grades`] systems: the offscreen rig plus the [`GradeText`]
+/// state, scoped to `scope`. Returns the quad entity. Used by the play stage
+/// and the options preview alike.
+pub fn spawn_display(
     commands: &mut Commands,
-    asset_server: &AssetServer,
     images: &mut Assets<Image>,
-    player: PlayerId,
-    origin_x: f32,
-    layer: GradeLayer,
-) {
-    let rig = spawn_rig(
-        commands,
-        images,
-        asset_server,
-        SOURCE_LAYER_BASE + player_index(player),
-    );
+    asset_server: &AssetServer,
+    spec: GradeSpawn,
+    scope: impl Bundle + Clone,
+) -> Entity {
+    let rig = spawn_rig(commands, images, asset_server, spec.source_layer);
     for entity in [rig.camera, rig.source] {
-        commands
-            .entity(entity)
-            .insert(DespawnOnExit(GameScene::FilePlayer));
+        commands.entity(entity).insert(scope.clone());
     }
     let mut present = commands.entity(rig.present);
     present.insert((
         GradeText {
-            player,
+            player: spec.player,
             source: rig.source,
             intensity: 0.0,
             pulse: 0.0,
@@ -194,13 +200,14 @@ pub(super) fn spawn(
             glow: Color::WHITE,
             strength: 0.0,
         },
-        ForPlayer(player),
-        Transform::from_xyz(origin_x, 0.0, GRADE_Z),
-        DespawnOnExit(GameScene::FilePlayer),
+        ForPlayer(spec.player),
+        Transform::from_xyz(spec.origin_x, 0.0, GRADE_Z),
+        scope,
     ));
-    if layer == GradeLayer::InFront {
-        present.insert(RenderLayers::layer(OVERLAY_LAYER));
+    if let Some(layer) = spec.present_layer {
+        present.insert(RenderLayers::layer(layer));
     }
+    rig.present
 }
 
 /// The offscreen word entity, rendered white so the shader owns its color.
@@ -293,12 +300,12 @@ fn apply_grades(
 }
 
 /// Advances every word's fade, glow pulse, and pop, keeps it at the
-/// player's configured height, and feeds the shader its uniforms.
+/// player's configured height within the [`GradeArea`], and feeds the shader
+/// its uniforms. The `x` is set once at spawn; only `y` tracks the option.
 fn animate_grades(
     time: Res<Time>,
-    config: Res<GameConfig>,
     settings: Res<PlayerSettings>,
-    windows: Query<&Window>,
+    area: Option<Res<GradeArea>>,
     mut materials: ResMut<Assets<GradeTextMaterial>>,
     mut grades: Query<(
         &mut GradeText,
@@ -307,10 +314,6 @@ fn animate_grades(
     )>,
 ) {
     let delta = time.delta_secs();
-    let visible_height = windows
-        .single()
-        .map(|window| visible_world_size(window).y)
-        .ok();
     for (mut grade, material, mut transform) in &mut grades {
         if grade.intensity <= 0.0 {
             continue;
@@ -332,29 +335,45 @@ fn animate_grades(
 
         let bounce = EaseFunction::CubicOut.sample_clamped(grade.bounce);
         transform.scale = Vec3::splat(1.0 + BOUNCE_AMOUNT * bounce);
-        if let Some(height) = visible_height {
-            let padding = config.stage.screen_edge_padding;
-            transform.translation.y =
-                grade_y(height, padding, settings[grade.player].grade_position);
+        if let Some(area) = &area {
+            transform.translation.y = grade_y(area, settings[grade.player].grade_position);
         }
     }
 }
 
-/// The grade word's world Y for a player's grade-position percentage,
-/// keeping the whole grade group — the word and the combo tracking under
-/// it — inside the screen's padded band. 0% pins the word's top to the top
-/// padding; 100% pins the combo's bottom to the bottom padding.
-pub fn grade_y(visible_height: f32, padding: f32, grade_position: Percent) -> f32 {
-    let top = visible_height / 2.0 - padding - GRADE_HALF_HEIGHT;
-    let bottom = -visible_height / 2.0 + padding + COMBO_GAP + COMBO_HALF_HEIGHT;
-    let t = (grade_position.0 / 100.0).clamp(0.0, 1.0);
-    top + (bottom - top) * t
+/// Publishes the play stage's [`GradeArea`] from the padded window, so grades
+/// map their height option to the screen. The options preview fills its own.
+fn set_stage_grade_area(config: Res<GameConfig>, windows: Query<&Window>, mut commands: Commands) {
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let half = visible_world_size(window).y / 2.0;
+    let padding = config.stage.screen_edge_padding;
+    commands.insert_resource(grade_area(half - padding, -half + padding));
 }
 
-fn player_index(player: PlayerId) -> usize {
-    match player {
-        PlayerId::P1 => 0,
-        PlayerId::P2 => 1,
+/// The world Y band the grade group occupies, top (0%) to bottom (100%).
+/// Each context fills it: the play stage from the padded window, the options
+/// preview from the modal stripe.
+#[derive(Resource, Default, Clone, Copy)]
+pub struct GradeArea {
+    pub top: f32,
+    pub bottom: f32,
+}
+
+/// The grade word's world Y for a player's grade-position percentage within
+/// its area: 0% at the top, 100% at the bottom.
+pub fn grade_y(area: &GradeArea, grade_position: Percent) -> f32 {
+    let t = (grade_position.0 / 100.0).clamp(0.0, 1.0);
+    area.top + (area.bottom - area.top) * t
+}
+
+/// The grade area for a usable band spanning `top_edge`..`bottom_edge` (world
+/// Y), inset so the word and the combo tracking under it both stay inside.
+pub fn grade_area(top_edge: f32, bottom_edge: f32) -> GradeArea {
+    GradeArea {
+        top: top_edge - GRADE_HALF_HEIGHT,
+        bottom: bottom_edge + COMBO_GAP + COMBO_HALF_HEIGHT,
     }
 }
 

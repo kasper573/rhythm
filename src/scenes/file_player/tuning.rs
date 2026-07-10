@@ -4,6 +4,7 @@ use crate::core::config::GameConfig;
 use crate::core::input::{Actions, GameAction, shift_held};
 use crate::core::settings::MachineSettings;
 use crate::core::units::Millis;
+use crate::scenes::GameScene;
 use bevy::prelude::*;
 
 /// The machine-tuning controls live during play: toggling the tick track,
@@ -20,7 +21,8 @@ pub(super) fn plugin(app: &mut App) {
             adjust_timing_offsets,
         )
             .chain()
-            .in_set(PlaySet::Tune),
+            .in_set(PlaySet::Tune)
+            .run_if(in_state(GameScene::FilePlayer)),
     );
 }
 

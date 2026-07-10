@@ -1,22 +1,29 @@
-use super::FileSelectFocus;
+use super::{FileSelectFocus, ModalStripe};
+use crate::core::SCREEN_SIZE;
 use crate::core::config::GameConfig;
 use crate::core::font::game_font;
 use crate::core::input::{Actions, GameAction, NavPulse, StepDirection};
 use crate::core::menu::{ACTIVE_COLOR, INACTIVE_COLOR, TITLE_COLOR};
 use crate::core::note_field::{
-    HoldVisual, HoldVisualState, InField, NoteField, NoteFieldClock, NoteSpawn, NoteSpeed,
-    NoteTail, Perspective, spawn_note, spawn_note_field, visible_world_size,
+    LaneView, NoteField, NoteFieldClock, NoteSpeed, Perspective, fitted_arrow_size, max_arrow_size,
 };
 use crate::core::note_skin::{ActiveNoteSkins, NoteSkinLibrary};
 use crate::core::player::{PlayMode, PlayerId};
 use crate::core::scene_flow::SpawnScoped;
 use crate::core::settings::{GradeLayer, MachineSettings, PlayerOptions, PlayerSettings};
 use crate::core::sfx::{PlaySfx, Sfx};
-use crate::core::stepfile::MusicPlayer;
+use crate::core::stepfile::{Arrow, MusicPlayer, Row, StepfileTiming, Tail};
 use crate::core::units::{Beat, Percent, Seconds};
+use crate::scenes::file_player::{
+    FieldSpec, GameplayDrive, PlayInput, PlayTime, PrefabAssets, SessionSpec, clear_session,
+    grade_text, spawn_session,
+};
+use bevy::camera::visibility::RenderLayers;
+use bevy::camera::{ClearColorConfig, RenderTarget, ScalingMode};
 use bevy::ecs::query::QueryFilter;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
+use bevy::render::render_resource::TextureFormat;
 use strum::{EnumCount, EnumIter, IntoEnumIterator, IntoStaticStr};
 
 /// The player options modal: edits each active player's options in place
@@ -26,7 +33,7 @@ use strum::{EnumCount, EnumIter, IntoEnumIterator, IntoStaticStr};
 /// P1 to the left, P2 to the right — each driven by its player's own pad.
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(OnEnter(FileSelectFocus::PlayerOptions), enter)
-        .add_systems(OnExit(FileSelectFocus::PlayerOptions), exit_previews)
+        .add_systems(OnExit(FileSelectFocus::PlayerOptions), teardown_preview)
         .add_systems(
             Update,
             (
@@ -35,11 +42,31 @@ pub(super) fn plugin(app: &mut App) {
                 refresh_values,
                 highlight_rows,
                 animate_transition,
-                rebuild_previews_on_skin_change,
-                drive_skin_previews.before(crate::core::note_field::NoteFieldSystems),
             )
                 .chain()
                 .run_if(in_state(FileSelectFocus::PlayerOptions)),
+        )
+        .add_systems(
+            Update,
+            build_preview.run_if(
+                in_state(FileSelectFocus::PlayerOptions)
+                    .and_then(not(resource_exists::<PreviewState>)),
+            ),
+        )
+        .add_systems(
+            Update,
+            rebuild_preview.run_if(
+                in_state(FileSelectFocus::PlayerOptions).and_then(resource_exists::<PreviewState>),
+            ),
+        )
+        // The mocked adapter's port drivers: fill the wheel-music clock and the
+        // deterministic autoplay input, in the prefab's drive phase.
+        .add_systems(
+            Update,
+            (drive_clock, mock_input)
+                .chain()
+                .in_set(GameplayDrive)
+                .run_if(resource_exists::<PreviewState>),
         );
 }
 
@@ -51,18 +78,25 @@ fn enter(
     settings: Res<PlayerSettings>,
     config: Res<GameConfig>,
     skins: Res<NoteSkinLibrary>,
-    active_skins: Res<ActiveNoteSkins>,
-    asset_server: Res<AssetServer>,
 ) {
-    for player in mode.players() {
-        spawn_preview(&mut commands, &asset_server, &active_skins, *player);
+    let players = mode.players();
+    let versus = players.len() > 1;
+    // Each player's cursor lives on its own entity; the shared table reads
+    // them all so option names render once and the value columns line up.
+    for player in players {
+        commands.spawn_scoped(
+            FileSelectFocus::PlayerOptions,
+            bsn! { OptionsPanel { player: {*player}, active_row: 0 } },
+        );
     }
-    let tagged = mode.players().len() > 1;
-    let panels: Vec<_> = mode
-        .players()
-        .iter()
-        .map(|player| panel_scene(*player, tagged, &settings[*player], &config, &skins))
-        .collect();
+    // Equal flanks on both sides keep the table centered whatever it reads;
+    // each active player's flank hosts a preview surface the mocked adapter
+    // fills through the file player prefab (see below).
+    let left = vec![flank_scene(players.first().copied())];
+    let options = vec![options_column_scene(
+        players, versus, &settings, &config, &skins,
+    )];
+    let right = vec![flank_scene(players.get(1).copied())];
     commands.spawn_scoped(
         FileSelectFocus::PlayerOptions,
         bsn! {
@@ -78,12 +112,14 @@ fn enter(
                 Children [
                     (
                         ModalBackground
+                        ModalStripe
                         Node {
                             position_type: PositionType::Absolute,
                             left: percent(-100),
                             top: px(0),
                             bottom: px(0),
                             width: percent(100),
+                            overflow: {Overflow::clip()},
                         }
                         BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.0))
                     ),
@@ -92,27 +128,12 @@ fn enter(
                         Node {
                             width: percent(100),
                             left: percent(100),
-                            flex_direction: FlexDirection::Column,
+                            flex_direction: FlexDirection::Row,
+                            justify_content: JustifyContent::Center,
                             align_items: AlignItems::Center,
-                            padding: {UiRect::vertical(Val::Px(28.0))},
-                            row_gap: px(18),
+                            padding: {UiRect::vertical(Val::Px(24.0))},
                         }
-                        Children [
-                            (
-                                ModalText
-                                game_font(52.0)
-                                Text("Player Options")
-                                TextColor({TITLE_COLOR})
-                                Node { margin: {UiRect::bottom(Val::Px(16.0))} }
-                            ),
-                            (
-                                Node {
-                                    column_gap: px(110),
-                                    align_items: AlignItems::FlexStart,
-                                }
-                                Children [ {panels} ]
-                            ),
-                        ]
+                        Children [ {left}, {options}, {right} ]
                     ),
                 ]
             )]
@@ -120,77 +141,550 @@ fn enter(
     );
 }
 
-/// One player's column of option rows, each showing only its selected
-/// value; ¤Up¤/¤Down¤ move between rows, ¤Left¤/¤Right¤ change the value
-/// in place.
-fn panel_scene(
+/// A flex-grow column beside the table. Present on both sides so the table
+/// stays centered; an active player's flank carries a [`PreviewSurface`] the
+/// file player renders their autoplayed field into, an empty one is a spacer.
+fn flank_scene(player: Option<PlayerId>) -> impl Scene {
+    let surface: Vec<_> = player.map(surface_scene).into_iter().collect();
+    bsn! {
+        Node {
+            flex_grow: 1.0,
+            flex_basis: px(0),
+            min_width: px(0),
+            align_self: AlignSelf::Stretch,
+        }
+        Children [ {surface} ]
+    }
+}
+
+fn surface_scene(player: PlayerId) -> impl Scene {
+    bsn! {
+        PreviewSurface { player: {player} }
+        Node {
+            width: percent(100),
+            height: percent(100),
+            overflow: {Overflow::clip()},
+        }
+    }
+}
+
+// ===== The mocked gameplay adapter =====
+// Drives the file player prefab (see `file_player::spawn_session`) as an
+// autoplayed preview: a mocked chart on offscreen surfaces, clocked by the
+// wheel music, rebuilt in place whenever an option changes so the preview
+// always reflects the current selection exactly.
+
+/// The UI node a player's preview renders into; the adapter fills it with the
+/// blitted playfield image.
+#[derive(Component, Clone, Copy, FromTemplate)]
+struct PreviewSurface {
     player: PlayerId,
-    tagged: bool,
-    options: &PlayerOptions,
+}
+
+/// The design-canvas height each preview frames, so a field reads as tall as
+/// it does full-screen before its surface scales it down.
+const PREVIEW_BAND: f32 = SCREEN_SIZE.y;
+/// Per-surface lane index, so each field draws on its own layer/camera.
+const PREVIEW_LANE_BASE: usize = 40;
+/// The 2D grade cameras' orders, bracketing the lane cameras (orders `1 +
+/// lane`, i.e. 41 up): behind clears each image to the stripe black so the
+/// additive glow lands on it, in front draws last.
+const PREVIEW_BEHIND_ORDER: isize = 20;
+const PREVIEW_FRONT_ORDER: isize = 60;
+/// The grades the autoplay walks through — only the top three tiers.
+const PREVIEW_GRADES: [usize; 3] = [0, 1, 2];
+
+/// Marks every field entity the preview spawns, so a rebuild can clear just
+/// the fields and leave the surfaces.
+#[derive(Component, Clone)]
+struct PreviewField;
+
+/// The live preview: its per-player surfaces, the mocked chart, and the music
+/// loop tracking that triggers a restart.
+#[derive(Resource)]
+struct PreviewState {
+    surfaces: Vec<PreviewSurfaceInfo>,
+    timing: StepfileTiming,
+    rows: Vec<Row>,
+    last_visible: Seconds,
+    /// Set on the first frame and each music loop; consumed by the rebuild.
+    rebuild: bool,
+}
+
+struct PreviewSurfaceInfo {
+    player: PlayerId,
+    image: Handle<Image>,
+    index: usize,
+}
+
+/// The prefab's asset handles, bundled for the spawners.
+#[derive(SystemParam)]
+struct PreviewAssets<'w> {
+    asset_server: Res<'w, AssetServer>,
+    images: ResMut<'w, Assets<Image>>,
+    config: Res<'w, GameConfig>,
+    skins: Res<'w, ActiveNoteSkins>,
+}
+
+impl PreviewAssets<'_> {
+    fn prefab(&mut self) -> PrefabAssets<'_> {
+        PrefabAssets {
+            asset_server: &self.asset_server,
+            images: &mut self.images,
+            config: &self.config,
+            skins: &self.skins,
+        }
+    }
+}
+
+/// Once the wheel music plays and every surface is laid out, builds a render
+/// image and its compositing cameras per surface, publishes the band's clock
+/// and grade area, and arms the first field spawn (via [`rebuild_preview`]).
+fn build_preview(
+    music: Res<MusicPlayer>,
+    config: Res<GameConfig>,
+    surfaces: Query<(Entity, &PreviewSurface, &ComputedNode)>,
+    mut images: ResMut<Assets<Image>>,
+    mut commands: Commands,
+) {
+    let Some((timing, start, length)) = music.loop_window() else {
+        return;
+    };
+    let mut sized: Vec<(Entity, PlayerId, Vec2)> = surfaces
+        .iter()
+        .map(|(node, surface, computed)| (node, surface.player, computed.size()))
+        .collect();
+    if sized.is_empty()
+        || sized
+            .iter()
+            .any(|(_, _, size)| size.x <= 0.0 || size.y <= 0.0)
+    {
+        return;
+    }
+    sized.sort_by_key(|(_, player, _)| player_order(*player));
+
+    let mut infos = Vec::new();
+    for (index, (node, player, size)) in sized.into_iter().enumerate() {
+        let resolution = image_size(size);
+        let image = images.add(Image::new_target_texture(
+            resolution.x,
+            resolution.y,
+            TextureFormat::Rgba8UnormSrgb,
+            None,
+        ));
+        let (behind, front) = surface_layers(index);
+        for (order, layer, clear) in [
+            (
+                PREVIEW_BEHIND_ORDER,
+                behind,
+                ClearColorConfig::Custom(Color::BLACK),
+            ),
+            (PREVIEW_FRONT_ORDER, front, ClearColorConfig::None),
+        ] {
+            commands.spawn_scene(bsn! { Camera2d }).insert((
+                Camera {
+                    order,
+                    clear_color: clear,
+                    ..default()
+                },
+                RenderTarget::Image(image.clone().into()),
+                band_projection(),
+                RenderLayers::layer(layer),
+                DespawnOnExit(FileSelectFocus::PlayerOptions),
+            ));
+        }
+        commands.entity(node).insert(ImageNode::new(image.clone()));
+        infos.push(PreviewSurfaceInfo {
+            player,
+            image,
+            index,
+        });
+    }
+
+    let half = PREVIEW_BAND / 2.0;
+    let padding = config.stage.screen_edge_padding;
+    let arrow = preview_arrow_size(&config);
+    commands.insert_resource(NoteFieldClock {
+        visible: Seconds::ZERO,
+        timing: timing.clone(),
+        target_y: half - padding - arrow / 2.0,
+    });
+    commands.insert_resource(grade_text::grade_area(half - padding, -half + padding));
+    commands.insert_resource(PreviewState {
+        surfaces: infos,
+        rows: mocked_rows(&timing, start, length),
+        timing,
+        last_visible: Seconds::ZERO,
+        rebuild: true,
+    });
+}
+
+/// The mocked adapter's CLOCK driver: fills the prefab's [`PlayTime`] port
+/// from the wheel music and flags a rebuild each time the music loops back.
+fn drive_clock(
+    music: Res<MusicPlayer>,
+    machine: Res<MachineSettings>,
+    mut state: ResMut<PreviewState>,
+    mut play_time: ResMut<PlayTime>,
+) {
+    let Some((visible, _)) = music.visible_now(&machine.timing) else {
+        return;
+    };
+    if visible.0 + 0.05 < state.last_visible.0 {
+        state.rebuild = true;
+    }
+    state.last_visible = visible;
+    play_time.graded = visible;
+    play_time.visible = visible;
+}
+
+/// The mocked adapter's INPUT driver: fills the prefab's [`PlayInput`] port
+/// deterministically — every note in its hit window is pressed at the offset
+/// that grades it to its tier, held through a hold's tail. No keyboard.
+fn mock_input(
+    state: Res<PreviewState>,
+    play_time: Res<PlayTime>,
+    config: Res<GameConfig>,
+    mut input: ResMut<PlayInput>,
+) {
+    input.clear();
+    let now = play_time.graded.0;
+    let timing = &state.timing;
+    for surface in &state.surfaces {
+        for row in &state.rows {
+            let time = timing.seconds_at_beat(row.beat).0;
+            let Some(offset) = autoplay_offset(&config, note_tier(row.beat)) else {
+                continue;
+            };
+            let due = time - offset.0;
+            for arrow in &row.arrows {
+                if now >= due && now < arrow_until(row, arrow, timing) {
+                    let action =
+                        GameAction::step(surface.player, StepDirection::of_column(arrow.column));
+                    input.press(action, true);
+                }
+            }
+        }
+    }
+}
+
+/// Rebuilds the fields whenever an option changes or the music loops, so the
+/// preview always reflects the current selection exactly. Only rows still
+/// within their hit window are laid down, so a mid-stream rebuild never
+/// re-materializes a passed note that would then miss.
+fn rebuild_preview(
+    mut state: ResMut<PreviewState>,
+    settings: Res<PlayerSettings>,
+    music: Res<MusicPlayer>,
+    machine: Res<MachineSettings>,
+    mut assets: PreviewAssets,
+    fields: Query<Entity, With<PreviewField>>,
+    mut commands: Commands,
+) {
+    if !state.rebuild && !settings.is_changed() && !assets.skins.is_changed() {
+        return;
+    }
+    state.rebuild = false;
+    for entity in &fields {
+        commands.entity(entity).despawn();
+    }
+    let now = music
+        .visible_now(&machine.timing)
+        .map(|(visible, _)| visible.0)
+        .unwrap_or(f64::NEG_INFINITY);
+    let timing = state.timing.clone();
+    let live: Vec<Row> = state
+        .rows
+        .iter()
+        .filter(|row| row_until(row, &timing) > now)
+        .cloned()
+        .collect();
+    let specs: Vec<FieldSpec> = state
+        .surfaces
+        .iter()
+        .map(|surface| {
+            let (behind, front) = surface_layers(surface.index);
+            let present = match settings[surface.player].grade_layer {
+                GradeLayer::Behind => behind,
+                GradeLayer::InFront => front,
+            };
+            FieldSpec {
+                layout: NoteField {
+                    player: surface.player,
+                    lane: PREVIEW_LANE_BASE + surface.index,
+                    origin_x: 0.0,
+                    columns: 4,
+                    speed: settings[surface.player].note_speed,
+                    arrow_size: preview_arrow_size(&assets.config),
+                    view: band_view(surface.image.clone()),
+                },
+                rows: &live,
+                mines: &[],
+                grade_source_layer: behind_source(surface.index),
+                grade_present_layer: Some(present),
+                max_health: u32::MAX,
+            }
+        })
+        .collect();
+    spawn_session(
+        &mut commands,
+        &mut assets.prefab(),
+        SessionSpec {
+            title: String::new(),
+            fields: specs,
+            timing: state.timing.clone(),
+        },
+        (DespawnOnExit(FileSelectFocus::PlayerOptions), PreviewField),
+    );
+}
+
+/// Leaves the modal: drops the preview's ports (its entities and surfaces are
+/// scoped to the modal and despawn on their own).
+fn teardown_preview(mut commands: Commands) {
+    clear_session(&mut commands);
+    commands.remove_resource::<PreviewState>();
+    commands.remove_resource::<NoteFieldClock>();
+    commands.remove_resource::<grade_text::GradeArea>();
+}
+
+/// How long past its note an autoplayed tap stays pressed — long enough to
+/// bank, short enough not to catch the next note in its column.
+const AUTOPLAY_TAP_HOLD: f64 = 0.05;
+
+/// The grade tier a note plays to, by its 8th-note position so it stays put
+/// however the rows are filtered on a rebuild.
+fn note_tier(beat: Beat) -> usize {
+    let ordinal = (beat.0 * 2.0).round() as i64;
+    PREVIEW_GRADES[ordinal.rem_euclid(PREVIEW_GRADES.len() as i64) as usize]
+}
+
+/// The seconds an arrow stops being pressed: a hold's tail, or a tap's brief
+/// release window.
+fn arrow_until(row: &Row, arrow: &Arrow, timing: &StepfileTiming) -> f64 {
+    match arrow.tail {
+        Some(tail) => timing.seconds_at_beat(tail.end).0,
+        None => timing.seconds_at_beat(row.beat).0 + AUTOPLAY_TAP_HOLD,
+    }
+}
+
+/// The seconds a row stops being pressable, for the rebuild's live-rows filter.
+fn row_until(row: &Row, timing: &StepfileTiming) -> f64 {
+    row.arrows
+        .iter()
+        .map(|arrow| arrow_until(row, arrow, timing))
+        .fold(timing.seconds_at_beat(row.beat).0, f64::max)
+}
+
+/// The timing error to press a note with so it grades to `tier`: the midpoint
+/// of the tier's window.
+fn autoplay_offset(config: &GameConfig, tier: usize) -> Option<Seconds> {
+    let dynamic = &config.grading.dynamic;
+    let def = dynamic.get(tier)?;
+    let lower = if tier == 0 {
+        0.0
+    } else {
+        dynamic[tier - 1].window_ms
+    };
+    Some(Seconds::from_millis((lower + def.window_ms) / 2.0))
+}
+
+fn player_order(player: PlayerId) -> u8 {
+    match player {
+        PlayerId::P1 => 0,
+        PlayerId::P2 => 1,
+    }
+}
+
+/// The behind/in-front present layers surface `index` draws on, clear of the
+/// file-select scene's (0, 8) and of every other surface.
+fn surface_layers(index: usize) -> (usize, usize) {
+    let base = 24 + index * 4;
+    (base + 1, base + 2)
+}
+
+/// The offscreen grade word's private source layer for surface `index`.
+fn behind_source(index: usize) -> usize {
+    24 + index * 4
+}
+
+/// The lane camera's view onto a surface image: full [`PREVIEW_BAND`] tall,
+/// centered, its width following the image's aspect.
+fn band_view(image: Handle<Image>) -> LaneView {
+    LaneView {
+        target: RenderTarget::Image(image.into()),
+        canvas: Vec2::new(1.0, PREVIEW_BAND),
+    }
+}
+
+/// The 2D grade cameras' projection, matching the lane camera's framing.
+fn band_projection() -> Projection {
+    Projection::Orthographic(OrthographicProjection {
+        scaling_mode: ScalingMode::AutoMin {
+            min_width: 1.0,
+            min_height: PREVIEW_BAND,
+        },
+        ..OrthographicProjection::default_2d()
+    })
+}
+
+/// A surface's render image size: the node's pixels, capped so a hi-dpi node
+/// stays a sane texture, aspect preserved so the blit never distorts.
+fn image_size(node: Vec2) -> UVec2 {
+    const MAX_DIM: f32 = 2048.0;
+    let scale = (MAX_DIM / node.x.max(node.y).max(1.0)).min(1.0);
+    UVec2::new(
+        ((node.x * scale).round() as u32).max(1),
+        ((node.y * scale).round() as u32).max(1),
+    )
+}
+
+/// A single field's arrows at the file player's design-canvas size, so the
+/// preview reads as a shrunk file player.
+fn preview_arrow_size(config: &GameConfig) -> f32 {
+    fitted_arrow_size(
+        4.0,
+        SCREEN_SIZE.x - 2.0 * config.stage.margin_x,
+        max_arrow_size(config, None),
+    )
+}
+
+/// The mocked chart: `U, L, D-hold, U, R, D-hold` per measure — a mix of 4th
+/// and 8th notes with two short holds — repeated across the music's loop.
+fn mocked_rows(timing: &StepfileTiming, start: Seconds, length: Seconds) -> Vec<Row> {
+    // (beat within the measure, column L=0/D=1/U=2/R=3, hold end beat, quant).
+    const PATTERN: [(f64, usize, Option<f64>, u32); 6] = [
+        (0.0, 2, None, 4),
+        (0.5, 0, None, 8),
+        (1.0, 1, Some(1.5), 4),
+        (2.0, 2, None, 4),
+        (2.5, 3, None, 8),
+        (3.0, 1, Some(3.5), 4),
+    ];
+    let first = (timing.beat_at_seconds(start).0 / 4.0).ceil() as i64;
+    let last = ((timing.beat_at_seconds(start + length).0 / 4.0).floor() as i64 - 1).max(first);
+    (first..=last)
+        .flat_map(|measure| {
+            let base = measure as f64 * 4.0;
+            PATTERN
+                .iter()
+                .map(move |&(offset, column, hold_end, quant)| Row {
+                    beat: Beat(base + offset),
+                    quant,
+                    arrows: vec![Arrow {
+                        column,
+                        tail: hold_end.map(|end| Tail {
+                            end: Beat(base + end),
+                            roll: false,
+                        }),
+                    }],
+                })
+        })
+        .collect()
+}
+
+/// The options table: the title, an optional P1/P2 header row, then one row
+/// per option — its name once, then a value cell per active player.
+fn options_column_scene(
+    players: &[PlayerId],
+    versus: bool,
+    settings: &PlayerSettings,
     config: &GameConfig,
     skins: &NoteSkinLibrary,
 ) -> impl Scene {
-    let header: Vec<_> = tagged
-        .then(|| {
-            let tag = player.label().to_string();
-            bsn! {
-                ModalText
-                game_font(34.0)
-                Text({tag})
-                TextColor({TITLE_COLOR})
-                Node { margin: {UiRect::bottom(Val::Px(8.0))} }
-            }
-        })
+    let header: Vec<_> = versus
+        .then(|| header_row_scene(players))
         .into_iter()
         .collect();
-    // Label and value columns have fixed widths, so a panel never
-    // resizes — and nothing re-centers — when a selected value's text
-    // length changes.
     let rows: Vec<_> = OptionRow::iter()
         .enumerate()
-        .map(|(index, row)| {
-            let label: &str = row.into();
-            let value = row_value(row, options, config, skins);
-            bsn! {
-                Node { column_gap: px(24), align_items: AlignItems::Center }
-                Children [
-                    (
-                        Node { width: px(220) }
-                        Children [(
-                            RowText { player: {player}, row: index }
-                            ModalText
-                            game_font(28.0)
-                            Text({label.to_string()})
-                            TextColor({INACTIVE_COLOR})
-                        )]
-                    ),
-                    (
-                        Node { width: px(240) }
-                        Children [(
-                            ValueText { player: {player}, row: index }
-                            ModalText
-                            game_font(28.0)
-                            Text({value})
-                            TextColor({INACTIVE_COLOR})
-                        )]
-                    ),
-                ]
-            }
-        })
+        .map(|(index, row)| option_row_scene(index, row, players, settings, config, skins))
         .collect();
     bsn! {
-        OptionsPanel { player: {player}, active_row: 0 }
         Node {
             flex_direction: FlexDirection::Column,
-            align_items: AlignItems::FlexStart,
-            row_gap: px(14),
+            align_items: AlignItems::Center,
+            row_gap: px(12),
+            flex_shrink: 0.0,
         }
         Children [
+            (
+                ModalText
+                game_font(48.0)
+                Text("Player Options")
+                TextColor({TITLE_COLOR})
+                Node { margin: {UiRect::bottom(Val::Px(12.0))} }
+            ),
             {header},
             {rows},
         ]
     }
 }
+
+/// The `P1`/`P2` tags over the value columns (versus only).
+fn header_row_scene(players: &[PlayerId]) -> impl Scene {
+    let tags: Vec<_> = players
+        .iter()
+        .map(|player| {
+            let tag = player.label().to_string();
+            bsn! {
+                Node { width: px(VALUE_WIDTH), justify_content: JustifyContent::Center }
+                Children [(
+                    ModalText game_font(30.0) Text({tag}) TextColor({TITLE_COLOR})
+                )]
+            }
+        })
+        .collect();
+    bsn! {
+        Node { flex_direction: FlexDirection::Row, column_gap: px(20) }
+        Children [
+            (Node { width: px(NAME_WIDTH) }),
+            {tags},
+        ]
+    }
+}
+
+/// One option's row: its name (shown once) and a value cell per player.
+fn option_row_scene(
+    index: usize,
+    option: OptionRow,
+    players: &[PlayerId],
+    settings: &PlayerSettings,
+    config: &GameConfig,
+    skins: &NoteSkinLibrary,
+) -> impl Scene {
+    let name = <&str>::from(option).to_string();
+    let cells: Vec<_> = players
+        .iter()
+        .map(|player| {
+            let value = row_value(option, &settings[*player], config, skins);
+            bsn! {
+                Node { width: px(VALUE_WIDTH), justify_content: JustifyContent::Center }
+                Children [(
+                    ValueText { player: {*player}, row: index }
+                    ModalText game_font(28.0) Text({value}) TextColor({INACTIVE_COLOR})
+                )]
+            }
+        })
+        .collect();
+    bsn! {
+        Node { flex_direction: FlexDirection::Row, column_gap: px(20), align_items: AlignItems::Center }
+        Children [
+            (
+                Node { width: px(NAME_WIDTH) }
+                Children [(
+                    RowText { row: index }
+                    ModalText game_font(28.0) Text({name}) TextColor({INACTIVE_COLOR})
+                )]
+            ),
+            {cells},
+        ]
+    }
+}
+
+/// Fixed column widths keep the table from re-centering when a value's text
+/// length changes.
+const NAME_WIDTH: f32 = 220.0;
+const VALUE_WIDTH: f32 = 200.0;
 
 /// Routes each pulse to the pulsing player's own panel: their pad's
 /// up/down moves between rows, left/right steps the value.
@@ -285,19 +779,20 @@ fn highlight_rows(
     mut labels: Query<(&RowText, &mut TextColor)>,
     mut values: Query<(&ValueText, &mut TextColor), Without<RowText>>,
 ) {
-    let active = |player: PlayerId, row: usize| {
-        panels
-            .iter()
-            .any(|panel| panel.player == player && panel.active_row == row)
-    };
+    // The name highlights when any player edits that row; a value only when
+    // its own player does.
     for (label, mut color) in &mut labels {
-        let wanted = row_color(active(label.player, label.row));
+        let active = panels.iter().any(|panel| panel.active_row == label.row);
+        let wanted = row_color(active);
         if color.0 != wanted {
             color.0 = wanted;
         }
     }
     for (value, mut color) in &mut values {
-        let wanted = row_color(active(value.player, value.row));
+        let active = panels
+            .iter()
+            .any(|panel| panel.player == value.player && panel.active_row == value.row);
+        let wanted = row_color(active);
         if color.0 != wanted {
             color.0 = wanted;
         }
@@ -394,7 +889,6 @@ struct ModalContent;
 
 #[derive(Component, Clone, FromTemplate)]
 struct RowText {
-    player: PlayerId,
     row: usize,
 }
 
@@ -543,269 +1037,6 @@ fn selected_index(options: &[f32], value: f32) -> usize {
         .min_by(|(_, a), (_, b)| (*a - value).abs().total_cmp(&(*b - value).abs()))
         .map(|(index, _)| index)
         .unwrap_or(0)
-}
-
-/// The animated skin preview beside a player's options panel: a real note
-/// field showing one pinned 4th-quant hold, rendered and animated by the
-/// same note-field systems as the play stage.
-#[derive(Component)]
-struct SkinPreview {
-    player: PlayerId,
-    head: Entity,
-}
-
-/// Horizontal gap between a panel's edge and its preview.
-const PREVIEW_GAP: f32 = 56.0;
-/// Previews park here until the panel layout has resolved.
-const PREVIEW_OFFSCREEN_X: f32 = -10_000.0;
-/// The preview arrow's size as a fraction of the panel's row span.
-const PREVIEW_ARROW_SPAN: f32 = 0.42;
-
-fn spawn_preview(
-    commands: &mut Commands,
-    asset_server: &AssetServer,
-    skins: &ActiveNoteSkins,
-    player: PlayerId,
-) {
-    let layout = NoteField {
-        player,
-        // A field's lane sets its camera order; these sit past the
-        // overlay's, so the previews draw over the modal itself.
-        lane: match player {
-            PlayerId::P1 => 8,
-            PlayerId::P2 => 9,
-        },
-        origin_x: PREVIEW_OFFSCREEN_X,
-        // Column 1 of a 3-column field — the down arrow — sits exactly on
-        // `origin_x`.
-        columns: 3,
-        speed: NoteSpeed::Dynamic(1.0),
-        arrow_size: 64.0,
-        // The driver refines size and position from the panel's layout.
-    };
-    let field = spawn_note_field(commands, layout.clone());
-    let spawned = spawn_note(
-        commands,
-        asset_server,
-        skins.get(player),
-        field,
-        &layout,
-        &NoteSpawn {
-            time: Seconds::ZERO,
-            beat: Beat(0.0),
-            column: 1,
-            quant: 4,
-            tail: Some(NoteTail {
-                time: Seconds(1.0),
-                beat: Beat(1.0),
-                roll: false,
-            }),
-        },
-    );
-    commands.entity(field).insert((
-        SkinPreview {
-            player,
-            head: spawned.head,
-        },
-        DespawnOnExit(FileSelectFocus::PlayerOptions),
-    ));
-    for entity in spawned.entities() {
-        commands
-            .entity(entity)
-            .insert(DespawnOnExit(FileSelectFocus::PlayerOptions));
-    }
-}
-
-/// Changing the skin selection reloads [`ActiveNoteSkins`]; the previews
-/// respawn their note from the fresh skin.
-fn rebuild_previews_on_skin_change(
-    skins: Res<ActiveNoteSkins>,
-    asset_server: Res<AssetServer>,
-    previews: Query<(Entity, &SkinPreview, &NoteField)>,
-    members: Query<(Entity, &InField)>,
-    mut commands: Commands,
-) {
-    if !skins.is_changed() {
-        return;
-    }
-    for (field, preview, layout) in &previews {
-        for (entity, in_field) in &members {
-            if in_field.0 == field {
-                commands.entity(entity).despawn();
-            }
-        }
-        let spawned = spawn_note(
-            &mut commands,
-            &asset_server,
-            skins.get(preview.player),
-            field,
-            layout,
-            &NoteSpawn {
-                time: Seconds::ZERO,
-                beat: Beat(0.0),
-                column: 1,
-                quant: 4,
-                tail: Some(NoteTail {
-                    time: Seconds(1.0),
-                    beat: Beat(1.0),
-                    roll: false,
-                }),
-            },
-        );
-        commands.entity(field).insert(SkinPreview {
-            player: preview.player,
-            head: spawned.head,
-        });
-        for entity in spawned.entities() {
-            commands
-                .entity(entity)
-                .insert(DespawnOnExit(FileSelectFocus::PlayerOptions));
-        }
-    }
-}
-
-/// What [`drive_skin_previews`] reads: the preview music's timeline and
-/// the modal's laid-out panel geometry.
-#[derive(SystemParam)]
-struct PreviewContext<'w, 's> {
-    time: Res<'w, Time>,
-    machine: Res<'w, MachineSettings>,
-    music: Res<'w, MusicPlayer>,
-    windows: Query<'w, 's, &'static Window>,
-    panels: Query<
-        'w,
-        's,
-        (
-            &'static OptionsPanel,
-            &'static ComputedNode,
-            &'static UiGlobalTransform,
-        ),
-    >,
-    rows: Query<
-        'w,
-        's,
-        (
-            &'static RowText,
-            &'static ComputedNode,
-            &'static UiGlobalTransform,
-        ),
-    >,
-}
-
-/// Owns the modal's [`NoteFieldClock`] and shapes each preview around its
-/// panel: the clock runs on the preview music's own timeline, the arrow's
-/// tip top-aligns with the first option row, the hold's tail reaches the
-/// last one, and the hold alternates held and released every two beats.
-fn drive_skin_previews(
-    ctx: PreviewContext,
-    mut previews: Query<(&SkinPreview, &mut NoteField)>,
-    mut holds: Query<&mut HoldVisual>,
-    clock: Option<ResMut<NoteFieldClock>>,
-    mut commands: Commands,
-) {
-    let Ok(window) = ctx.windows.single() else {
-        return;
-    };
-    let timeline = ctx.music.visible_now(&ctx.machine.timing);
-    let mut clock = match (clock, &timeline) {
-        (Some(clock), _) => clock,
-        (None, Some((visible, timing))) => {
-            commands.insert_resource(NoteFieldClock {
-                visible: *visible,
-                timing: (*timing).clone(),
-                target_y: 0.0,
-            });
-            return;
-        }
-        // Nothing plays yet; the clock starts with the music.
-        (None, None) => return,
-    };
-    match timeline {
-        // The wheel cannot change songs while the modal is up, so the
-        // timing set at clock creation stays valid.
-        Some((visible, _)) => clock.visible = visible,
-        None => clock.visible += Seconds(ctx.time.delta_secs_f64()),
-    }
-    let beat = clock.beat();
-
-    // UI layout is in physical pixels; the lane lives in world units.
-    let physical = Vec2::new(
-        window.physical_width().max(1) as f32,
-        window.physical_height().max(1) as f32,
-    );
-    let pixels_per_world = physical.x / visible_world_size(window).x;
-    let to_world = |ui: Vec2| {
-        Vec2::new(
-            (ui.x - physical.x * 0.5) / pixels_per_world,
-            (physical.y * 0.5 - ui.y) / pixels_per_world,
-        )
-    };
-
-    for (preview, mut field) in &mut previews {
-        let mut top = None;
-        let mut bottom = None;
-        for (row, node, transform) in &ctx.rows {
-            if row.player != preview.player || node.size() == Vec2::ZERO {
-                continue;
-            }
-            let center = to_world(transform.translation);
-            let half = node.size().y * 0.5 / pixels_per_world;
-            if row.row == 0 {
-                top = Some(center.y + half);
-            }
-            if row.row == OptionRow::COUNT - 1 {
-                bottom = Some(center.y - half);
-            }
-        }
-        let panel_edge = ctx.panels.iter().find_map(|(panel, node, transform)| {
-            if panel.player != preview.player || node.size() == Vec2::ZERO {
-                return None;
-            }
-            let center = to_world(transform.translation);
-            let half = node.size().x * 0.5 / pixels_per_world;
-            Some(match preview.player {
-                PlayerId::P1 => center.x - half,
-                PlayerId::P2 => center.x + half,
-            })
-        });
-        let (Some(top), Some(bottom), Some(edge)) = (top, bottom, panel_edge) else {
-            continue;
-        };
-        let span = top - bottom;
-        if span <= 1.0 {
-            continue;
-        }
-        let arrow = span * PREVIEW_ARROW_SPAN;
-        field.arrow_size = arrow;
-        // Clamped inside the visible width: versus panels reach close to
-        // the screen edges, and a clipped preview helps nobody.
-        let half_visible = visible_world_size(window).x * 0.5;
-        field.origin_x = match preview.player {
-            PlayerId::P1 => (edge - PREVIEW_GAP - arrow * 0.5).max(-half_visible + arrow),
-            PlayerId::P2 => (edge + PREVIEW_GAP + arrow * 0.5).min(half_visible - arrow),
-        };
-        // The arrow's tip touches the top anchor; the pinned head hangs
-        // half an arrow below it.
-        clock.target_y = top - arrow * 0.5;
-        // The tail's cap dips about half an arrow under the tail center,
-        // landing it on the bottom anchor.
-        let end_y = bottom + arrow * 0.5;
-        let length_beats = ((clock.target_y - end_y) / arrow).max(0.5) as f64;
-        if let Ok(mut hold) = holds.get_mut(preview.head) {
-            let end_beat = Beat(beat + length_beats);
-            hold.end_beat = end_beat;
-            hold.end = clock.timing.seconds_at_beat(end_beat);
-            hold.state = if beat.rem_euclid(4.0) < 2.0 {
-                HoldVisualState::Held
-            } else {
-                HoldVisualState::Released
-            };
-        }
-    }
-}
-
-fn exit_previews(mut commands: Commands) {
-    commands.remove_resource::<NoteFieldClock>();
 }
 
 /// Dynamic multipliers always render with an `x` suffix.

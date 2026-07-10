@@ -10,20 +10,20 @@ use crate::core::audio::{Sound, SoundChannel, SoundPlayer};
 use crate::core::config::{GameConfig, RowOutcome};
 use crate::core::font::game_font;
 use crate::core::health_vial::{HealthVialMaterial, VialSide, spawn_health_vial};
-use crate::core::input::{Actions, GameAction};
+use crate::core::input::{Actions, GameAction, StepDirection};
 use crate::core::library::{StepfileEntry, StepfileId, StepfileLibrary};
 use crate::core::note_field::{
-    FadeOut, InField, NoteField, NoteFieldClock, NoteFieldSystems, NoteSpawn, NoteSpeed, NoteTail,
-    TARGET_Y, fitted_arrow_size, max_arrow_size, spawn_mine, spawn_note, spawn_note_field,
-    spawn_receptors, visible_world_size,
+    FadeOut, InField, LaneView, NoteField, NoteFieldClock, NoteFieldSystems, NoteSpawn, NoteSpeed,
+    NoteTail, TARGET_Y, fitted_arrow_size, max_arrow_size, spawn_mine, spawn_note,
+    spawn_note_field, spawn_receptors, visible_world_size,
 };
 use crate::core::note_skin::{ActiveNoteSkin, ActiveNoteSkins};
 use crate::core::platform::SoundOptions;
 use crate::core::player::PlayerId;
 use crate::core::scene_flow::SpawnScoped;
-use crate::core::settings::{GradeLayer, MachineSettings, PlayerSettings, TimingSettings};
+use crate::core::settings::{GradeLayer, MachineSettings, PlayerSettings};
 use crate::core::sfx::{PlaySfx, Sfx};
-use crate::core::stepfile::{Chart, MusicPlayer, StepfileClock, StepfileTiming};
+use crate::core::stepfile::{Mine, MusicPlayer, Row, StepfileClock, StepfileTiming};
 use crate::core::tick_track::render_tick_track;
 use crate::core::units::Seconds;
 use crate::core::{OVERLAY_LAYER, SCREEN_SIZE, at};
@@ -32,6 +32,7 @@ use crate::scenes::{GameScene, SceneFade, scene_accepts_input};
 use bevy::camera::visibility::RenderLayers;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
+use strum::IntoEnumIterator;
 
 /// Grades are derived from the raw outcomes by whoever displays them.
 #[derive(Resource, Debug, Clone)]
@@ -74,17 +75,34 @@ impl Plugin for FilePlayerPlugin {
                 grade_text::plugin,
                 background::plugin,
             ))
+            // The engine sets run wherever a session exists — the play stage
+            // and the options preview alike; scene-specific systems below add
+            // their own FilePlayer gate.
             .configure_sets(
                 Update,
                 (
-                    (PlaySet::Clock, PlaySet::Grade, PlaySet::Tune, PlaySet::Sync)
+                    (
+                        PlaySet::Clock,
+                        GameplayDrive,
+                        PlaySet::Grade,
+                        PlaySet::Tune,
+                        PlaySet::Sync,
+                    )
                         .chain()
                         .before(NoteFieldSystems),
                     PlaySet::Present.after(NoteFieldSystems),
                 )
-                    .run_if(
-                        in_state(GameScene::FilePlayer).and_then(resource_exists::<PlaySession>),
-                    ),
+                    .run_if(resource_exists::<PlaySession>.and_then(resource_exists::<PlayTime>)),
+            )
+            // The real adapter's port drivers: the audio clock fills `PlayTime`
+            // (see `clock`) and the keyboard fills `PlayInput`. The mocked
+            // adapter fills the same two ports from its own systems; the engine
+            // reads only the ports, never the keyboard or the music.
+            .add_systems(
+                Update,
+                wire_keyboard
+                    .in_set(GameplayDrive)
+                    .run_if(in_state(GameScene::FilePlayer)),
             )
             .add_systems(OnEnter(GameScene::FilePlayer), enter)
             .add_systems(OnExit(GameScene::FilePlayer), exit)
@@ -102,10 +120,18 @@ impl Plugin for FilePlayerPlugin {
                     handle_cancel.run_if(scene_accepts_input),
                 )
                     .chain()
-                    .in_set(PlaySet::Present),
+                    .in_set(PlaySet::Present)
+                    .run_if(in_state(GameScene::FilePlayer)),
             );
     }
 }
+
+/// Where a gameplay adapter fills the prefab's ports — [`PlayTime`] (clock)
+/// and [`PlayInput`] (input) — before the engine grades. The real adapter
+/// wires the keyboard here; the mocked options preview its autoplay. The
+/// prefab reads only the ports, so it is agnostic to what drives them.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct GameplayDrive;
 
 /// The frame pipeline around the note fields: the phases through `Sync`
 /// feed them and run before [`NoteFieldSystems`]; `Present` reacts to the
@@ -133,7 +159,7 @@ struct StageAssets<'w, 's> {
 }
 
 #[derive(Resource)]
-pub(super) struct PlaySession {
+struct PlaySession {
     pub title: String,
     /// One per active player, in [`SelectedStepfile`] chart order; a
     /// doubles session is P1's single wide stage.
@@ -149,7 +175,7 @@ pub(super) struct PlaySession {
 /// mapping live on the [`NoteField`] component of `field`. Draining to
 /// zero fails only this stage; the session ends when every stage has
 /// failed or every surviving one is complete.
-pub(super) struct Stage {
+struct Stage {
     pub player: PlayerId,
     pub field: Entity,
     pub rows: Vec<SessionRow>,
@@ -171,7 +197,7 @@ impl Stage {
 /// The session's playback timeline, advanced by the [`clock`] module: the
 /// lead-in phase, the shared stepfile music clock, and the state for the
 /// first-play audio latency measurement.
-pub(super) struct PlaybackClock {
+struct PlaybackClock {
     pub phase: PlayPhase,
     pub music: StepfileClock,
     /// Wall-clock time since the tracks were started, for measuring how far
@@ -180,7 +206,7 @@ pub(super) struct PlaybackClock {
     pub latency_samples: Vec<Seconds>,
 }
 
-pub(super) enum PlayPhase {
+enum PlayPhase {
     LeadIn { remaining: Seconds },
     Playing,
 }
@@ -188,24 +214,61 @@ pub(super) enum PlayPhase {
 /// While enabled, hit errors accumulate and the median of every batch is
 /// folded into the machine offset (AutoSync).
 #[derive(Default)]
-pub(super) struct AutoSync {
+struct AutoSync {
     pub enabled: bool,
     pub samples: Vec<Seconds>,
 }
 
-impl PlaySession {
-    pub fn graded_now(&self, timing: &TimingSettings) -> Seconds {
-        self.clock.music.graded_now(timing)
+/// The prefab's CLOCK port: the play engine's current moment. A gameplay
+/// adapter fills it in [`GameplayDrive`] — the play stage from its audio
+/// clock (with tuning), the options preview from the wheel's music. Grading
+/// judges against `graded`; the note field draws on `visible`.
+#[derive(Resource, Default)]
+pub struct PlayTime {
+    pub graded: Seconds,
+    pub visible: Seconds,
+}
+
+/// The prefab's INPUT port: which step panels are held and freshly struck
+/// this frame, keyed by their [`GameAction`]. A gameplay adapter fills it in
+/// [`GameplayDrive`] — the play stage from the keyboard, the options preview
+/// from its deterministic autoplay — and the engine reads only this, never
+/// the keyboard directly.
+#[derive(Resource, Default)]
+pub struct PlayInput {
+    held: Vec<GameAction>,
+    struck: Vec<GameAction>,
+}
+
+impl PlayInput {
+    /// Whether the panel is held this frame.
+    pub fn held(&self, action: GameAction) -> bool {
+        self.held.contains(&action)
     }
 
-    pub fn visible_now(&self, timing: &TimingSettings) -> Seconds {
-        self.clock.music.visible_now(timing)
+    /// Whether the panel went down this frame.
+    pub fn struck(&self, action: GameAction) -> bool {
+        self.struck.contains(&action)
+    }
+
+    /// Clears the frame's input; an adapter refills it every frame.
+    pub fn clear(&mut self) {
+        self.held.clear();
+        self.struck.clear();
+    }
+
+    /// Records the panel as held, and freshly struck when `struck`.
+    pub fn press(&mut self, action: GameAction, struck: bool) {
+        self.held.push(action);
+        if struck {
+            self.struck.push(action);
+        }
     }
 }
 
 /// One row of the chart as played: every arrow in it must be stepped, and
 /// the whole row resolves into a single outcome (see the grading systems).
-pub(super) struct SessionRow {
+struct SessionRow {
     pub time: Seconds,
     pub outcome: Option<RowOutcome>,
     /// Simultaneous arrows; two or more make the row a jump.
@@ -219,7 +282,7 @@ impl SessionRow {
     }
 }
 
-pub(super) struct SessionArrow {
+struct SessionArrow {
     pub column: usize,
     pub entity: Entity,
     /// The banked press: its timing error is locked in silently when the
@@ -230,7 +293,7 @@ pub(super) struct SessionArrow {
 
 /// Live state of one hold or roll; the life rules live in
 /// [`grading::update_holds`].
-pub(super) struct HoldState {
+struct HoldState {
     pub end: Seconds,
     pub roll: bool,
     pub life: f32,
@@ -242,14 +305,14 @@ pub(super) struct HoldState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum HoldOutcome {
+pub enum HoldOutcome {
     /// Held to the end.
     Ok,
     /// Dropped, or the head was missed.
     Ng,
 }
 
-pub(super) struct SessionMine {
+pub struct SessionMine {
     pub time: Seconds,
     pub column: usize,
     pub entity: Entity,
@@ -257,7 +320,7 @@ pub(super) struct SessionMine {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum MineOutcome {
+pub enum MineOutcome {
     Exploded,
     Avoided,
 }
@@ -278,14 +341,14 @@ pub(super) struct MusicTrack;
 #[derive(Component, Default, Clone)]
 pub(super) struct TickTrack;
 
-/// Tags a HUD element with the stage player it reports on. Public only
-/// because the template derive demands it.
+/// Tags a HUD element with the stage player it reports on.
 #[derive(Component, Clone, Copy, FromTemplate)]
-pub struct ForPlayer(pub PlayerId);
+struct ForPlayer(PlayerId);
 
-/// The combo readout, carrying its own bounce animation state.
+/// The combo readout, carrying its own bounce animation state, spawned by
+/// [`spawn_combo`] under the grade text and driven by the shared combo system.
 #[derive(Component, Default, Clone)]
-pub(super) struct ComboText {
+struct ComboText {
     pub bounce: Seconds,
     pub last_combo: u32,
 }
@@ -294,7 +357,7 @@ pub(super) struct ComboText {
 pub(super) struct OffsetOsd;
 
 #[derive(Component, Default, Clone)]
-pub(super) struct AutoSyncText;
+pub struct AutoSyncText;
 
 fn enter(
     mut commands: Commands,
@@ -327,9 +390,9 @@ fn enter(
         fade.begin(GameScene::FileSelect);
         return;
     };
-    let specs: Vec<FieldSpec> = charts
+    let specs: Vec<PackSpec> = charts
         .iter()
-        .map(|(player, chart)| FieldSpec {
+        .map(|(player, chart)| PackSpec {
             player: *player,
             columns: chart.columns,
             speed: player_settings[*player].note_speed,
@@ -340,17 +403,27 @@ fn enter(
     let mut stages = Vec::new();
     let mut last_note_time = Seconds::ZERO;
     for ((player, chart), layout) in charts.into_iter().zip(layouts) {
-        let origin_x = layout.origin_x;
-        let skin = assets.skins.get(player);
-        let field = spawn_note_field(&mut commands, layout.clone());
-        commands
-            .entity(field)
-            .insert(DespawnOnExit(GameScene::FilePlayer));
-        for entity in spawn_receptors(&mut commands, skin, field, &layout) {
-            commands
-                .entity(entity)
-                .insert(DespawnOnExit(GameScene::FilePlayer));
-        }
+        let grade_layer = player_settings[player].grade_layer;
+        let (stage, stage_last) = spawn_field(
+            &mut commands,
+            PrefabAssets {
+                asset_server: &assets.asset_server,
+                images: &mut assets.images,
+                config: &config,
+                skins: &assets.skins,
+            },
+            &FieldSpec {
+                layout: layout.clone(),
+                rows: &chart.rows,
+                mines: &chart.mines,
+                grade_source_layer: STAGE_GRADE_SOURCE_BASE + player_index(player),
+                grade_present_layer: (grade_layer == GradeLayer::InFront).then_some(OVERLAY_LAYER),
+                max_health: config.player_max_health,
+            },
+            &timing,
+            DespawnOnExit(GameScene::FilePlayer),
+        );
+        last_note_time = last_note_time.max(stage_last);
         let side = match player {
             PlayerId::P1 => VialSide::Left,
             PlayerId::P2 => VialSide::Right,
@@ -365,42 +438,7 @@ fn enter(
         commands
             .entity(vial)
             .insert((ForPlayer(player), DespawnOnExit(GameScene::FilePlayer)));
-        let grade_layer = player_settings[player].grade_layer;
-        spawn_stage_hud(&mut commands, player, origin_x, grade_layer);
-        grade_text::spawn(
-            &mut commands,
-            &assets.asset_server,
-            &mut assets.images,
-            player,
-            origin_x,
-            grade_layer,
-        );
-
-        let (rows, mines, stage_last) = spawn_chart(
-            &mut commands,
-            &assets.asset_server,
-            &StageSpawn {
-                field,
-                layout: &layout,
-                skin,
-            },
-            &config,
-            chart,
-            &timing,
-        );
-        last_note_time = last_note_time.max(stage_last);
-        stages.push(Stage {
-            player,
-            field,
-            rows,
-            mines,
-            graded_count: 0,
-            expire_cursor: 0,
-            combo: 0,
-            max_combo: 0,
-            health: config.player_max_health,
-            failed: false,
-        });
+        stages.push(stage);
     }
     if stages.is_empty() {
         fade.begin(GameScene::FileSelect);
@@ -430,17 +468,19 @@ fn enter(
         finished: false,
         autosync: AutoSync::default(),
     });
+    commands.init_resource::<PlayTime>();
+    commands.init_resource::<PlayInput>();
 }
 
 fn exit(mut commands: Commands, mut music: ResMut<MusicPlayer>) {
     music.stop();
-    commands.remove_resource::<PlaySession>();
+    clear_session(&mut commands);
     commands.remove_resource::<NoteFieldClock>();
     commands.remove_resource::<SelectedStepfile>();
 }
 
 /// What a stage field is packed from, independent of whether it exists yet.
-struct FieldSpec {
+struct PackSpec {
     player: PlayerId,
     columns: usize,
     speed: NoteSpeed,
@@ -453,7 +493,7 @@ struct FieldSpec {
 /// block, across the window's visible world width. Headless callers (no
 /// window) pack on the design canvas.
 fn pack_stage_fields(
-    specs: &[FieldSpec],
+    specs: &[PackSpec],
     config: &GameConfig,
     window: Option<&Window>,
 ) -> Vec<NoteField> {
@@ -478,6 +518,7 @@ fn pack_stage_fields(
             columns: spec.columns,
             speed: spec.speed,
             arrow_size,
+            view: LaneView::default(),
         })
         .collect();
     let gap = config.stage.field_gap_columns * layouts[0].spacing();
@@ -502,9 +543,9 @@ fn refit_stages_to_window(
     let Ok(window) = windows.single() else { return };
     let mut current: Vec<Mut<NoteField>> = fields.iter_mut().collect();
     current.sort_by_key(|field| field.lane);
-    let specs: Vec<FieldSpec> = current
+    let specs: Vec<PackSpec> = current
         .iter()
-        .map(|field| FieldSpec {
+        .map(|field| PackSpec {
             player: field.player,
             columns: field.columns,
             speed: field.speed,
@@ -524,27 +565,202 @@ fn refit_stages_to_window(
     }
 }
 
-/// Spawns every note and mine of the chart into the stage's field, scoped
-/// to the scene, and returns the session records tracking them plus the
-/// time the chart is over.
-/// One stage's field being filled with notes.
-struct StageSpawn<'a> {
-    field: Entity,
-    layout: &'a NoteField,
-    skin: &'a ActiveNoteSkin,
+// ===== The FilePlayer prefab =====
+// The reusable stepfile player: a gameplay adapter fills these types and the
+// prefab renders + grades the session. The real play stage drives it from the
+// audio clock and keyboard (`enter`/`clock`/`grading`); the options preview
+// from the wheel music and a scripted autoplay (`file_select::player_options`).
+
+/// One player's field for [`spawn_session`]: what to build and where.
+pub struct FieldSpec<'a> {
+    pub layout: NoteField,
+    pub rows: &'a [Row],
+    pub mines: &'a [Mine],
+    /// The private layer the grade word renders on offscreen, and the layer
+    /// its shader quad (and the combo under it) present on — `None` presents
+    /// on the default world layer, behind the arrows.
+    pub grade_source_layer: usize,
+    pub grade_present_layer: Option<usize>,
+    pub max_health: u32,
 }
 
+/// A whole session for an adapter to instantiate: one field per spec, timed
+/// on `timing`. The clock and input come from the adapter's port drivers (see
+/// [`GameplayDrive`]) — a scripted session inserts an autoplay driver, the
+/// play stage its audio clock and keyboard. The play stage builds its own
+/// [`PlaySession`] inline; this is the entry point the preview uses.
+pub struct SessionSpec<'a> {
+    pub title: String,
+    pub fields: Vec<FieldSpec<'a>>,
+    pub timing: StepfileTiming,
+}
+
+/// The shared asset handles a field is materialized from, bundled so the
+/// spawners stay within the argument limit.
+pub struct PrefabAssets<'a> {
+    pub asset_server: &'a AssetServer,
+    pub images: &'a mut Assets<Image>,
+    pub config: &'a GameConfig,
+    pub skins: &'a ActiveNoteSkins,
+}
+
+/// The grade-text source layer per stage player, clear of the lane and
+/// overlay layers.
+const STAGE_GRADE_SOURCE_BASE: usize = 20;
+
+/// Builds a session — one field per spec — and inserts the engine's ports
+/// ([`PlaySession`], [`PlayTime`], [`PlayInput`]). The caller tags every
+/// entity with `scope`, drives the ports each frame, and re-calls this to
+/// rebuild.
+pub fn spawn_session(
+    commands: &mut Commands,
+    assets: &mut PrefabAssets,
+    spec: SessionSpec,
+    scope: impl Bundle + Clone,
+) {
+    let mut stages = Vec::new();
+    for field in &spec.fields {
+        let (stage, _) = spawn_field(
+            commands,
+            PrefabAssets {
+                asset_server: assets.asset_server,
+                images: assets.images,
+                config: assets.config,
+                skins: assets.skins,
+            },
+            field,
+            &spec.timing,
+            scope.clone(),
+        );
+        stages.push(stage);
+    }
+    commands.insert_resource(PlaySession {
+        title: spec.title,
+        stages,
+        clock: idle_clock(spec.timing),
+        last_note_time: Seconds::ZERO,
+        finished: false,
+        autosync: AutoSync::default(),
+    });
+    commands.init_resource::<PlayTime>();
+    commands.init_resource::<PlayInput>();
+}
+
+/// Removes the engine ports a [`spawn_session`] inserted.
+pub fn clear_session(commands: &mut Commands) {
+    commands.remove_resource::<PlaySession>();
+    commands.remove_resource::<PlayTime>();
+    commands.remove_resource::<PlayInput>();
+}
+
+/// A minimal always-playing clock for a manually-driven session.
+fn idle_clock(timing: StepfileTiming) -> PlaybackClock {
+    PlaybackClock {
+        phase: PlayPhase::Playing,
+        music: StepfileClock::start_at(timing, Seconds::ZERO),
+        wall_since_play: Seconds::ZERO,
+        latency_samples: Vec::new(),
+    }
+}
+
+/// The real adapter's input driver: fills the [`PlayInput`] port from the
+/// keyboard. Only wired on the play stage; the preview fills the port itself.
+fn wire_keyboard(actions: Actions, input: Option<ResMut<PlayInput>>) {
+    let Some(mut input) = input else { return };
+    input.clear();
+    for player in PlayerId::iter() {
+        for column in 0..4 {
+            let action = GameAction::step(player, StepDirection::of_column(column));
+            if actions.pressed(action) {
+                input.press(action, actions.just_pressed(action));
+            }
+        }
+    }
+}
+
+/// Builds one player's whole field — field+receptors, notes, grade display,
+/// and combo — tagging every entity with `scope`.
+fn spawn_field(
+    commands: &mut Commands,
+    assets: PrefabAssets,
+    spec: &FieldSpec,
+    timing: &StepfileTiming,
+    scope: impl Bundle + Clone,
+) -> (Stage, Seconds) {
+    let player = spec.layout.player;
+    let origin_x = spec.layout.origin_x;
+    let skin = assets.skins.get(player);
+    let field = spawn_note_field(commands, spec.layout.clone());
+    commands.entity(field).insert(scope.clone());
+    for entity in spawn_receptors(commands, skin, field, &spec.layout) {
+        commands.entity(entity).insert(scope.clone());
+    }
+    let (rows, mines, last_note_time) = spawn_chart(
+        commands,
+        assets.asset_server,
+        &StageChart {
+            field,
+            layout: &spec.layout,
+            skin,
+            rows: spec.rows,
+            mines: spec.mines,
+            timing,
+        },
+        assets.config,
+        scope.clone(),
+    );
+    grade_text::spawn_display(
+        commands,
+        assets.images,
+        assets.asset_server,
+        grade_text::GradeSpawn {
+            player,
+            origin_x,
+            source_layer: spec.grade_source_layer,
+            present_layer: spec.grade_present_layer,
+        },
+        scope.clone(),
+    );
+    spawn_combo(commands, player, origin_x, spec.grade_present_layer, scope);
+    let stage = Stage {
+        player,
+        field,
+        rows,
+        mines,
+        graded_count: 0,
+        expire_cursor: 0,
+        combo: 0,
+        max_combo: 0,
+        health: spec.max_health,
+        failed: false,
+    };
+    (stage, last_note_time)
+}
+
+/// One stage's field being filled with notes: where the notes go and what
+/// they are.
+struct StageChart<'a> {
+    pub field: Entity,
+    pub layout: &'a NoteField,
+    pub skin: &'a ActiveNoteSkin,
+    pub rows: &'a [Row],
+    pub mines: &'a [Mine],
+    pub timing: &'a StepfileTiming,
+}
+
+/// Spawns every note and mine into the field, tagged with `scope`, and
+/// returns the session records tracking them plus the time the chart is over.
 fn spawn_chart(
     commands: &mut Commands,
     asset_server: &AssetServer,
-    stage: &StageSpawn,
+    stage: &StageChart,
     config: &GameConfig,
-    chart: &Chart,
-    timing: &StepfileTiming,
+    scope: impl Bundle + Clone,
 ) -> (Vec<SessionRow>, Vec<SessionMine>, Seconds) {
-    let mut mines = Vec::new();
+    let timing = stage.timing;
+    let mut session_mines = Vec::new();
     let mut last_note_time = Seconds::ZERO;
-    for mine in &chart.mines {
+    for mine in stage.mines {
         let time = timing.seconds_at_beat(mine.beat);
         last_note_time = last_note_time.max(time);
         let entity = spawn_mine(
@@ -556,10 +772,8 @@ fn spawn_chart(
             mine.beat,
             mine.column,
         );
-        commands
-            .entity(entity)
-            .insert(DespawnOnExit(GameScene::FilePlayer));
-        mines.push(SessionMine {
+        commands.entity(entity).insert(scope.clone());
+        session_mines.push(SessionMine {
             time,
             column: mine.column,
             entity,
@@ -567,8 +781,8 @@ fn spawn_chart(
         });
     }
 
-    let mut rows = Vec::new();
-    for row in &chart.rows {
+    let mut session_rows = Vec::new();
+    for row in stage.rows {
         let time = timing.seconds_at_beat(row.beat);
         let quant = config.recognized_quant(row.quant);
         let mut arrows = Vec::new();
@@ -595,9 +809,7 @@ fn spawn_chart(
                 },
             );
             for entity in spawned.entities() {
-                commands
-                    .entity(entity)
-                    .insert(DespawnOnExit(GameScene::FilePlayer));
+                commands.entity(entity).insert(scope.clone());
             }
             arrows.push(SessionArrow {
                 column: arrow.column,
@@ -613,7 +825,7 @@ fn spawn_chart(
                 }),
             });
         }
-        rows.push(SessionRow {
+        session_rows.push(SessionRow {
             time,
             outcome: None,
             arrows,
@@ -621,8 +833,15 @@ fn spawn_chart(
     }
     // Warps and stops can reorder wall-clock times relative to beats; the
     // expiry cursor needs time order.
-    rows.sort_by(|a, b| a.time.0.total_cmp(&b.time.0));
-    (rows, mines, last_note_time)
+    session_rows.sort_by(|a, b| a.time.0.total_cmp(&b.time.0));
+    (session_rows, session_mines, last_note_time)
+}
+
+fn player_index(player: PlayerId) -> usize {
+    match player {
+        PlayerId::P1 => 0,
+        PlayerId::P2 => 1,
+    }
 }
 
 /// Spawns the music (when the stepfile has any) and the pre-rendered tick
@@ -694,32 +913,29 @@ fn spawn_audio_tracks(
 }
 
 /// The per-stage combo readout, tracked under the grade text (see
-/// [`visuals::update_combo_texts`]) and sharing its behind/in-front layer.
-/// The grade text itself is a shader rig spawned by [`grade_text::spawn`].
-fn spawn_stage_hud(
+/// [`visuals::update_combo_texts`]) and sharing its present layer. The grade
+/// text itself is a shader rig spawned by [`grade_text::spawn_display`].
+fn spawn_combo(
     commands: &mut Commands,
     player: PlayerId,
     origin_x: f32,
-    grade_layer: GradeLayer,
+    present_layer: Option<usize>,
+    scope: impl Bundle,
 ) {
     let combo = commands
-        .spawn_scoped(
-            GameScene::FilePlayer,
-            bsn! {
-                ComboText
-                ForPlayer({player})
-                game_font(44.0)
-                Text2d("")
-                TextColor(Color::WHITE)
-                at(origin_x, 0.0, 5.0)
-                Visibility::Hidden
-            },
-        )
+        .spawn_scene(bsn! {
+            ComboText
+            ForPlayer({player})
+            game_font(44.0)
+            Text2d("")
+            TextColor(Color::WHITE)
+            at(origin_x, 0.0, 5.0)
+            Visibility::Hidden
+        })
+        .insert(scope)
         .id();
-    if grade_layer == GradeLayer::InFront {
-        commands
-            .entity(combo)
-            .insert(RenderLayers::layer(OVERLAY_LAYER));
+    if let Some(layer) = present_layer {
+        commands.entity(combo).insert(RenderLayers::layer(layer));
     }
 }
 

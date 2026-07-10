@@ -1,16 +1,24 @@
-use super::{MusicTrack, PlayPhase, PlaySession, PlaySet, PlaybackClock, TickTrack};
+use super::{MusicTrack, PlayPhase, PlaySession, PlaySet, PlayTime, PlaybackClock, TickTrack};
 use crate::core::audio::{SoundChannel, SoundPlayer};
 use crate::core::settings::MachineSettings;
 use crate::core::units::{Millis, Seconds};
+use crate::scenes::GameScene;
 use bevy::prelude::*;
 
 /// Keeps the session's [`PlaybackClock`] on the audio clock: a fixed
 /// lead-in counts up to zero, both tracks start together, then the
 /// [`StepfileClock`](crate::core::stepfile::StepfileClock) servos onto
 /// the channel's position reports so grading sees a smooth, accurate
-/// timeline.
+/// timeline. Publishes the resulting graded/visible moments to [`PlayTime`]
+/// for the shared engine. The options preview drives [`PlayTime`] itself,
+/// so this stays on the play stage.
 pub(super) fn plugin(app: &mut App) {
-    app.add_systems(Update, advance_clock.in_set(PlaySet::Clock));
+    app.add_systems(
+        Update,
+        advance_clock
+            .in_set(PlaySet::Clock)
+            .run_if(in_state(GameScene::FilePlayer)),
+    );
 }
 
 type TrackChannel = (Option<&'static mut SoundChannel>, Has<SoundPlayer>);
@@ -19,6 +27,7 @@ fn advance_clock(
     time: Res<Time>,
     mut session: ResMut<PlaySession>,
     mut settings: ResMut<MachineSettings>,
+    mut play_time: ResMut<PlayTime>,
     mut music: Query<TrackChannel, (With<MusicTrack>, Without<TickTrack>)>,
     mut tick: Query<TrackChannel, (With<TickTrack>, Without<MusicTrack>)>,
 ) {
@@ -30,28 +39,28 @@ fn advance_clock(
             clock.music.set_position(-remaining.max(Seconds::ZERO));
             if remaining.0 > 0.0 {
                 clock.phase = PlayPhase::LeadIn { remaining };
-                return;
-            }
-            // Hold at zero while any track is still loading or decoding,
-            // so the music and the tick track start in lockstep. Tracks
-            // that failed outright never hold the start: the session
-            // plays with whatever survives, silent if nothing does.
-            let mut tracks: Vec<_> = music.iter_mut().chain(tick.iter_mut()).collect();
-            let pending = tracks.iter().any(|(channel, queued)| match channel {
-                Some(channel) => !channel.is_ready(),
-                None => *queued,
-            });
-            if pending {
-                clock.phase = PlayPhase::LeadIn {
-                    remaining: Seconds::ZERO,
-                };
             } else {
-                for (channel, _) in &mut tracks {
-                    if let Some(channel) = channel {
-                        channel.set_paused(false);
+                // Hold at zero while any track is still loading or decoding,
+                // so the music and the tick track start in lockstep. Tracks
+                // that failed outright never hold the start: the session
+                // plays with whatever survives, silent if nothing does.
+                let mut tracks: Vec<_> = music.iter_mut().chain(tick.iter_mut()).collect();
+                let pending = tracks.iter().any(|(channel, queued)| match channel {
+                    Some(channel) => !channel.is_ready(),
+                    None => *queued,
+                });
+                if pending {
+                    clock.phase = PlayPhase::LeadIn {
+                        remaining: Seconds::ZERO,
+                    };
+                } else {
+                    for (channel, _) in &mut tracks {
+                        if let Some(channel) = channel {
+                            channel.set_paused(false);
+                        }
                     }
+                    clock.phase = PlayPhase::Playing;
                 }
-                clock.phase = PlayPhase::Playing;
             }
         }
         PlayPhase::Playing => {
@@ -76,6 +85,8 @@ fn advance_clock(
             }
         }
     }
+    play_time.graded = session.clock.music.graded_now(&settings.timing);
+    play_time.visible = session.clock.music.visible_now(&settings.timing);
 }
 
 /// The mixer consumes samples ahead of real time by roughly the output

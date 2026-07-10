@@ -475,6 +475,10 @@ impl FieldRenderer {
         let mut apps = std::mem::take(app.sub_apps_mut());
 
         let world = apps.main.world_mut();
+        let mut target =
+            Image::new_target_texture(WIDTH, HEIGHT, TextureFormat::Rgba8UnormSrgb, None);
+        target.texture_descriptor.usage |= TextureUsages::COPY_SRC;
+        let target = world.resource_mut::<Assets<Image>>().add(target);
         let layout = NoteField {
             player: PlayerId::P1,
             lane: 0,
@@ -482,19 +486,17 @@ impl FieldRenderer {
             columns: 4,
             speed: options.note_speed,
             arrow_size: RENDER_ARROW_SIZE,
+            // The field's lane camera draws into the capture image, whose
+            // world is the image itself.
+            view: LaneView {
+                target: RenderTarget::Image(target.clone().into()),
+                canvas: Vec2::new(WIDTH as f32, HEIGHT as f32),
+            },
         };
         let field = world.spawn(layout.clone()).id();
-        let mut target =
-            Image::new_target_texture(WIDTH, HEIGHT, TextureFormat::Rgba8UnormSrgb, None);
-        target.texture_descriptor.usage |= TextureUsages::COPY_SRC;
-        let target = world.resource_mut::<Assets<Image>>().add(target);
         // The world and overlay cameras bracketing the lane camera the
         // plugin spawns, all drawing into the capture image. Every camera
         // keeps the default MSAA: cameras sharing a target must agree on it.
-        world.insert_resource(LaneView {
-            target: RenderTarget::Image(target.clone().into()),
-            canvas: Vec2::new(WIDTH as f32, HEIGHT as f32),
-        });
         world
             .spawn_scene(bsn! { Camera2d })
             .expect("static scene resolution cannot fail")

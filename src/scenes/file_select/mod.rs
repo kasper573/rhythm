@@ -199,6 +199,11 @@ struct WheelSlot(usize);
 #[derive(Component, Default, Clone)]
 struct SlotRoot;
 
+/// The player-options modal's black rectangle behind the options and the
+/// per-player preview surfaces.
+#[derive(Component, Default, Clone)]
+pub(super) struct ModalStripe;
+
 /// The frame over the center slot; its opacity pulses with the preview
 /// music's beat.
 #[derive(Component, Default, Clone)]
