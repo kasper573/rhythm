@@ -1,0 +1,14 @@
+[configuration]
+entry_symbol = "gdext_rust_init"
+compatibility_minimum = 4.7
+reloadable = true
+
+[libraries]
+linux.debug.x86_64 = "res://../target/debug/librhythm.so"
+linux.release.x86_64 = "res://../target/release/librhythm.so"
+windows.debug.x86_64 = "res://../target/debug/rhythm.dll"
+windows.release.x86_64 = "res://../target/release/rhythm.dll"
+macos.debug = "res://../target/debug/librhythm.dylib"
+macos.release = "res://../target/release/librhythm.dylib"
+web.debug.wasm32 = "res://../target/wasm32-unknown-emscripten/debug/rhythm.wasm"
+web.release.wasm32 = "res://../target/wasm32-unknown-emscripten/release/rhythm.wasm"

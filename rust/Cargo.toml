@@ -1,0 +1,49 @@
+[package]
+name = "rhythm"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# Span instrumentation for the bench binary's --profile capture.
+profile = ["dep:tracing", "dep:tracing-chrome", "dep:tracing-subscriber"]
+
+[dependencies]
+derive_more = { version = "2.1.1", features = ["add", "add_assign", "mul", "not", "display"] }
+godot = { version = "0.5.4", features = ["api-4-7"] }
+hound = "3.5.1"
+json_comments = "0.2.2"
+percent-encoding = "2.3.2"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+sha2 = "0.11.0"
+strum = { version = "0.28.0", features = ["derive"] }
+thiserror = "2.0.18"
+tracing = { version = "0.1", optional = true }
+tracing-chrome = { version = "0.7", optional = true }
+tracing-subscriber = { version = "0.3", optional = true, default-features = false, features = ["registry"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+clap = { version = "4", features = ["derive"] }
+tiny_http = "0.12"
+video-rs = { version = "0.11.0", features = ["ndarray"] }
+walkdir = "2"
+
+# The ffmpeg behind video-rs compiles from source and links statically on
+# unix; ffmpeg's configure cannot run on Windows, which links the prebuilt
+# libraries `FFMPEG_DIR` points at instead.
+[target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "windows")))'.dependencies]
+ffmpeg-sys-next = { version = "8.1", features = ["build"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+ffmpeg-sys-next = "8.1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+godot = { version = "0.5.4", features = [
+    "api-4-7",
+    "experimental-wasm",
+    "experimental-wasm-nothreads",
+    "lazy-function-tables",
+] }
