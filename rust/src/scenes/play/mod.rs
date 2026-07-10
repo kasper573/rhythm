@@ -23,7 +23,7 @@ use crate::nodes::stepfile_player::note_field::{FieldLayout, fitted_arrow_size, 
 use crate::nodes::stepfile_player::{FieldSpec, StepfilePlayer, StepfilePlayerOptions, grade_text};
 use crate::scenes::{GameScene, change_scene, scene_accepts_input};
 use godot::classes::control::LayoutPreset;
-use godot::classes::{Control, IControl};
+use godot::classes::{Control, DisplayServer, IControl};
 use godot::global::godot_print;
 use godot::prelude::*;
 use strum::IntoEnumIterator;
@@ -289,7 +289,11 @@ impl PlayScene {
         if specs.is_empty() {
             return;
         }
-        let layouts = pack_stage_fields(&specs, rect.size.x, pixels_per_unit);
+        // The arrow-size cap budgets LOGICAL pixels: on hidpi screens the
+        // window reports device pixels (a phone's ~3x), which would shrink
+        // the cap into arrows a third of their designed screen size.
+        let device_scale = DisplayServer::singleton().screen_get_scale().max(1.0);
+        let layouts = pack_stage_fields(&specs, rect.size.x, pixels_per_unit / device_scale);
         let arrow_size = layouts[0].arrow_size;
         let mut bound = engine.bind_mut();
         bound.refit(layouts);
