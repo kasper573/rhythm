@@ -16,6 +16,7 @@ use crate::core::screen::{SCREEN_SIZE, ScreenPlugin};
 use crate::core::settings::SettingsPlugin;
 use crate::core::sfx::SfxPlugin;
 use crate::core::stepfile::MusicPlayerPlugin;
+use crate::prefabs::fps_overlay::FpsOverlayPlugin;
 use crate::prefabs::health_vial::HealthVialPlugin;
 use crate::prefabs::media_cover::MediaCoverPlugin;
 use crate::prefabs::stepfile_player::StepfilePlayerPlugin;
@@ -66,6 +67,7 @@ pub fn app(platform: impl core::platform::Platform + 'static) -> App {
         AudioPlugin,
         StepfilePlayerPlugin,
         HealthVialPlugin,
+        FpsOverlayPlugin,
         MediaCoverPlugin,
         HighScoresPlugin,
         MusicPlayerPlugin,

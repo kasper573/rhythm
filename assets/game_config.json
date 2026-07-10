@@ -21,7 +21,8 @@
       "DecreaseVisualDelay": "F9",
       "IncreaseVisualDelay": "F10",
       "DecreaseMachineOffset": "F11",
-      "IncreaseMachineOffset": "F12"
+      "IncreaseMachineOffset": "F12",
+      "ToggleFps": "F3"
     },
     "player_options": {
       "note_skin": "ddrextreme_note",

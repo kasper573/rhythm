@@ -67,6 +67,8 @@ pub enum GameAction {
     DecreaseMachineOffset,
     #[strum(serialize = "Increase machine offset")]
     IncreaseMachineOffset,
+    #[strum(serialize = "Toggle FPS")]
+    ToggleFps,
 }
 
 /// A step panel's direction, in the fixed Left/Down/Up/Right column order
