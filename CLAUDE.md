@@ -40,6 +40,57 @@ These rules cannot be enforced systematically, but must be followed:
 - Comments are timeless: never prompt-specific, never feedback to the prompter.
 - Explain a mechanism once, ideally at its implementation — never duplicated across workflows, env files, call sites, and the source.
 
+## Visual Testing
+
+Prove a visual or behavioural change by _looking at what the game renders_, not
+by reasoning alone. Every path below ends in a PNG you read back with the image
+tool and compare against the intent.
+
+Two capture paths:
+
+- **Headless render binaries** — for one component or animation in isolation,
+  with no navigation. They boot the real render code offscreen and dump to
+  `out/`, reusing the game's own spawn/shader paths so the output is exactly
+  what the game draws. Current ones: `cargo run --bin render_grade`
+  (→ `out/grades.png`) and `cargo run --bin render_note <scenario|all>
+[--skin .. --bpm ..]` / `--list` (→ `out/*.mp4`). Prefer this: when the thing
+  under test can be isolated, add or extend a scenario instead of clicking
+  through menus.
+
+- **Live drive harness** — `src/bin/drive.sh` boots the actual windowed game on
+  an isolated virtual display and drives it with synthesized input + capture. It
+  never touches the real desktop, mutes audio to a null sink, and sandboxes
+  settings. Primitives (artifacts land in `out/drive/`):
+
+  ```
+  bash src/bin/drive.sh start                 # build + boot, print window id
+  bash src/bin/drive.sh key <keysym> [n]      # tap a key n times at the window
+  bash src/bin/drive.sh hold <keysym> <secs>  # press-hold-release a key
+  bash src/bin/drive.sh shot <name>           # PNG of the window
+  bash src/bin/drive.sh rec <name> <secs>     # mp4 of the window
+  bash src/bin/drive.sh frames <video> [fps]  # extract stills from an mp4
+  bash src/bin/drive.sh strip <out.png> [NxM] <png...>   # tile stills into a sheet
+  bash src/bin/drive.sh stop
+  ```
+
+The loop: reach the state (`start`, then `key`/`hold`, pausing a beat between
+steps) → capture a `shot` for a static look, or `rec` + `frames` for motion and
+timing → `strip` many stills into one contact sheet → read that image, compare
+to intent, adjust code, repeat. Share the contact sheet as the evidence — both
+for interim progress and for the final report.
+
+Gotchas:
+
+- Rebuild before every live run (`start` does this): `clippy`/`fmt` do NOT
+  refresh `target/debug/rhythm`, and testing a stale binary is the classic false
+  result.
+- Only Return-navigable states are reachable on the virtual display — arrow keys
+  don't reach the game there; verify arrow-only screens on real hardware.
+- Software-Vulkan boot is slow and there's an intro fade; capture only after
+  things settle (`start` waits; pause a beat after each state change too).
+- For anything animated or timing-sensitive, `rec` then `frames` — a lone
+  screenshot can land between frames and mislead.
+
 ## Verification
 
 Run `cargo fmt`, `cargo clippy --all-targets` (no warnings), and `cargo build`.
