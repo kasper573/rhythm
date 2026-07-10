@@ -216,7 +216,7 @@ impl Game {
         let alpha = self.fade_alpha;
         if let Some(rect) = &mut self.fade_rect {
             let mut color = rect.get_color();
-            color.a = alpha;
+            color.a = 1.0 - crate::core::screen::linear_blend(1.0 - alpha);
             rect.set_color(color);
         }
         NavInput::singleton()

@@ -1,4 +1,5 @@
 use crate::core::library::StepfileEntry;
+use crate::core::screen::linear_blend;
 use crate::core::stepfile::StepfileTiming;
 use crate::core::units::Seconds;
 use crate::nodes::media_cover::{MediaCover, MediaCoverOptions, MediaPace};
@@ -34,9 +35,11 @@ struct BackgroundChange {
 }
 
 /// One background cover on screen, easing toward its target opacity;
-/// fully faded-out layers retire.
+/// fully faded-out layers retire. `alpha` is the design-space opacity,
+/// shown through [`linear_blend`].
 struct Layer {
     cover: Gd<MediaCover>,
+    alpha: f32,
     target: f32,
 }
 
@@ -90,14 +93,15 @@ impl Backgrounds {
 
         let step = delta / CROSSFADE_SECONDS;
         self.layers.retain_mut(|layer| {
-            let mut modulate = layer.cover.get_modulate();
-            let next = if layer.target > modulate.a {
-                (modulate.a + step).min(layer.target)
+            let next = if layer.target > layer.alpha {
+                (layer.alpha + step).min(layer.target)
             } else {
-                (modulate.a - step).max(layer.target)
+                (layer.alpha - step).max(layer.target)
             };
-            if next != modulate.a {
-                modulate.a = next;
+            if next != layer.alpha {
+                layer.alpha = next;
+                let mut modulate = layer.cover.get_modulate();
+                modulate.a = linear_blend(next);
                 layer.cover.set_modulate(modulate);
             }
             if layer.target <= 0.0 && next <= 0.0 {
@@ -113,7 +117,7 @@ impl Backgrounds {
         let alpha = if crossfade { 0.0 } else { 1.0 };
         let cover = MediaCover::instantiate(MediaCoverOptions {
             path,
-            color: Color::from_rgba(DIM, DIM, DIM, alpha),
+            color: Color::from_rgba(DIM, DIM, DIM, linear_blend(alpha)),
             z: 0,
             start: time,
             looping: loops,
@@ -132,6 +136,10 @@ impl Backgrounds {
             self.layers.clear();
         }
         self.host.add_child(&cover);
-        self.layers.push(Layer { cover, target: 1.0 });
+        self.layers.push(Layer {
+            cover,
+            alpha,
+            target: 1.0,
+        });
     }
 }

@@ -695,12 +695,18 @@ impl IControl for StepfilePlayer {
         }
         self.sync_fields();
 
-        let center = self.canvas / 2.0;
+        // The sandwich layers hold canvas-unit content while the control
+        // itself spans window pixels: place and scale them by the canvas'
+        // pixel density so their content lands wherever the canvas does.
+        let center = self.canvas * self.pixel_scale / 2.0;
+        let density = Vector2::splat(self.pixel_scale);
         if let Some(behind) = &mut self.behind {
             behind.set_position(center);
+            behind.set_scale(density);
         }
         if let Some(overlay) = &mut self.overlay {
             overlay.set_position(center);
+            overlay.set_scale(density);
         }
         let clock = FieldClock {
             visible: self.visible_now,

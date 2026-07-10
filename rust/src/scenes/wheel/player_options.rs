@@ -2,7 +2,7 @@ use crate::core::config::{GameConfig, config};
 use crate::core::font::label;
 use crate::core::input::{Actions, GameAction, StepDirection};
 use crate::core::player::PlayerId;
-use crate::core::screen::SCREEN_SIZE;
+use crate::core::screen::{SCREEN_SIZE, linear_blend};
 use crate::core::settings::{GradeLayer, NoteSpeed, Perspective, PlayerOptions, Settings};
 use crate::core::sfx::Sfx;
 use crate::core::stepfile::{Arrow, MusicPlayer, Row, StepfileTiming, Tail};
@@ -13,8 +13,8 @@ use crate::nodes::stepfile_player::note_skin::{NoteSkinLibrary, note_skins};
 use crate::nodes::stepfile_player::{FieldSpec, StepfilePlayer, StepfilePlayerOptions, grade_text};
 use godot::classes::control::{LayoutPreset, SizeFlags};
 use godot::classes::{
-    CenterContainer, ColorRect, Control, HBoxContainer, Label, SubViewport, TextureRect,
-    VBoxContainer,
+    CenterContainer, ColorRect, Control, HBoxContainer, Label, MarginContainer, SubViewport,
+    TextureRect, VBoxContainer,
 };
 use godot::global::HorizontalAlignment;
 use godot::prelude::*;
@@ -134,8 +134,11 @@ impl OptionsModal {
         column.add_theme_constant_override("separation", 12);
         let mut title = label("Player Options", 48.0, TITLE_COLOR);
         title.set_horizontal_alignment(HorizontalAlignment::CENTER);
-        title.set_h_size_flags(SizeFlags::SHRINK_CENTER);
-        column.add_child(&title);
+        let mut title_box = MarginContainer::new_alloc();
+        title_box.add_theme_constant_override("margin_bottom", 12);
+        title_box.set_h_size_flags(SizeFlags::SHRINK_CENTER);
+        title_box.add_child(&title);
+        column.add_child(&title_box);
         texts.push(title);
 
         let mut row_names = Vec::new();
@@ -236,6 +239,7 @@ impl OptionsModal {
             return true;
         }
         self.build_previews();
+        self.refit_previews();
         self.drive_previews();
         self.refresh_values();
         self.highlight_rows();
@@ -314,14 +318,18 @@ impl OptionsModal {
         self.background
             .set_position(Vector2::new(-size.x * (1.0 - eased), top));
         self.background.set_size(Vector2::new(size.x, height));
-        self.background
-            .set_color(Color::from_rgba(0.0, 0.0, 0.0, eased));
+        self.background.set_color(Color::from_rgba(
+            0.0,
+            0.0,
+            0.0,
+            1.0 - linear_blend(1.0 - eased),
+        ));
         self.content
             .set_position(Vector2::new(size.x * (1.0 - eased), top));
         self.content.set_size(Vector2::new(size.x, height));
         for text in &mut self.texts {
             let mut modulate = text.get_modulate();
-            modulate.a = eased;
+            modulate.a = linear_blend(eased);
             text.set_modulate(modulate);
         }
         true
@@ -374,6 +382,28 @@ impl OptionsModal {
             last_visible: Seconds::ZERO,
             rebuild: true,
         });
+    }
+
+    /// Follows each flank's laid-out size every frame — the stripe height
+    /// and the window can both change under the modal — so the surface
+    /// renders at native resolution and the band maps onto it undistorted.
+    fn refit_previews(&mut self) {
+        for preview in &mut self.previews {
+            let (Some(viewport), Some(engine)) = (&mut preview.viewport, &mut preview.engine)
+            else {
+                continue;
+            };
+            let surface = preview.flank.get_size();
+            if surface.x <= 0.0 || surface.y <= 0.0 {
+                continue;
+            }
+            viewport.set_size(Vector2i::new(surface.x as i32, surface.y as i32));
+            let aspect = surface.x / surface.y;
+            let canvas = Vector2::new(PREVIEW_BAND * aspect, PREVIEW_BAND);
+            engine
+                .bind_mut()
+                .set_canvas(canvas, surface.y / PREVIEW_BAND);
+        }
     }
 
     /// The mocked adapter: clocks the previews from the wheel music,

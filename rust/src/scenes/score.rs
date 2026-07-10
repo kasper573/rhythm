@@ -17,7 +17,7 @@ use crate::scenes::{
 use godot::classes::control::{LayoutPreset, SizeFlags};
 use godot::classes::texture_rect::ExpandMode;
 use godot::classes::{
-    CenterContainer, Control, HBoxContainer, IControl, TextureRect, VBoxContainer,
+    CenterContainer, Control, HBoxContainer, IControl, MarginContainer, TextureRect, VBoxContainer,
 };
 use godot::global::HorizontalAlignment;
 use godot::prelude::*;
@@ -125,8 +125,11 @@ impl ScoreScene {
         };
         let mut result = label(result_label, 34.0, result_color);
         result.set_horizontal_alignment(HorizontalAlignment::CENTER);
-        result.set_h_size_flags(SizeFlags::SHRINK_CENTER);
-        column.add_child(&result);
+        let mut result_box = MarginContainer::new_alloc();
+        result_box.add_theme_constant_override("margin_bottom", 12);
+        result_box.set_h_size_flags(SizeFlags::SHRINK_CENTER);
+        result_box.add_child(&result);
+        column.add_child(&result_box);
 
         // The percentage beside the rating art, which carries a "new high
         // score" ribbon on its bottom edge when earned.
@@ -155,7 +158,11 @@ impl ScoreScene {
             rating_box.add_child(&ribbon);
         }
         score_row.add_child(&rating_box);
-        column.add_child(&score_row);
+        let mut score_box = MarginContainer::new_alloc();
+        score_box.add_theme_constant_override("margin_bottom", 10);
+        score_box.set_h_size_flags(SizeFlags::SHRINK_CENTER);
+        score_box.add_child(&score_row);
+        column.add_child(&score_box);
         let image = config
             .rating(tally.percent, tally.worst_grade)
             .image

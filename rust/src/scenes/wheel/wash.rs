@@ -1,5 +1,6 @@
 use super::{WHEEL_EASE_RATE, WheelEntry, WheelScene};
 use crate::core::library::library;
+use crate::core::screen::linear_blend;
 use crate::core::units::Seconds;
 use crate::nodes::media_cover::{MediaCover, MediaCoverOptions, MediaPace};
 use godot::prelude::*;
@@ -72,7 +73,7 @@ impl WheelScene {
         let sequence = self.wash.sequence;
         self.wash.layers.push(WashLayer {
             cover,
-            target: BACKGROUND_OPACITY,
+            target: linear_blend(BACKGROUND_OPACITY),
             sequence,
             source: path,
         });

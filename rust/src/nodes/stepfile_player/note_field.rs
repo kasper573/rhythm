@@ -227,6 +227,7 @@ struct MineEl {
     node: Gd<MeshInstance3D>,
     time: Seconds,
     beat: Beat,
+    column: usize,
     live: bool,
 }
 
@@ -428,6 +429,7 @@ impl NoteFieldRig {
             node,
             time,
             beat,
+            column,
             live: true,
         });
         MineIndex(self.mines.len() - 1)
@@ -626,6 +628,7 @@ impl NoteFieldRig {
         self.elapsed += delta as f64;
         self.animate_sheet_taps(beat);
         self.animate_receptor_frames(beat);
+        self.place_receptors(clock.target_y);
         self.animate_receptor_press(delta);
         self.scroll_and_animate_notes(&scroll);
         self.animate_mines(&scroll, beat);
@@ -693,6 +696,23 @@ impl NoteFieldRig {
         }
     }
 
+    /// Receptors follow the live target row, column, and arrow size every
+    /// frame — the layout refits under them while the window changes.
+    fn place_receptors(&mut self, target_y: f32) {
+        for receptor in &mut self.receptors {
+            let mut position = receptor.node.get_position();
+            position.x = self.layout.column_x(receptor.column);
+            position.y = target_y;
+            receptor.node.set_position(position);
+            if !receptor.held && receptor.press == 0.0 {
+                let wanted = Vector3::splat(self.layout.arrow_size / receptor.cell);
+                if receptor.node.get_scale() != wanted {
+                    receptor.node.set_scale(wanted);
+                }
+            }
+        }
+    }
+
     /// Held receptors tween back along Z with a shrink to sell the depth.
     fn animate_receptor_press(&mut self, delta: f32) {
         for receptor in &mut self.receptors {
@@ -723,6 +743,7 @@ impl NoteFieldRig {
             let angle = (-(beat.0.rem_euclid(spin) / spin) * std::f64::consts::TAU) as f32;
             let scale = self.layout.arrow_size / NOTE_CELL;
             let mut position = mine.node.get_position();
+            position.x = self.layout.column_x(mine.column);
             position.y = y;
             mine.node.set_position(position);
             mine.node.set_basis(

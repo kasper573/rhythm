@@ -22,3 +22,13 @@ pub fn visible_center(node: &Node) -> Vector2 {
     let rect = visible_rect(node);
     rect.position + rect.size / 2.0
 }
+
+/// A canvas blend factor compensated for the 2D pipeline blending in sRGB
+/// space: the game's look was designed on a linear-blending renderer where
+/// the same factor mixes brighter, so partial alphas are encoded with the
+/// sRGB exponent to restore the designed brightness (the grade shader's
+/// bloom does the same). Apply to the surviving side of a blend: a wash at
+/// `linear_blend(0.25)`, a black fade covering at `1 - linear_blend(1 - t)`.
+pub fn linear_blend(factor: f32) -> f32 {
+    factor.clamp(0.0, 1.0).powf(1.0 / 2.2)
+}

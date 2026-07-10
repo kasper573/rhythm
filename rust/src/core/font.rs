@@ -36,12 +36,22 @@ pub fn drop_caches() {
 }
 
 /// A label in the game font at a size and color — the one way text is made.
+/// Every line box is 1.2× the font size with the glyphs centered in it —
+/// the layout model the game was designed on — where this font's own
+/// metrics would pack stacked text visibly tighter.
 pub fn label(text: &str, size: f32, color: Color) -> Gd<Label> {
     let mut label = Label::new_alloc();
     label.set_text(text);
     label.add_theme_font_override("font", &game_font());
     label.add_theme_font_size_override("font_size", size.round() as i32);
     label.add_theme_color_override("font_color", color);
+    label.set_vertical_alignment(godot::global::VerticalAlignment::CENTER);
+    label.set_custom_minimum_size(Vector2::new(0.0, (size * 1.2).round()));
+    let natural = game_font()
+        .get_height_ex()
+        .font_size(size.round() as i32)
+        .done();
+    label.add_theme_constant_override("line_spacing", (size * 1.2 - natural).round() as i32);
     label
 }
 
