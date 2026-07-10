@@ -398,11 +398,9 @@ impl OptionsModal {
                 continue;
             }
             viewport.set_size(Vector2i::new(surface.x as i32, surface.y as i32));
-            let aspect = surface.x / surface.y;
-            let canvas = Vector2::new(PREVIEW_BAND * aspect, PREVIEW_BAND);
             engine
                 .bind_mut()
-                .set_canvas(canvas, surface.y / PREVIEW_BAND);
+                .set_canvas(band_canvas(surface), surface.y / PREVIEW_BAND);
         }
     }
 
@@ -450,8 +448,7 @@ impl OptionsModal {
                     continue;
                 };
                 let surface = preview.flank.get_size();
-                let aspect = surface.x.max(1.0) / surface.y.max(1.0);
-                let canvas = Vector2::new(PREVIEW_BAND * aspect, PREVIEW_BAND);
+                let canvas = band_canvas(surface);
                 let arrow = preview_arrow_size(config());
                 let mut engine = StepfilePlayer::instantiate(StepfilePlayerOptions {
                     fields: vec![FieldSpec {
@@ -473,7 +470,7 @@ impl OptionsModal {
                 let padding = config().stage.screen_edge_padding;
                 let half = PREVIEW_BAND / 2.0;
                 let mut bound = engine.bind_mut();
-                bound.set_canvas(canvas, surface.y / PREVIEW_BAND);
+                bound.set_canvas(canvas, surface.y.max(1.0) / PREVIEW_BAND);
                 bound.set_target_y(half - padding - arrow / 2.0);
                 bound.set_grade_area(grade_text::grade_area(half - padding, -half + padding));
                 drop(bound);
@@ -605,6 +602,13 @@ fn autoplay_offset(config: &GameConfig, tier: usize) -> Option<Seconds> {
         dynamic[tier - 1].window
     };
     Some(Seconds((lower.0 + def.window.0) / 2.0))
+}
+
+/// The band-tall canvas a preview surface frames, its width following the
+/// surface's aspect.
+fn band_canvas(surface: Vector2) -> Vector2 {
+    let aspect = surface.x.max(1.0) / surface.y.max(1.0);
+    Vector2::new(PREVIEW_BAND * aspect, PREVIEW_BAND)
 }
 
 /// A single field's arrows at the play stage's design-canvas size, so the

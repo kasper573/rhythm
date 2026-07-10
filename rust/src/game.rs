@@ -2,6 +2,7 @@ use crate::core::config::GameConfig;
 use crate::core::high_scores::HighScores;
 use crate::core::library::{StepfileId, StepfileLibrary};
 use crate::core::player::{PerPlayer, PlayMode};
+use crate::core::screen::linear_blend;
 use crate::core::sfx::SfxPlayer;
 use crate::core::stepfile::{Difficulty, MusicPlayer};
 use crate::nodes::fps_overlay::{FpsOverlay, FpsOverlayOptions};
@@ -216,7 +217,7 @@ impl Game {
         let alpha = self.fade_alpha;
         if let Some(rect) = &mut self.fade_rect {
             let mut color = rect.get_color();
-            color.a = 1.0 - crate::core::screen::linear_blend(1.0 - alpha);
+            color.a = 1.0 - linear_blend(1.0 - alpha);
             rect.set_color(color);
         }
         NavInput::singleton()
