@@ -74,12 +74,15 @@ jobs:
           - os: ubuntu-latest
             platform: linux-x86_64
             preset: Linux
+            out: target/export/linux/rhythm.x86_64
           - os: windows-latest
             platform: windows-x86_64
             preset: Windows
+            out: target/export/windows/rhythm.exe
           - os: macos-latest
             platform: macos-arm64
             preset: macOS
+            out: target/export/macos/rhythm.zip
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -93,9 +96,10 @@ jobs:
       - name: install build tools (macos)
         if: runner.os == 'macOS'
         run: brew install nasm
-      # The extension links these dynamically on Windows: the editor needs
-      # them on PATH to load it during import/export, and the packaged game
-      # ships them beside the executable.
+      # The extension links these dynamically on Windows. Dependent DLLs
+      # resolve from the extension's own directory: the export step copies
+      # them beside the built libraries so the editor can load it, and the
+      # packaged game ships them beside the executable.
       - name: install prebuilt ffmpeg (windows)
         if: runner.os == 'Windows'
         shell: bash
@@ -103,7 +107,6 @@ jobs:
           curl -sSfL -o ffmpeg.zip https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-win64-lgpl-shared-8.1.zip
           unzip -q ffmpeg.zip -d ffmpeg-prebuilt
           echo "FFMPEG_DIR=$(cygpath -w "$PWD"/ffmpeg-prebuilt/ffmpeg-n8.1-latest-win64-lgpl-shared-8.1)" >> "$GITHUB_ENV"
-          echo "$PWD/ffmpeg-prebuilt/ffmpeg-n8.1-latest-win64-lgpl-shared-8.1/bin" >> "$GITHUB_PATH"
       - name: install godot
         shell: bash
         run: |
@@ -141,9 +144,11 @@ jobs:
       - name: export
         shell: bash
         run: |
-          mkdir -p target/export/linux target/export/windows target/export/macos
-          "$GODOT_BIN" --headless --path godot --import
-          "$GODOT_BIN" --headless --path godot --export-release "${{ matrix.preset }}"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cp "$FFMPEG_DIR"/bin/*.dll target/debug/
+            cp "$FFMPEG_DIR"/bin/*.dll target/release/
+          fi
+          cargo run --bin export -- "${{ matrix.preset }}" "${{ matrix.out }}"
       - name: package
         shell: bash
         run: |

@@ -50,10 +50,12 @@ fn main() {
 /// Compiles the extension for the browser and exports the web build to
 /// `target/site/`.
 fn build_site(repo: &Path) -> PathBuf {
-    run(
-        repo,
-        "cargo",
-        &[
+    // The editor performing the export loads the native debug library;
+    // build it so the project imports with its classes present.
+    launcher::build_extension(false);
+    let status = Command::new("cargo")
+        .current_dir(repo)
+        .args([
             WEB_TOOLCHAIN,
             "build",
             "-p",
@@ -63,40 +65,14 @@ fn build_site(repo: &Path) -> PathBuf {
             "--target",
             "wasm32-unknown-emscripten",
             "--release",
-        ],
-    );
+        ])
+        .status()
+        .expect("failed to run cargo");
+    assert!(status.success(), "building the web extension failed");
     let site = repo.join("target/site");
     std::fs::create_dir_all(&site).expect("failed to create target/site");
-    let godot = launcher::godot_binary();
-    let project = repo.join("godot").display().to_string();
-    run(
-        repo,
-        &godot,
-        &["--headless", "--path", &project, "--import"],
-    );
-    run(
-        repo,
-        &godot,
-        &[
-            "--headless",
-            "--path",
-            &project,
-            "--export-release",
-            "Web",
-            &site.join("index.html").display().to_string(),
-        ],
-    );
+    launcher::export_release("Web", &site.join("index.html"));
     site
-}
-
-fn run(cwd: &Path, program: &str, args: &[&str]) {
-    println!("$ {program} {}", args.join(" "));
-    let status = Command::new(program)
-        .args(args)
-        .current_dir(cwd)
-        .status()
-        .unwrap_or_else(|error| panic!("failed to run {program}: {error}"));
-    assert!(status.success(), "{program} failed");
 }
 
 /// The listing the web platform boots from: every file under the asset

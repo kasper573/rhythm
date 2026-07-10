@@ -43,6 +43,9 @@ focus() { local w; w="$(wid)"; [ -n "$w" ] && xdotool windowfocus --sync "$w"; e
 
 start() {
   CARGO_INCREMENTAL=0 cargo build --manifest-path "$ROOT/Cargo.toml" -p rhythm --lib -q || return 1
+  # Extension manifest: see write_extension_manifest in rust/src/dev/launcher.rs.
+  mkdir -p "$ROOT/godot/.godot"
+  printf 'res://rhythm.gdextension\n' > "$ROOT/godot/.godot/extension_list.cfg"
   pkill -9 -f "$GODOT --path $ROOT/godot" 2>/dev/null; sleep 0.5
   pgrep -f "Xvfb $DISPLAY" >/dev/null || { Xvfb "$DISPLAY" -screen 0 "$SCREEN" >/dev/null 2>&1 & sleep 1; }
   pactl list short sinks 2>/dev/null | grep -q "$SINK" \

@@ -250,8 +250,14 @@ impl INode for Game {
         }
     }
 
+    // Extension classes run as tool classes inside the editor (it opens
+    // the main scene while scanning the project), so the game must stay
+    // inert there.
     #[cfg(not(target_arch = "wasm32"))]
     fn ready(&mut self) {
+        if Engine::singleton().is_editor_hint() {
+            return;
+        }
         crate::core::platform::install(crate::native::NativePlatform);
         self.boot();
     }
@@ -261,6 +267,9 @@ impl INode for Game {
     /// line while it streams in.
     #[cfg(target_arch = "wasm32")]
     fn ready(&mut self) {
+        if Engine::singleton().is_editor_hint() {
+            return;
+        }
         let mut label = godot::classes::Label::new_alloc();
         label.set_text("Loading…");
         label.add_theme_font_size_override("font_size", 30);
@@ -272,6 +281,9 @@ impl INode for Game {
     }
 
     fn process(&mut self, delta: f64) {
+        if Engine::singleton().is_editor_hint() {
+            return;
+        }
         #[cfg(target_arch = "wasm32")]
         if let Some(boot) = &mut self.web_boot {
             let Some(platform) = boot.poll() else {
