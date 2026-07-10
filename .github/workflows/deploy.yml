@@ -2,7 +2,7 @@ name: deploy
 
 on:
   push:
-    branches: [main]
+    branches: [main, godot]
   workflow_dispatch:
 
 jobs:
@@ -26,28 +26,40 @@ jobs:
           repository: kasper573/stepfiles
           ssh-key: ${{ secrets.STEPFILES_DEPLOY_KEY }}
           path: assets/stepfiles
-      - uses: dtolnay/rust-toolchain@stable
+      # The pinned web toolchain first, stable second so stable stays the
+      # default; the serve binary selects the web toolchain explicitly.
+      - uses: dtolnay/rust-toolchain@master
         with:
-          targets: wasm32-unknown-unknown
+          toolchain: nightly-2026-01-01
+          components: rust-src
+          targets: wasm32-unknown-emscripten
+      - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y nasm libasound2-dev libwayland-dev libxkbcommon-dev
-      # apt's binaryen writes a capped wasm table maximum that breaks
-      # wasm-bindgen output at instantiation; pin a known-good version.
-      - name: install binaryen
+          sudo apt-get install -y nasm
+      # The emsdk version whose emscripten matches the Godot 4.7 web export
+      # templates; the build step sources its environment.
+      - name: install emsdk
         run: |
-          curl -sSfL https://github.com/WebAssembly/binaryen/releases/download/version_130/binaryen-version_130-x86_64-linux.tar.gz | tar xz
-          echo "$PWD/binaryen-version_130/bin" >> "$GITHUB_PATH"
-      - name: resolve wasm-bindgen version from Cargo.lock
-        id: wasm-bindgen
-        run: echo "version=$(cargo metadata --format-version 1 --locked | jq -r '.packages[] | select(.name == "wasm-bindgen") | .version')" >> "$GITHUB_OUTPUT"
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: wasm-bindgen@${{ steps.wasm-bindgen.outputs.version }}
+          git clone --depth 1 https://github.com/emscripten-core/emsdk
+          emsdk/emsdk install 3.1.74
+          emsdk/emsdk activate 3.1.74
+      - name: install godot
+        run: |
+          release=https://github.com/godotengine/godot/releases/download/4.7-stable
+          curl -sSfL -o godot.zip "$release/Godot_v4.7-stable_linux.x86_64.zip"
+          unzip -q godot.zip
+          echo "GODOT_BIN=$PWD/Godot_v4.7-stable_linux.x86_64" >> "$GITHUB_ENV"
+          curl -sSfL -o templates.tpz "$release/Godot_v4.7-stable_export_templates.tpz"
+          unzip -q templates.tpz
+          mkdir -p ~/.local/share/godot/export_templates
+          mv templates ~/.local/share/godot/export_templates/4.7.stable
       - name: build site
-        run: cargo run --bin serve -- --emit dist
+        run: |
+          source emsdk/emsdk_env.sh
+          cargo run --bin serve -- --emit dist
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
@@ -61,10 +73,13 @@ jobs:
         include:
           - os: ubuntu-latest
             platform: linux-x86_64
+            preset: Linux
           - os: windows-latest
             platform: windows-x86_64
+            preset: Windows
           - os: macos-latest
             platform: macos-arm64
+            preset: macOS
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -74,10 +89,13 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y nasm libasound2-dev libwayland-dev libxkbcommon-dev
+          sudo apt-get install -y nasm
       - name: install build tools (macos)
         if: runner.os == 'macOS'
         run: brew install nasm
+      # The extension links these dynamically on Windows: the editor needs
+      # them on PATH to load it during import/export, and the packaged game
+      # ships them beside the executable.
       - name: install prebuilt ffmpeg (windows)
         if: runner.os == 'Windows'
         shell: bash
@@ -85,24 +103,69 @@ jobs:
           curl -sSfL -o ffmpeg.zip https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-win64-lgpl-shared-8.1.zip
           unzip -q ffmpeg.zip -d ffmpeg-prebuilt
           echo "FFMPEG_DIR=$(cygpath -w "$PWD"/ffmpeg-prebuilt/ffmpeg-n8.1-latest-win64-lgpl-shared-8.1)" >> "$GITHUB_ENV"
+          echo "$PWD/ffmpeg-prebuilt/ffmpeg-n8.1-latest-win64-lgpl-shared-8.1/bin" >> "$GITHUB_PATH"
+      - name: install godot
+        shell: bash
+        run: |
+          release=https://github.com/godotengine/godot/releases/download/4.7-stable
+          case "$RUNNER_OS" in
+            Linux)
+              curl -sSfL -o godot.zip "$release/Godot_v4.7-stable_linux.x86_64.zip"
+              unzip -q godot.zip
+              echo "GODOT_BIN=$PWD/Godot_v4.7-stable_linux.x86_64" >> "$GITHUB_ENV"
+              templates=~/.local/share/godot/export_templates
+              ;;
+            Windows)
+              curl -sSfL -o godot.zip "$release/Godot_v4.7-stable_win64.exe.zip"
+              unzip -q godot.zip
+              echo "GODOT_BIN=$PWD/Godot_v4.7-stable_win64_console.exe" >> "$GITHUB_ENV"
+              templates="$APPDATA/Godot/export_templates"
+              ;;
+            macOS)
+              curl -sSfL -o godot.zip "$release/Godot_v4.7-stable_macos.universal.zip"
+              unzip -q godot.zip
+              echo "GODOT_BIN=$PWD/Godot.app/Contents/MacOS/Godot" >> "$GITHUB_ENV"
+              templates="$HOME/Library/Application Support/Godot/export_templates"
+              ;;
+          esac
+          curl -sSfL -o templates.tpz "$release/Godot_v4.7-stable_export_templates.tpz"
+          unzip -q templates.tpz
+          mkdir -p "$templates"
+          mv templates "$templates/4.7.stable"
+      # The editor (which runs the import below) loads the debug library;
+      # the exported game ships the release one.
       - name: build
-        run: cargo build --release --bin rhythm
+        run: |
+          cargo build --lib
+          cargo build --release --lib
+      - name: export
+        shell: bash
+        run: |
+          mkdir -p target/export/linux target/export/windows target/export/macos
+          "$GODOT_BIN" --headless --path godot --import
+          "$GODOT_BIN" --headless --path godot --export-release "${{ matrix.preset }}"
       - name: package
         shell: bash
         run: |
           mkdir -p staging
           cp -r assets staging/assets
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            cp target/release/rhythm.exe staging/
-            cp "$FFMPEG_DIR"/bin/*.dll staging/
-          else
-            cp target/release/rhythm staging/
-          fi
+          case "$RUNNER_OS" in
+            Linux)
+              cp target/export/linux/* staging/
+              ;;
+            Windows)
+              cp target/export/windows/* staging/
+              cp "$FFMPEG_DIR"/bin/*.dll staging/
+              ;;
+            macOS)
+              unzip -q target/export/macos/rhythm.zip -d staging
+              ;;
+          esac
           cd staging
           if [ "$RUNNER_OS" = "Windows" ]; then
             7z a "../rhythm-${{ matrix.platform }}.zip" .
           else
-            zip -qr "../rhythm-${{ matrix.platform }}.zip" .
+            zip -qry "../rhythm-${{ matrix.platform }}.zip" .
           fi
       - uses: actions/upload-artifact@v4
         with:
