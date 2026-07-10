@@ -138,6 +138,9 @@ type SharedResponse = Rc<RefCell<Option<Result<Vec<u8>, String>>>>;
 /// [`HttpRequest`] node; the shared slot resolves when it lands.
 fn request(host: &mut Gd<Node>, file: &str) -> SharedResponse {
     let mut node = HttpRequest::new_alloc();
+    // The browser's fetch already decompresses bodies; on gzip-encoded
+    // responses (GitHub Pages) letting Godot decompress again fails.
+    node.set_accept_gzip(false);
     host.add_child(&node);
     let response: SharedResponse = Rc::new(RefCell::new(None));
     let slot = Rc::clone(&response);
