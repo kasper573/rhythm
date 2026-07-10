@@ -1,8 +1,9 @@
 use crate::core::platform::{
-    AssetEntry, AudioChannel, Platform, SoundOptions, VideoFrame, VideoSource,
+    AssetEntry, AudioChannel, Platform, SoundOptions, SoundTimeline, VideoFrame, VideoSource,
 };
 use crate::core::units::Seconds;
 use bevy::log::warn;
+use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use send_wrapper::SendWrapper;
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap};
@@ -200,7 +201,7 @@ impl Platform for WebPlatform {
                 canvas,
                 context,
             }),
-            last_time: -1.0,
+            last_time: None,
         }))
     }
 
@@ -222,19 +223,22 @@ impl Platform for WebPlatform {
         gain.connect_with_audio_node(&context.destination())
             .map_err(|_| "cannot reach the audio output")?;
 
-        let window = options
-            .window
-            .map(|(start, length)| (start.0.max(0.0), length.0));
+        let offset = match options.timeline {
+            SoundTimeline::WholeFile => 0.0,
+            SoundTimeline::From(start) | SoundTimeline::LoopWindow { start, .. } => {
+                start.0.max(0.0)
+            }
+        };
         let state = Rc::new(RefCell::new(WebAudio {
             context: context.clone(),
             gain,
             buffer: None,
             node: None,
-            window,
+            timeline: options.timeline,
             paused: options.paused,
             muted: options.muted,
             volume: options.volume,
-            offset: window.map(|(start, _)| start).unwrap_or(0.0),
+            offset,
             started_at: 0.0,
             failed: false,
             dropped: false,
@@ -290,18 +294,16 @@ fn url(file: &str) -> String {
 
 /// Percent-encodes a path for the browser: asset names contain characters
 /// with URL meaning (`#` starts a fragment) that must not pass through
-/// literally.
+/// literally. Everything but unreserved characters and `/` is encoded.
+const URL_PATH_SET: &AsciiSet = &NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'_')
+    .remove(b'.')
+    .remove(b'~')
+    .remove(b'/');
+
 fn encode_path(path: &str) -> String {
-    let mut encoded = String::with_capacity(path.len());
-    for byte in path.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
-                encoded.push(byte as char);
-            }
-            _ => encoded.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    encoded
+    utf8_percent_encode(path, URL_PATH_SET).to_string()
 }
 
 /// The deploy-generated listing of every file under the asset root,
@@ -367,9 +369,7 @@ struct WebAudio {
     gain: GainNode,
     buffer: Option<AudioBuffer>,
     node: Option<AudioBufferSourceNode>,
-    /// `(start, length)` of a loop window; non-positive lengths play the
-    /// file whole from `start`.
-    window: Option<(f64, f64)>,
+    timeline: SoundTimeline,
     paused: bool,
     muted: bool,
     volume: f32,
@@ -386,9 +386,25 @@ impl WebAudio {
             .gain()
             .set_value(if self.muted { 0.0 } else { self.volume });
     }
-}
 
-impl WebAudio {
+    /// The loop window `(start, length)` playback actually runs, clamped
+    /// to the decoded buffer — the same window `loopStart`/`loopEnd` get,
+    /// so folded positions always match what plays.
+    fn effective_window(&self) -> Option<(f64, f64)> {
+        let SoundTimeline::LoopWindow { start, length } = self.timeline else {
+            return None;
+        };
+        if length.0 <= 0.0 {
+            return None;
+        }
+        let start = start.0.max(0.0);
+        let end = match &self.buffer {
+            Some(buffer) => (start + length.0).min(buffer.duration()),
+            None => start + length.0,
+        };
+        (end > start).then_some((start, end - start))
+    }
+
     fn start_node(&mut self) {
         let Some(buffer) = &self.buffer else {
             return;
@@ -399,12 +415,10 @@ impl WebAudio {
             return;
         };
         node.set_buffer(Some(buffer));
-        if let Some((start, length)) = self.window
-            && length > 0.0
-        {
+        if let Some((start, length)) = self.effective_window() {
             node.set_loop(true);
             node.set_loop_start(start);
-            node.set_loop_end((start + length).min(buffer.duration()));
+            node.set_loop_end(start + length);
         }
         let _ = node.connect_with_audio_node(&self.gain);
         let _ = node.start_with_when_and_grain_offset(0.0, self.offset);
@@ -425,9 +439,9 @@ impl WebAudio {
             return self.offset;
         }
         let raw = self.offset + (self.context.current_time() - self.started_at);
-        match self.window {
-            Some((start, length)) if length > 0.0 => start + (raw - start).rem_euclid(length),
-            _ => match &self.buffer {
+        match self.effective_window() {
+            Some((start, length)) => start + (raw - start).rem_euclid(length),
+            None => match &self.buffer {
                 Some(buffer) => raw.min(buffer.duration()),
                 None => raw,
             },
@@ -435,7 +449,7 @@ impl WebAudio {
     }
 
     fn looping(&self) -> bool {
-        matches!(self.window, Some((_, length)) if length > 0.0)
+        self.effective_window().is_some()
     }
 }
 
@@ -518,7 +532,9 @@ struct WebVideo {
 /// own time moves.
 struct WebVideoSource {
     inner: SendWrapper<WebVideo>,
-    last_time: f64,
+    /// The element time of the frame last read back; `None` before the
+    /// first one.
+    last_time: Option<f64>,
 }
 
 impl Drop for WebVideoSource {
@@ -540,10 +556,10 @@ impl VideoSource for WebVideoSource {
             return None;
         }
         let time = video.current_time();
-        if time == self.last_time {
+        if self.last_time == Some(time) {
             return None;
         }
-        self.last_time = time;
+        self.last_time = Some(time);
         let (source_width, source_height) = (video.video_width(), video.video_height());
         if source_width == 0 || source_height == 0 {
             return None;

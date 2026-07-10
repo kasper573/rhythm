@@ -1,9 +1,10 @@
 use crate::core::assets::asset_server_path;
 use crate::core::audio::Sound;
-use crate::core::platform::{AudioChannel, SoundOptions, platform};
+use crate::core::platform::{AudioChannel, SoundOptions, SoundTimeline, platform};
 use crate::core::settings::{MachineSettings, TimingSettings};
 use crate::core::stepfile::{Stepfile, StepfileClock, StepfileTiming};
 use crate::core::units::{Beat, Seconds};
+use bevy::asset::LoadState;
 use bevy::prelude::*;
 use std::path::PathBuf;
 
@@ -70,16 +71,16 @@ impl MusicPlayer {
 
     /// The looping sample window a preview can lay a chart over: the
     /// stepfile's timing and the `[start, start+length)` window the music
-    /// loops. `None` until the clock exists (the music is playing).
+    /// loops. `None` until the clock exists (the music is playing), and for
+    /// music that plays through instead of looping.
     pub fn loop_window(&self) -> Option<(StepfileTiming, Seconds, Seconds)> {
         let playing = self.playing.as_ref()?;
         playing.clock.as_ref()?;
         let stepfile = &playing.bgm.stepfile;
-        Some((
-            stepfile.timing.clone(),
-            stepfile.sample_start,
-            stepfile.sample_length,
-        ))
+        let SoundTimeline::LoopWindow { start, length } = stepfile.sample_timeline() else {
+            return None;
+        };
+        Some((stepfile.timing.clone(), start, length))
     }
 }
 
@@ -118,10 +119,14 @@ fn drive_music_player(
         };
         let handle = source.get_or_insert_with(|| asset_server.load(path));
         let Some(sound) = sounds.get(handle.id()) else {
+            if matches!(asset_server.load_state(handle.id()), LoadState::Failed(_)) {
+                warn!("music failed to load: {:?}", handle.path());
+                bgm.music = None;
+            }
             return;
         };
         let options = SoundOptions {
-            window: Some((bgm.stepfile.sample_start, bgm.stepfile.sample_length)),
+            timeline: bgm.stepfile.sample_timeline(),
             volume: settings.volume.music_gain(),
             ..default()
         };
@@ -142,8 +147,17 @@ fn drive_music_player(
         return;
     }
     if active.is_finished() {
-        // The file ran out (it had no loopable window); start it over.
-        *channel = None;
+        if clock.is_some() {
+            // The file ran out (it had no loopable window); start it over.
+            *channel = None;
+        } else {
+            // Finished before the clock ever ticked: nothing actually plays
+            // (a sample start past the end of the file, say) — restarting
+            // would respawn the audio every frame forever.
+            warn!("music finishes instantly, giving up: {:?}", bgm.music);
+            bgm.music = None;
+            *channel = None;
+        }
         return;
     }
     let report = active.position();

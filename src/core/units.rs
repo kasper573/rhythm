@@ -78,6 +78,11 @@ impl Millis {
 #[display("beat {_0:.3}")]
 pub struct Beat(pub f64);
 
+/// A tempo in beats per minute.
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Display)]
+#[display("{_0:.0}")]
+pub struct Bpm(pub f64);
+
 /// A percentage in `0..=100` space — never a `0..=1` fraction.
 #[derive(
     Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize, Add, Sub, Display,

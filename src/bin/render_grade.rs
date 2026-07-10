@@ -1,7 +1,8 @@
 //! Renders every grade text to a PNG so the grade shader can be tuned
-//! without playing. Each grade gets a row, shown at rest (left, no glow)
-//! and at peak glow (right); it reuses the real [`grade_text`] rig and
-//! shader so what it shows is exactly what the game draws.
+//! without playing. Each grade gets a row at peak glow, shown twice — on
+//! black (left) and on a playfield-like gray (right); it reuses the real
+//! [`grade_text`] rig and shader so what it shows is exactly what the
+//! game draws.
 //!
 //! ```text
 //! cargo run --bin render_grade
@@ -43,7 +44,6 @@ struct Target {
     base: Color,
     glow: Color,
     strength: f32,
-    pulse: f32,
 }
 
 fn main() {
@@ -135,17 +135,16 @@ fn main() {
         for (row, outcome) in outcomes.iter().enumerate() {
             let style = grade_text::grade_style(&config, *outcome);
             let y = top - row as f32 * row_gap;
-            for (column, pulse) in [1.0f32, 1.0].into_iter().enumerate() {
+            for (column, x) in COLUMN_X.into_iter().enumerate() {
                 let layer = LAYER_BASE + row * COLUMN_X.len() + column;
                 let rig = spawn_rig(&mut commands, &mut images, &asset_server, layer);
                 commands.entity(rig.source).insert(Text2d::new(&style.text));
                 commands.entity(rig.present).insert((
-                    Transform::from_xyz(COLUMN_X[column], y, 6.0),
+                    Transform::from_xyz(x, y, 6.0),
                     Target {
                         base: style.base,
                         glow: style.glow,
                         strength: style.strength,
-                        pulse,
                     },
                 ));
             }
@@ -174,13 +173,12 @@ fn main() {
 /// timing window, so it grades to exactly that tier — followed by a miss.
 fn grade_outcomes(config: &GameConfig) -> Vec<RowOutcome> {
     let mut outcomes = Vec::new();
-    let mut lower = 0.0;
+    let mut lower = Seconds::ZERO;
     for grade in &config.grading.dynamic {
-        let mid = (lower + grade.window_ms) / 2.0;
         outcomes.push(RowOutcome::Hit {
-            error: Seconds::from_millis(mid),
+            error: Seconds((lower.0 + grade.window.0) / 2.0),
         });
-        lower = grade.window_ms;
+        lower = grade.window;
     }
     outcomes.push(RowOutcome::Miss);
     outcomes
@@ -198,7 +196,7 @@ fn paint(
                 target.glow,
                 target.strength,
                 1.0,
-                target.pulse,
+                1.0,
             );
         }
     }

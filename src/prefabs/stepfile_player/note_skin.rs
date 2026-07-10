@@ -3,6 +3,7 @@ use crate::core::jsonc;
 use crate::core::platform::platform;
 use crate::core::player::{PerPlayer, PlayerId};
 use crate::core::settings::PlayerSettings;
+use crate::core::units::Beat;
 use bevy::asset::UntypedHandle;
 use bevy::gltf::GltfAssetLabel;
 use bevy::image::{ImageAddressMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor};
@@ -197,8 +198,8 @@ pub struct SheetNotes {
 impl SheetNotes {
     /// The texture-coordinate x of the frame shown at `beat`, for every row
     /// material.
-    pub fn frame_x_at(&self, beat: f64) -> f32 {
-        let cycle = beat.rem_euclid(self.beats_per_cycle) / self.beats_per_cycle;
+    pub fn frame_x_at(&self, beat: Beat) -> f32 {
+        let cycle = beat.0.rem_euclid(self.beats_per_cycle) / self.beats_per_cycle;
         let frame = ((cycle * self.frames as f64) as usize).min(self.frames - 1);
         frame as f32 / self.frames as f32
     }
@@ -268,8 +269,8 @@ pub struct ReceptorArt {
 
 impl ReceptorArt {
     /// The texture-coordinate x of the frame shown at `beat`.
-    pub fn frame_x_at(&self, beat: f64) -> f32 {
-        let mut into_cycle = beat.rem_euclid(self.cycle);
+    pub fn frame_x_at(&self, beat: Beat) -> f32 {
+        let mut into_cycle = beat.0.rem_euclid(self.cycle);
         let mut frame = 0;
         for (index, duration) in self.frames.iter().enumerate() {
             if into_cycle < *duration {
@@ -283,10 +284,10 @@ impl ReceptorArt {
 
     /// Full brightness on the beat, decaying to the pulse floor before the
     /// next; constant without a pulse.
-    pub fn brightness_at(&self, beat: f64) -> f32 {
+    pub fn brightness_at(&self, beat: Beat) -> f32 {
         match self.pulse {
             None => 1.0,
-            Some(floor) => floor + (1.0 - floor) * (1.0 - beat.rem_euclid(1.0) as f32),
+            Some(floor) => floor + (1.0 - floor) * (1.0 - beat.0.rem_euclid(1.0) as f32),
         }
     }
 }
@@ -419,6 +420,14 @@ pub fn load_note_skin(asset_server: &AssetServer, name: &str) -> ActiveNoteSkin 
                 !sheet.quants.is_empty(),
                 "note skin {name}: quants must not be empty"
             );
+            assert!(
+                sheet.frames > 0,
+                "note skin {name}: taps need at least one animation frame"
+            );
+            assert!(
+                sheet.beats_per_cycle > 0.0,
+                "note skin {name}: beats_per_cycle must be positive"
+            );
             let taps_image = loader.image(&sheet.taps);
             let head_inactive = loader.image(&sheet.hold_head_inactive);
             let head_active = loader.image(&sheet.hold_head_active);
@@ -474,14 +483,23 @@ pub fn load_note_skin(asset_server: &AssetServer, name: &str) -> ActiveNoteSkin 
         pulse: manifest.receptor.pulse,
     };
 
-    let hold_art = |hold: &HoldManifest| HoldArt {
-        body_active: loader.body_image(&hold.body_active),
-        body_inactive: loader.body_image(&hold.body_inactive),
-        body_size: hold.body_size.into(),
-        stop_above_tail: hold.stop_above_tail,
-        cap_active: loader.image(&hold.cap_active),
-        cap_inactive: loader.image(&hold.cap_inactive),
-        cap_size: hold.cap_size.into(),
+    let hold_art = |hold: &HoldManifest| {
+        assert!(
+            hold.body_size
+                .iter()
+                .chain(&hold.cap_size)
+                .all(|side| *side > 0.0),
+            "note skin {name}: hold body and cap sizes must be positive"
+        );
+        HoldArt {
+            body_active: loader.body_image(&hold.body_active),
+            body_inactive: loader.body_image(&hold.body_inactive),
+            body_size: hold.body_size.into(),
+            stop_above_tail: hold.stop_above_tail,
+            cap_active: loader.image(&hold.cap_active),
+            cap_inactive: loader.image(&hold.cap_inactive),
+            cap_size: hold.cap_size.into(),
+        }
     };
     let hold = hold_art(&manifest.hold);
     let roll = manifest
@@ -490,6 +508,10 @@ pub fn load_note_skin(asset_server: &AssetServer, name: &str) -> ActiveNoteSkin 
         .map(&hold_art)
         .unwrap_or_else(|| hold.clone());
 
+    assert!(
+        manifest.mine.spin_beats > 0.0,
+        "note skin {name}: mine spin_beats must be positive"
+    );
     let mine = match &manifest.mine.art {
         MineArtManifest::Sheet(sheet) => {
             let image = loader.image(&sheet.image);
@@ -656,13 +678,15 @@ fn reload_changed_skins(
 }
 
 /// Drifts the texture coordinates of every scrolling model material — the
-/// classic animated color strips of 3D note skins.
+/// classic animated color strips of 3D note skins. Derived from unwrapped
+/// f64 time, so it stays idempotent for materials shared between players
+/// and never pops at a wrap seam.
 fn scroll_model_textures(
     time: Res<Time>,
     skins: Res<ActiveNoteSkins>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let elapsed = time.elapsed_secs_wrapped();
+    let elapsed = time.elapsed_secs_f64();
     for player in PlayerId::iter() {
         for (handle, base, velocity) in skins.get(player).scrolling_materials() {
             if velocity == Vec2::ZERO {
@@ -671,7 +695,11 @@ fn scroll_model_textures(
             let Some(mut material) = materials.get_mut(handle) else {
                 continue;
             };
-            material.uv_transform.translation = (base + velocity * elapsed).rem_euclid(Vec2::ONE);
+            let scroll = |base: f32, velocity: f32| {
+                (base as f64 + velocity as f64 * elapsed).rem_euclid(1.0) as f32
+            };
+            material.uv_transform.translation =
+                Vec2::new(scroll(base.x, velocity.x), scroll(base.y, velocity.y));
         }
     }
 }

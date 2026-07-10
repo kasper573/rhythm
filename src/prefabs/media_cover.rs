@@ -48,7 +48,14 @@ pub fn media_cover_prefab(
             }
         }
     } else {
-        (asset_server.load(asset_server_path(&opt.path)?), None)
+        let Some(path) = asset_server_path(&opt.path) else {
+            warn!(
+                "media cover unavailable: {} is outside the asset root",
+                opt.path.display()
+            );
+            return None;
+        };
+        (asset_server.load(path), None)
     };
     let color = opt.color;
     let z = opt.z;

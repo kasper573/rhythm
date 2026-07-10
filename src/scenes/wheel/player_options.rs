@@ -350,15 +350,15 @@ fn mock_input(
     mut input: ResMut<PlayInput>,
 ) {
     input.clear();
-    let now = play_time.graded.0;
+    let now = play_time.graded;
     let timing = &state.timing;
     for surface in &state.surfaces {
         for row in &state.rows {
-            let time = timing.seconds_at_beat(row.beat).0;
+            let time = timing.seconds_at_beat(row.beat);
             let Some(offset) = autoplay_offset(&config, note_tier(row.beat)) else {
                 continue;
             };
-            let due = time - offset.0;
+            let due = time - offset;
             for arrow in &row.arrows {
                 if now >= due && now < arrow_until(row, arrow, timing) {
                     let action =
@@ -392,8 +392,8 @@ fn rebuild_preview(
     }
     let now = music
         .visible_now(&machine.timing)
-        .map(|(visible, _)| visible.0)
-        .unwrap_or(f64::NEG_INFINITY);
+        .map(|(visible, _)| visible)
+        .unwrap_or(Seconds(f64::NEG_INFINITY));
     let timing = state.timing.clone();
     let live: Vec<Row> = state
         .rows
@@ -451,7 +451,7 @@ fn teardown_preview(mut commands: Commands) {
 
 /// How long past its note an autoplayed tap stays pressed — long enough to
 /// bank, short enough not to catch the next note in its column.
-const AUTOPLAY_TAP_HOLD: f64 = 0.05;
+const AUTOPLAY_TAP_HOLD: Seconds = Seconds(0.05);
 
 /// The grade tier a note plays to, by its 8th-note position so it stays put
 /// however the rows are filtered on a rebuild.
@@ -460,21 +460,21 @@ fn note_tier(beat: Beat) -> usize {
     PREVIEW_GRADES[ordinal.rem_euclid(PREVIEW_GRADES.len() as i64) as usize]
 }
 
-/// The seconds an arrow stops being pressed: a hold's tail, or a tap's brief
+/// The moment an arrow stops being pressed: a hold's tail, or a tap's brief
 /// release window.
-fn arrow_until(row: &Row, arrow: &Arrow, timing: &StepfileTiming) -> f64 {
+fn arrow_until(row: &Row, arrow: &Arrow, timing: &StepfileTiming) -> Seconds {
     match arrow.tail {
-        Some(tail) => timing.seconds_at_beat(tail.end).0,
-        None => timing.seconds_at_beat(row.beat).0 + AUTOPLAY_TAP_HOLD,
+        Some(tail) => timing.seconds_at_beat(tail.end),
+        None => timing.seconds_at_beat(row.beat) + AUTOPLAY_TAP_HOLD,
     }
 }
 
-/// The seconds a row stops being pressable, for the rebuild's live-rows filter.
-fn row_until(row: &Row, timing: &StepfileTiming) -> f64 {
+/// The moment a row stops being pressable, for the rebuild's live-rows filter.
+fn row_until(row: &Row, timing: &StepfileTiming) -> Seconds {
     row.arrows
         .iter()
         .map(|arrow| arrow_until(row, arrow, timing))
-        .fold(timing.seconds_at_beat(row.beat).0, f64::max)
+        .fold(timing.seconds_at_beat(row.beat), Seconds::max)
 }
 
 /// The timing error to press a note with so it grades to `tier`: the midpoint
@@ -483,11 +483,11 @@ fn autoplay_offset(config: &GameConfig, tier: usize) -> Option<Seconds> {
     let dynamic = &config.grading.dynamic;
     let def = dynamic.get(tier)?;
     let lower = if tier == 0 {
-        0.0
+        Seconds::ZERO
     } else {
-        dynamic[tier - 1].window_ms
+        dynamic[tier - 1].window
     };
-    Some(Seconds::from_millis((lower + def.window_ms) / 2.0))
+    Some(Seconds((lower.0 + def.window.0) / 2.0))
 }
 
 fn player_order(player: PlayerId) -> u8 {

@@ -38,7 +38,7 @@ pub(super) fn pulse_active_row(
     mut highlight: Single<&mut Sprite, With<ActiveRowHighlight>>,
 ) {
     let alpha = match player.visible_beat(&settings.timing) {
-        Some(beat) => 0.5 + 0.5 * HIGHLIGHT_PULSE.strike(beat.0),
+        Some(beat) => 0.5 + 0.5 * HIGHLIGHT_PULSE.strike(beat),
         None => 1.0,
     };
     if highlight.color.alpha() != alpha {

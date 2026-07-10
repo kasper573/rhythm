@@ -180,7 +180,7 @@ impl StepfileEntry {
         {
             return Some(path);
         }
-        self.first_file_with_extension(&["mp3", "ogg", "wav", "flac"])
+        self.first_file_with_extension(&["mp3", "ogg", "wav"])
     }
 
     pub fn background_path(&self) -> Option<PathBuf> {

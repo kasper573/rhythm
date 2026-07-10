@@ -23,7 +23,7 @@ use rhythm::core::config::GameConfig;
 use rhythm::core::player::PlayerId;
 use rhythm::core::settings::{NoteSpeed, Perspective, PlayerOptions, PlayerSettings};
 use rhythm::core::stepfile::StepfileTiming;
-use rhythm::core::units::{Beat, Seconds};
+use rhythm::core::units::{Beat, Bpm, Seconds};
 use rhythm::core::{CLEAR_COLOR, OVERLAY_CAMERA_ORDER, OVERLAY_LAYER};
 use rhythm::prefabs::stepfile_player::note_field::{
     FadeOut, HOLD_OK_FADE_SECONDS, HoldPart, HoldVisual, HoldVisualState, InColumn, LaneEffects,
@@ -33,7 +33,7 @@ use rhythm::prefabs::stepfile_player::note_field::{
 use rhythm::prefabs::stepfile_player::note_skin::{ActiveNoteSkins, load_note_skin};
 use std::collections::BTreeMap;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Duration;
@@ -140,13 +140,13 @@ type AnyFieldEntity = Or<(
 )>;
 
 fn scenario_timing(scenario: &Scenario, cli_bpm: f64) -> StepfileTiming {
-    let bpms: Vec<(Beat, f64)> = if scenario.bpms.is_empty() {
-        vec![(Beat(0.0), cli_bpm)]
+    let bpms: Vec<(Beat, Bpm)> = if scenario.bpms.is_empty() {
+        vec![(Beat(0.0), Bpm(cli_bpm))]
     } else {
         scenario
             .bpms
             .iter()
-            .map(|(beat, bpm)| (Beat(*beat), *bpm))
+            .map(|(beat, bpm)| (Beat(*beat), Bpm(*bpm)))
             .collect()
     };
     let stops: Vec<(Beat, Seconds)> = scenario
@@ -572,7 +572,7 @@ impl FieldRenderer {
         scenario: &Scenario,
         config: &GameConfig,
         timing: &StepfileTiming,
-        path: &std::path::Path,
+        path: &Path,
     ) -> u32 {
         let (start, end) = clip_window(scenario, timing, self.layout.speed);
         let frame_count = ((end.0 - start.0) * self.fps as f64).ceil() as u32;
@@ -835,7 +835,7 @@ struct FfmpegEncoder {
 }
 
 impl FfmpegEncoder {
-    fn start(path: &std::path::Path, fps: u32) -> FfmpegEncoder {
+    fn start(path: &Path, fps: u32) -> FfmpegEncoder {
         let mut child = Command::new("ffmpeg")
             .args([
                 "-y",
@@ -886,7 +886,7 @@ impl FfmpegEncoder {
         }
     }
 
-    fn finish(mut self, path: &std::path::Path) {
+    fn finish(mut self, path: &Path) {
         drop(self.stdin.take());
         let status = self.child.wait().expect("ffmpeg did not run");
         assert!(status.success(), "ffmpeg failed for {}", path.display());

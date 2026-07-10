@@ -13,7 +13,7 @@ use crate::core::scene_flow::SpawnScoped;
 use crate::core::sfx::{PlaySfx, Sfx};
 use crate::core::stepfile::{Difficulty, MusicPlayer, Stepfile, StepsType};
 use crate::core::units::Seconds;
-use crate::core::{SCREEN_SIZE, ViewportCover, at};
+use crate::core::{SCREEN_SIZE, ViewportCover, at, visible_world_size};
 use crate::scenes::{GameScene, SceneFade, scene_accepts_input};
 use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
@@ -680,9 +680,7 @@ fn slot_entry(wheel: &Wheel, slot: usize) -> Option<&WheelEntry> {
 /// one above and below so scrolling never reveals a gap, forced odd so a
 /// center slot exists.
 fn slots_for(window: &Window) -> usize {
-    let width = window.width().max(1.0);
-    let height = window.height().max(1.0);
-    let visible_height = height * (SCREEN_SIZE.x / width).max(SCREEN_SIZE.y / height);
+    let visible_height = visible_world_size(window).y;
     ((visible_height / ROW_HEIGHT).ceil() as usize + 2) | 1
 }
 

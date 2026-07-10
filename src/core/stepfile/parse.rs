@@ -2,7 +2,7 @@ use super::{
     Arrow, BgChange, Chart, DisplayBpm, Mine, Row, Stepfile, StepfileError, StepfileTiming,
     StepsType, Tail,
 };
-use crate::core::units::{Beat, Seconds};
+use crate::core::units::{Beat, Bpm, Seconds};
 use std::collections::BTreeMap;
 
 pub(super) fn parse_stepfile(text: &str) -> Result<Stepfile, StepfileError> {
@@ -49,7 +49,12 @@ pub(super) fn parse_stepfile(text: &str) -> Result<Stepfile, StepfileError> {
             "SAMPLELENGTH" => sample_length = Seconds(parse_number(trimmed)),
             "SELECTABLE" => selectable = !trimmed.eq_ignore_ascii_case("no"),
             "DISPLAYBPM" => display_bpm = parse_display_bpm(trimmed),
-            "BPMS" => bpms = parse_beat_number_pairs(trimmed),
+            "BPMS" => {
+                bpms = parse_beat_number_pairs(trimmed)
+                    .into_iter()
+                    .map(|(beat, bpm)| (beat, Bpm(bpm)))
+                    .collect();
+            }
             // Delays differ from stops only for notes exactly on the pause
             // beat, which classic .sm files don't rely on.
             "STOPS" | "DELAYS" | "FREEZES" => {
@@ -71,7 +76,7 @@ pub(super) fn parse_stepfile(text: &str) -> Result<Stepfile, StepfileError> {
         }
     }
 
-    if !bpms.iter().any(|(_, bpm)| *bpm > 0.0) {
+    if !bpms.iter().any(|(_, bpm)| bpm.0 > 0.0) {
         return Err(StepfileError::NoBpms);
     }
 
@@ -148,10 +153,10 @@ fn parse_display_bpm(value: &str) -> Option<DisplayBpm> {
     }
     match value.split_once(':') {
         Some((low, high)) => Some(DisplayBpm::Range(
-            low.trim().parse().ok()?,
-            high.trim().parse().ok()?,
+            Bpm(low.trim().parse().ok()?),
+            Bpm(high.trim().parse().ok()?),
         )),
-        None => Some(DisplayBpm::Single(value.parse().ok()?)),
+        None => Some(DisplayBpm::Single(Bpm(value.parse().ok()?))),
     }
 }
 
@@ -259,8 +264,14 @@ fn parse_note_data(
             for (column, char) in line.bytes().enumerate().take(columns) {
                 match char {
                     b'1' => arrows.push((beat, quant, column, None)),
-                    b'2' => open_holds[column] = Some((beat, quant, false)),
-                    b'4' => open_holds[column] = Some((beat, quant, true)),
+                    // A head overwritten before its tail is orphaned like an
+                    // unclosed one: it still demands a step.
+                    b'2' | b'4' => {
+                        if let Some((head, head_quant, _)) = open_holds[column].take() {
+                            arrows.push((head, head_quant, column, None));
+                        }
+                        open_holds[column] = Some((beat, quant, char == b'4'));
+                    }
                     b'3' => {
                         if let Some((head, head_quant, roll)) = open_holds[column].take() {
                             arrows.push((head, head_quant, column, Some(Tail { end: beat, roll })));

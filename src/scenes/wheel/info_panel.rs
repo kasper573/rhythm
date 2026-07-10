@@ -225,15 +225,15 @@ fn difficulty_style(difficulty: &Difficulty) -> (&str, Color) {
 
 fn bpm_label(stepfile: &Stepfile) -> String {
     match stepfile.display_bpm {
-        Some(DisplayBpm::Single(bpm)) => format!("BPM {bpm:.0}"),
-        Some(DisplayBpm::Range(low, high)) => format!("BPM {low:.0}-{high:.0}"),
+        Some(DisplayBpm::Single(bpm)) => format!("BPM {bpm}"),
+        Some(DisplayBpm::Range(low, high)) => format!("BPM {low}-{high}"),
         Some(DisplayBpm::Random) => "BPM ???".to_string(),
         None => {
             let (low, high) = stepfile.timing.bpm_range();
-            if (high - low).abs() < 0.5 {
-                format!("BPM {low:.0}")
+            if (high.0 - low.0).abs() < 0.5 {
+                format!("BPM {low}")
             } else {
-                format!("BPM {low:.0}-{high:.0}")
+                format!("BPM {low}-{high}")
             }
         }
     }

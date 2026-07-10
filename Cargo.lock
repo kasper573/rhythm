@@ -4716,6 +4716,7 @@ dependencies = [
  "icu_provider",
  "js-sys",
  "json_comments",
+ "percent-encoding",
  "rodio",
  "send_wrapper",
  "serde",

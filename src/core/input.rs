@@ -1,5 +1,5 @@
 use crate::core::config::GameConfig;
-use crate::core::player::PlayerId;
+use crate::core::player::{PerPlayer, PlayerId};
 use crate::core::settings::MachineSettings;
 use crate::core::units::Seconds;
 use bevy::ecs::system::SystemParam;
@@ -93,24 +93,34 @@ impl StepDirection {
             _ => StepDirection::Right,
         }
     }
+
+    /// The pad-local column of this direction — [`of_column`]'s inverse.
+    pub fn column(self) -> usize {
+        match self {
+            StepDirection::Left => 0,
+            StepDirection::Down => 1,
+            StepDirection::Up => 2,
+            StepDirection::Right => 3,
+        }
+    }
 }
 
 /// Each player's step actions in [`StepDirection`] column order — the one
 /// table both directions of the step mapping read from.
-const STEP_ACTIONS: [[GameAction; 4]; 2] = [
-    [
+const STEP_ACTIONS: PerPlayer<[GameAction; 4]> = PerPlayer {
+    p1: [
         GameAction::P1Left,
         GameAction::P1Down,
         GameAction::P1Up,
         GameAction::P1Right,
     ],
-    [
+    p2: [
         GameAction::P2Left,
         GameAction::P2Down,
         GameAction::P2Up,
         GameAction::P2Right,
     ],
-];
+};
 
 impl GameAction {
     pub fn label(self) -> &'static str {
@@ -118,14 +128,14 @@ impl GameAction {
     }
 
     pub fn step(player: PlayerId, direction: StepDirection) -> GameAction {
-        STEP_ACTIONS[player as usize][direction as usize]
+        STEP_ACTIONS[player][direction.column()]
     }
 
     /// The `(player, direction)` a step action belongs to; `None` for
     /// everything that is not a step.
     pub fn as_step(self) -> Option<(PlayerId, StepDirection)> {
         PlayerId::iter().find_map(|player| {
-            let column = STEP_ACTIONS[player as usize]
+            let column = STEP_ACTIONS[player]
                 .iter()
                 .position(|action| *action == self)?;
             Some((player, StepDirection::of_column(column)))

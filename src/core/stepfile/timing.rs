@@ -1,4 +1,4 @@
-use crate::core::units::{Beat, Seconds};
+use crate::core::units::{Beat, Bpm, Seconds};
 
 /// All `Seconds` values are positions on the audio clock of the music file:
 /// beat zero maps to `-offset` seconds, matching the .sm `#OFFSET` convention.
@@ -11,7 +11,7 @@ impl StepfileTiming {
     /// `bpms` are `(beat, bpm)` pairs and `stops` are `(beat, duration)`
     /// pairs, both as written in the .sm file. Entries with non-positive BPM
     /// are ignored.
-    pub fn new(offset: Seconds, bpms: &[(Beat, f64)], stops: &[(Beat, Seconds)]) -> StepfileTiming {
+    pub fn new(offset: Seconds, bpms: &[(Beat, Bpm)], stops: &[(Beat, Seconds)]) -> StepfileTiming {
         StepfileTiming {
             anchors: build_anchors(offset, bpms, stops),
         }
@@ -30,14 +30,16 @@ impl StepfileTiming {
         Beat(anchor.beat + (seconds.0 - anchor.seconds) * anchor.beats_per_second)
     }
 
-    pub fn bpm_range(&self) -> (f64, f64) {
-        self.anchors
+    pub fn bpm_range(&self) -> (Bpm, Bpm) {
+        let (min, max) = self
+            .anchors
             .iter()
             .map(|a| a.beats_per_second * 60.0)
             .filter(|bpm| *bpm > 0.0)
             .fold((f64::INFINITY, f64::NEG_INFINITY), |(min, max), bpm| {
                 (min.min(bpm), max.max(bpm))
-            })
+            });
+        (Bpm(min), Bpm(max))
     }
 
     fn anchor_before_beat(&self, beat: Beat) -> Anchor {
@@ -61,7 +63,7 @@ struct Anchor {
     beats_per_second: f64,
 }
 
-fn build_anchors(offset: Seconds, bpms: &[(Beat, f64)], stops: &[(Beat, Seconds)]) -> Vec<Anchor> {
+fn build_anchors(offset: Seconds, bpms: &[(Beat, Bpm)], stops: &[(Beat, Seconds)]) -> Vec<Anchor> {
     enum Change {
         Bpm(f64),
         Stop(f64),
@@ -69,8 +71,8 @@ fn build_anchors(offset: Seconds, bpms: &[(Beat, f64)], stops: &[(Beat, Seconds)
 
     let mut changes: Vec<(f64, Change)> = bpms
         .iter()
-        .filter(|(_, bpm)| *bpm > 0.0)
-        .map(|(beat, bpm)| (beat.0.max(0.0), Change::Bpm(bpm / 60.0)))
+        .filter(|(_, bpm)| bpm.0 > 0.0)
+        .map(|(beat, bpm)| (beat.0.max(0.0), Change::Bpm(bpm.0 / 60.0)))
         .chain(
             stops
                 .iter()

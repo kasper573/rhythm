@@ -7,7 +7,8 @@ pub use clock::StepfileClock;
 pub use music_player::{Bgm, MusicPlayer, MusicPlayerPlugin};
 pub use timing::StepfileTiming;
 
-use crate::core::units::{Beat, Seconds};
+use crate::core::platform::SoundTimeline;
+use crate::core::units::{Beat, Bpm, Seconds};
 use std::collections::BTreeMap;
 use std::path::Path;
 use strum::EnumString;
@@ -66,6 +67,20 @@ impl Stepfile {
             (chart.difficulty.rank(), chart.meter)
         });
         charts
+    }
+
+    /// The preview playback the .sm sample tags describe: loop the sample
+    /// window, or play the file whole from its start when `#SAMPLELENGTH`
+    /// is absent or non-positive.
+    pub fn sample_timeline(&self) -> SoundTimeline {
+        if self.sample_length.0 > 0.0 {
+            SoundTimeline::LoopWindow {
+                start: self.sample_start,
+                length: self.sample_length,
+            }
+        } else {
+            SoundTimeline::From(self.sample_start)
+        }
     }
 
     /// The playable chart whose difficulty rank sits closest to `preferred`.
@@ -277,7 +292,7 @@ pub struct BgChange {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DisplayBpm {
-    Single(f64),
-    Range(f64, f64),
+    Single(Bpm),
+    Range(Bpm, Bpm),
     Random,
 }

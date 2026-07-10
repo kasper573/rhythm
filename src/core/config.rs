@@ -1,7 +1,7 @@
 use crate::core::assets::asset_root;
 use crate::core::input::{GameAction, Keymap};
 use crate::core::settings::{NoteSpeed, PlayerOptions, TimingSettings, VolumeSettings};
-use crate::core::units::{Percent, Seconds};
+use crate::core::units::{Beat, Percent, Seconds};
 use bevy::math::cubic_splines::CubicSegment;
 use bevy::prelude::*;
 use serde::{Deserialize, Deserializer};
@@ -62,7 +62,7 @@ pub struct StageConfig {
     pub field_gap_columns: f32,
     /// Silence before the chart starts, giving the first notes room to
     /// scroll in.
-    pub lead_in_seconds: f64,
+    pub lead_in_seconds: Seconds,
     /// Padding between the screen edges and anchored stage furniture —
     /// the health vials keep this to their side edge and the note fields
     /// to the top edge, so everything hugging the frame lines up.
@@ -156,9 +156,9 @@ pub struct GradingConfig {
     pub fixed: FixedGrades,
     /// Hold let-go grace: life drains from full to dropped over this long
     /// once the panel is released.
-    pub hold_grace_seconds: f32,
+    pub hold_grace_seconds: Seconds,
     /// Roll window: rolls drain constantly and each fresh step refills them.
-    pub roll_grace_seconds: f32,
+    pub roll_grace_seconds: Seconds,
 }
 
 /// The built-in grades: rows that expired unstepped (miss), and holds
@@ -228,21 +228,21 @@ pub struct RhythmCycle {
 impl RhythmCycle {
     /// Eased progression through the current cycle, `0..=1`, continuous
     /// across cycle boundaries for animations that wrap.
-    pub fn progress(&self, beat: f64) -> f32 {
+    pub fn progress(&self, beat: Beat) -> f32 {
         self.ease(self.phase(beat))
     }
 
     /// Pulse intensity `0..=1` whose apex lands exactly on the cycle
     /// boundary (the configured beat): the phase is folded so intensity
     /// rises into the beat and falls away from it, shaped by the easing.
-    pub fn pulse(&self, beat: f64) -> f32 {
+    pub fn pulse(&self, beat: Beat) -> f32 {
         self.ease((2.0 * self.phase(beat) - 1.0).abs())
     }
 
     /// Like [`pulse`](RhythmCycle::pulse), but striking: the rise into the
     /// apex takes only the last sliver of the cycle — practically instant
     /// — and everything before it eases out from the previous apex.
-    pub fn strike(&self, beat: f64) -> f32 {
+    pub fn strike(&self, beat: Beat) -> f32 {
         let phase = self.phase(beat);
         let decay = 1.0 - STRIKE_ATTACK;
         if phase >= decay {
@@ -253,8 +253,8 @@ impl RhythmCycle {
     }
 
     /// Cycle phase `0..1`; .sm measures are four beats.
-    fn phase(&self, beat: f64) -> f32 {
-        (beat * self.speed / 4.0).rem_euclid(1.0) as f32
+    fn phase(&self, beat: Beat) -> f32 {
+        (beat.0 * self.speed / 4.0).rem_euclid(1.0) as f32
     }
 
     fn ease(&self, t: f32) -> f32 {
@@ -332,7 +332,10 @@ impl TryFrom<RawHealthGradient> for HealthGradient {
 #[derive(Debug, Clone, Deserialize)]
 pub struct DynamicGradeDef {
     pub name: String,
-    pub window_ms: f64,
+    /// The window's config key stays in milliseconds — the unit hand-tuned
+    /// values read best in.
+    #[serde(rename = "window_ms", deserialize_with = "seconds_from_millis")]
+    pub window: Seconds,
     #[serde(deserialize_with = "hex_color")]
     pub color: Color,
     #[serde(default)]
@@ -459,13 +462,11 @@ impl GameConfig {
     /// The widest grading window, which doubles as the miss/expiry window:
     /// an unpressed note expires once it is this far in the past.
     pub fn widest_window(&self) -> Seconds {
-        Seconds::from_millis(
-            self.grading
-                .dynamic
-                .last()
-                .expect("grades are validated non-empty")
-                .window_ms,
-        )
+        self.grading
+            .dynamic
+            .last()
+            .expect("grades are validated non-empty")
+            .window
     }
 
     /// The grade earned by an input this far from the row, or `None` if the
@@ -475,7 +476,7 @@ impl GameConfig {
         self.grading
             .dynamic
             .iter()
-            .position(|grade| magnitude.0 <= Seconds::from_millis(grade.window_ms).0)
+            .position(|grade| magnitude.0 <= grade.window.0)
             .map(GradeIndex)
     }
 
@@ -516,12 +517,12 @@ impl GameConfig {
         );
         for pair in self.grading.dynamic.windows(2) {
             assert!(
-                pair[0].window_ms < pair[1].window_ms,
+                pair[0].window < pair[1].window,
                 "{source}: grade windows must be sorted from smallest to largest"
             );
         }
         assert!(
-            self.grading.dynamic[0].window_ms > 0.0,
+            self.grading.dynamic[0].window > Seconds::ZERO,
             "{source}: grade windows must be positive"
         );
         assert!(
@@ -606,7 +607,7 @@ impl GameConfig {
             self.stage.max_arrow_size > 0.0
                 && self.stage.margin_x >= 0.0
                 && self.stage.field_gap_columns >= 0.0
-                && self.stage.lead_in_seconds >= 0.0
+                && self.stage.lead_in_seconds >= Seconds::ZERO
                 && self.stage.screen_edge_padding >= 0.0,
             "{source}: stage values must not be negative (and max_arrow_size positive)"
         );
@@ -617,7 +618,8 @@ impl GameConfig {
             "{source}: lane_camera needs fov in (0, 180) and tilt in [0, 90)"
         );
         assert!(
-            self.grading.hold_grace_seconds > 0.0 && self.grading.roll_grace_seconds > 0.0,
+            self.grading.hold_grace_seconds > Seconds::ZERO
+                && self.grading.roll_grace_seconds > Seconds::ZERO,
             "{source}: hold grace windows must be positive"
         );
         let volumes = &self.defaults.volume_options;
@@ -628,6 +630,10 @@ impl GameConfig {
             "{source}: defaults.volume_options must be within 0..=1"
         );
     }
+}
+
+fn seconds_from_millis<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Seconds, D::Error> {
+    f64::deserialize(deserializer).map(Seconds::from_millis)
 }
 
 fn hex_color<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Color, D::Error> {

@@ -240,7 +240,7 @@ fn enter(
     spawn_audio_tracks(&mut commands, &mut assets, entry, &tick_times, &config);
     background::spawn_background(&mut commands, entry, &timing);
 
-    let lead_in = Seconds(config.stage.lead_in_seconds);
+    let lead_in = config.stage.lead_in_seconds;
     commands.insert_resource(NoteFieldClock {
         visible: -lead_in,
         timing: timing.clone(),

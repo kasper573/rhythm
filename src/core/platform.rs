@@ -46,10 +46,7 @@ pub trait Platform: Send + Sync {
 
 #[derive(Debug, Clone, Copy)]
 pub struct SoundOptions {
-    /// Loop this `(start, length)` window of the sound's timeline forever.
-    /// A window never finishes; it plays whole-file from `start` when
-    /// `length` is zero or less.
-    pub window: Option<(Seconds, Seconds)>,
+    pub timeline: SoundTimeline,
     pub paused: bool,
     pub muted: bool,
     /// Playback gain, `0..=1`; muting silences without forgetting it.
@@ -59,12 +56,24 @@ pub struct SoundOptions {
 impl Default for SoundOptions {
     fn default() -> SoundOptions {
         SoundOptions {
-            window: None,
+            timeline: SoundTimeline::WholeFile,
             paused: false,
             muted: false,
             volume: 1.0,
         }
     }
+}
+
+/// How playback traverses the sound's own timeline.
+#[derive(Debug, Clone, Copy)]
+pub enum SoundTimeline {
+    /// The whole file, once, from the top.
+    WholeFile,
+    /// The whole file, once, from this position.
+    From(Seconds),
+    /// This `[start, start+length)` window, looping forever — a looping
+    /// window never finishes.
+    LoopWindow { start: Seconds, length: Seconds },
 }
 
 /// One playing sound; dropping the channel stops it.

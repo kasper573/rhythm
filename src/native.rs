@@ -1,5 +1,5 @@
 use crate::core::platform::{
-    AssetEntry, AudioChannel, Platform, SoundOptions, VideoFrame, VideoSource,
+    AssetEntry, AudioChannel, Platform, SoundOptions, SoundTimeline, VideoFrame, VideoSource,
 };
 use crate::core::units::Seconds;
 use bevy::log::warn;
@@ -116,21 +116,27 @@ impl Platform for NativePlatform {
             sink.pause();
         }
         sink.set_volume(if options.muted { 0.0 } else { options.volume });
-        let window = match options.window {
-            Some((start, length)) => {
-                sink.append(WindowedMusic::open(bytes, start, length)?);
-                Some((start.0.max(0.0), length.0))
-            }
-            None => {
+        let fold = match options.timeline {
+            SoundTimeline::WholeFile => {
                 let decoder =
                     rodio::Decoder::new(Cursor::new(bytes)).map_err(|error| error.to_string())?;
                 sink.append(decoder);
-                None
+                PositionFold::Raw
+            }
+            SoundTimeline::From(start) => {
+                let (source, fold) = WindowedMusic::open(bytes, start, None)?;
+                sink.append(source);
+                fold
+            }
+            SoundTimeline::LoopWindow { start, length } => {
+                let (source, fold) = WindowedMusic::open(bytes, start, Some(length))?;
+                sink.append(source);
+                fold
             }
         };
         Ok(Box::new(NativeChannel {
             sink,
-            window,
+            fold,
             muted: options.muted,
             volume: options.volume,
         }))
@@ -157,11 +163,23 @@ fn output_mixer() -> Option<&'static rodio::mixer::Mixer> {
 
 struct NativeChannel {
     sink: rodio::Player,
-    /// `(start, length)` when playing a loop window, for folding the
-    /// sink's monotonic position back into the sound's timeline.
-    window: Option<(f64, f64)>,
+    fold: PositionFold,
     muted: bool,
     volume: f32,
+}
+
+/// How the sink's monotonic position maps back onto the sound's own
+/// timeline — derived from what the decoder actually did, so a failed
+/// entry seek (which falls back to playing the file whole) never reports
+/// positions the speakers aren't playing.
+enum PositionFold {
+    /// The raw position is the timeline.
+    Raw,
+    /// Playback began at `start`: the timeline is `start + raw`.
+    Offset(Seconds),
+    /// Playback laps a window of exactly `lap` seconds from `start` (see
+    /// [`WindowedMusic`]); the raw position folds back into it every lap.
+    Window { start: Seconds, lap: Seconds },
 }
 
 impl NativeChannel {
@@ -200,10 +218,10 @@ impl AudioChannel for NativeChannel {
 
     fn position(&self) -> Seconds {
         let raw = self.sink.get_pos().as_secs_f64();
-        match self.window {
-            Some((start, length)) if length > 0.0 => Seconds(start + raw.rem_euclid(length)),
-            Some((start, _)) => Seconds(start + raw),
-            None => Seconds(raw),
+        match self.fold {
+            PositionFold::Raw => Seconds(raw),
+            PositionFold::Offset(start) => Seconds(start.0 + raw),
+            PositionFold::Window { start, lap } => Seconds(start.0 + raw.rem_euclid(lap.0)),
         }
     }
 
@@ -249,43 +267,75 @@ impl VideoSource for NativeVideoSource {
     }
 }
 
-/// Music playing its preview sample window: the decoder is seeked to the
-/// window start when opened, and the window wraps by rebuilding the
-/// decoder with that same entry seek. Seeking a live decoder backwards
-/// silently misses once it has played past the target (symphonia's ogg
-/// reader), while a fresh decoder's first seek always lands.
+/// Music playing from a mid-file start: the decoder is seeked there when
+/// opened, and a loop window wraps by rebuilding the decoder with that
+/// same entry seek. Seeking a live decoder backwards silently misses once
+/// it has played past the target (symphonia's ogg reader), while a fresh
+/// decoder's first seek always lands.
+///
+/// Every loop lap yields exactly `lap_samples` samples — a file that runs
+/// out inside the window is padded with silence to the lap boundary — so
+/// the sink's monotonic position folds back into the window losslessly
+/// ([`PositionFold::Window`] uses the seconds derived from that same
+/// sample count).
 struct WindowedMusic {
     decoder: rodio::Decoder<Cursor<Arc<[u8]>>>,
     bytes: Arc<[u8]>,
     start: Duration,
-    /// The window length, while looping it stays possible.
-    window: Option<Duration>,
-    /// Samples yielded since the window start.
+    /// Samples per loop lap; `None` plays the file once from `start`.
+    lap_samples: Option<u64>,
+    /// Samples yielded this lap.
     played: u64,
 }
 
 impl WindowedMusic {
-    fn open(bytes: Arc<[u8]>, start: Seconds, length: Seconds) -> Result<WindowedMusic, String> {
-        let start = Duration::from_secs_f64(start.0.max(0.0));
-        let (decoder, window) = match Self::seeked_decoder(&bytes, start) {
-            Ok(decoder) => (
-                decoder,
-                (length.0 > 0.0).then(|| Duration::from_secs_f64(length.0)),
-            ),
+    /// Opens the source together with the position fold that matches what
+    /// it will actually play: an unseekable file falls back to playing
+    /// whole from the top, and its fold says so.
+    fn open(
+        bytes: Arc<[u8]>,
+        start: Seconds,
+        loop_length: Option<Seconds>,
+    ) -> Result<(WindowedMusic, PositionFold), String> {
+        let start = Seconds(start.0.max(0.0));
+        let start_duration = Duration::from_secs_f64(start.0);
+        match Self::seeked_decoder(&bytes, start_duration) {
+            Ok(decoder) => {
+                let per_second =
+                    decoder.sample_rate().get() as u64 * decoder.channels().get() as u64;
+                let lap_samples = loop_length
+                    .filter(|length| length.0 > 0.0)
+                    .map(|length| ((length.0 * per_second as f64) as u64).max(1));
+                let fold = match lap_samples {
+                    Some(samples) => PositionFold::Window {
+                        start,
+                        lap: Seconds(samples as f64 / per_second as f64),
+                    },
+                    None => PositionFold::Offset(start),
+                };
+                let source = WindowedMusic {
+                    decoder,
+                    bytes,
+                    start: start_duration,
+                    lap_samples,
+                    played: 0,
+                };
+                Ok((source, fold))
+            }
             Err(error) => {
                 warn!("music cannot seek, playing it whole: {error}");
                 let decoder = rodio::Decoder::new(Cursor::new(bytes.clone()))
                     .map_err(|error| error.to_string())?;
-                (decoder, None)
+                let source = WindowedMusic {
+                    decoder,
+                    bytes,
+                    start: Duration::ZERO,
+                    lap_samples: None,
+                    played: 0,
+                };
+                Ok((source, PositionFold::Raw))
             }
-        };
-        Ok(WindowedMusic {
-            decoder,
-            bytes,
-            start,
-            window,
-            played: 0,
-        })
+        }
     }
 
     fn seeked_decoder(
@@ -300,23 +350,13 @@ impl WindowedMusic {
         Ok(decoder)
     }
 
-    fn window_samples(&self, window: Duration) -> u64 {
-        let per_second =
-            self.decoder.sample_rate().get() as u64 * self.decoder.channels().get() as u64;
-        (window.as_secs_f64() * per_second as f64) as u64
-    }
-
-    fn rewind(&mut self) -> bool {
+    fn rewind(&mut self) {
         self.played = 0;
         match Self::seeked_decoder(&self.bytes, self.start) {
-            Ok(decoder) => {
-                self.decoder = decoder;
-                true
-            }
+            Ok(decoder) => self.decoder = decoder,
             Err(error) => {
                 warn!("music stopped looping its window: {error}");
-                self.window = None;
-                false
+                self.lap_samples = None;
             }
         }
     }
@@ -326,8 +366,8 @@ impl Iterator for WindowedMusic {
     type Item = rodio::Sample;
 
     fn next(&mut self) -> Option<rodio::Sample> {
-        if let Some(window) = self.window
-            && self.played >= self.window_samples(window)
+        if let Some(lap) = self.lap_samples
+            && self.played >= lap
         {
             self.rewind();
         }
@@ -336,8 +376,13 @@ impl Iterator for WindowedMusic {
                 self.played += 1;
                 Some(sample)
             }
-            // The file ran out inside the window; wrap early.
-            None if self.window.is_some() && self.rewind() => self.decoder.next(),
+            // The file ran out inside the window: pad silence up to the
+            // lap boundary, so laps keep their exact length and the
+            // position fold stays true.
+            None if self.lap_samples.is_some() => {
+                self.played += 1;
+                Some(0.0)
+            }
             None => None,
         }
     }
@@ -345,7 +390,13 @@ impl Iterator for WindowedMusic {
 
 impl Source for WindowedMusic {
     fn current_span_len(&self) -> Option<usize> {
-        self.decoder.current_span_len()
+        match self.lap_samples {
+            // Looping replays the same file forever (silence-padded to the
+            // lap boundary), so the format is fixed and the span endless —
+            // and an exhausted decoder's zero-length spans never leak out.
+            Some(_) => None,
+            None => self.decoder.current_span_len(),
+        }
     }
 
     fn channels(&self) -> rodio::ChannelCount {
@@ -376,6 +427,7 @@ fn decode(
     frames: &SyncSender<Vec<u8>>,
 ) {
     loop {
+        let mut sent_any = false;
         for frame in decoder.decode_iter() {
             let Ok((_, frame)) = frame else { break };
             let Some(rgb) = frame.as_slice() else { break };
@@ -386,8 +438,11 @@ fn decode(
             if frames.send(rgba).is_err() {
                 return;
             }
+            sent_any = true;
         }
-        if !looping {
+        // A lap that produced nothing would rebuild forever: a broken
+        // stream must wind the thread down, not busy-loop it.
+        if !looping || !sent_any {
             return;
         }
         // A fresh decoder per lap, instead of seeking the same one back

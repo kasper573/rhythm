@@ -1,5 +1,5 @@
 use crate::core::config::{GameConfig, HealthColorStop};
-use crate::core::units::Percent;
+use crate::core::units::{Beat, Percent};
 use bevy::asset::embedded_asset;
 use bevy::prelude::*;
 use bevy::render::render_resource::AsBindGroup;
@@ -57,7 +57,7 @@ pub fn health_vial_prefab(
         // default.
         .insert(HealthVial {
             fill: opt.fill,
-            beat: 0.0,
+            beat: Beat(0.0),
         })
         .id();
     commands
@@ -88,7 +88,7 @@ pub struct HealthVial {
     pub fill: f32,
     /// The musical beat the glow and liquid pulse on; hold it still and the
     /// vial rests.
-    pub beat: f64,
+    pub beat: Beat,
 }
 
 pub struct HealthVialPlugin;

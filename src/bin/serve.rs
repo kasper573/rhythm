@@ -274,23 +274,7 @@ fn mime(path: &Path) -> &'static str {
 /// Browsers percent-encode asset URLs (song folders contain spaces and
 /// non-ASCII titles); decode them back into filesystem names.
 fn percent_decode(url: &str) -> String {
-    let mut bytes = Vec::with_capacity(url.len());
-    let mut rest = url.bytes();
-    while let Some(byte) = rest.next() {
-        if byte != b'%' {
-            bytes.push(byte);
-            continue;
-        }
-        let high = rest.next().and_then(hex);
-        let low = rest.next().and_then(hex);
-        match (high, low) {
-            (Some(high), Some(low)) => bytes.push(high * 16 + low),
-            _ => bytes.push(byte),
-        }
-    }
-    String::from_utf8_lossy(&bytes).into_owned()
-}
-
-fn hex(byte: u8) -> Option<u8> {
-    (byte as char).to_digit(16).map(|digit| digit as u8)
+    percent_encoding::percent_decode_str(url)
+        .decode_utf8_lossy()
+        .into_owned()
 }

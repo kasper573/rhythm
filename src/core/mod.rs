@@ -31,11 +31,7 @@ pub fn size_viewport_covers(
     mut sprites: Query<&mut Sprite, With<ViewportCover>>,
 ) {
     let Ok(window) = windows.single() else { return };
-    let size = Vec2::new(window.width(), window.height());
-    if size.x <= 0.0 || size.y <= 0.0 {
-        return;
-    }
-    let visible = size * (SCREEN_SIZE.x / size.x).max(SCREEN_SIZE.y / size.y);
+    let visible = visible_world_size(window);
     for mut sprite in &mut sprites {
         if sprite.custom_size != Some(visible) {
             sprite.custom_size = Some(visible);

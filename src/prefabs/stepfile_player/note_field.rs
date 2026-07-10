@@ -121,8 +121,8 @@ pub struct NoteFieldClock {
 }
 
 impl NoteFieldClock {
-    pub fn beat(&self) -> f64 {
-        self.timing.beat_at_seconds(self.visible).0
+    pub fn beat(&self) -> Beat {
+        self.timing.beat_at_seconds(self.visible)
     }
 
     fn scroll(&self) -> NoteScroll {
@@ -159,7 +159,7 @@ impl Default for LaneView {
 /// one arrow height per beat at multiplier 1, whatever the field's size.
 struct NoteScroll {
     now: Seconds,
-    now_beat: f64,
+    now_beat: Beat,
     target_y: f32,
 }
 
@@ -167,7 +167,7 @@ impl NoteScroll {
     fn y_at(&self, field: &NoteField, time: Seconds, beat: Beat) -> f32 {
         let arrows_until = match field.speed {
             NoteSpeed::Constant(scroll_bpm) => (time - self.now).0 * scroll_bpm as f64 / 60.0,
-            NoteSpeed::Dynamic(multiplier) => (beat.0 - self.now_beat) * multiplier as f64,
+            NoteSpeed::Dynamic(multiplier) => (beat - self.now_beat).0 * multiplier as f64,
         };
         self.target_y - (arrows_until * field.arrow_size as f64) as f32
     }
@@ -473,9 +473,12 @@ pub fn spawn_mine(
 /// sort and flicker as their draw order swaps between frames — under a
 /// flat camera, every note shares a single view depth. Each note sits
 /// slightly deeper the later its beat, so an earlier note always draws
-/// over the ones scrolling in behind it.
+/// over the ones scrolling in behind it. Only co-visible notes need
+/// distinct depths, so the nudge wraps: the period is far beyond any
+/// on-screen beat span, and the bounded range keeps even marathon charts'
+/// notes inside their own layer band.
 fn beat_z_nudge(beat: Beat) -> f32 {
-    beat.0 as f32 * 0.005
+    (beat.0.rem_euclid(256.0) * 0.005) as f32
 }
 
 /// Spawns transient effects into a field's lane scene: tinted quads whose
@@ -962,7 +965,7 @@ fn animate_hold_parts(
     fields: Query<&NoteField>,
     heads: Query<(&NoteArrow, &HoldVisual, &InField)>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut parts: Query<HoldPartVisual, Without<NoteArrow>>,
+    mut parts: Query<HoldPartVisual, (Without<NoteArrow>, Without<FadeOut>)>,
 ) {
     let scroll = clock.scroll();
     for item in &mut parts {
@@ -1090,7 +1093,7 @@ fn animate_mines(
     clock: Res<NoteFieldClock>,
     skins: Res<ActiveNoteSkins>,
     fields: Query<&NoteField>,
-    mut mines: Query<(&MineNote, &InField, &mut Transform)>,
+    mut mines: Query<(&MineNote, &InField, &mut Transform), Without<FadeOut>>,
 ) {
     let scroll = clock.scroll();
     let beat = clock.beat();
@@ -1101,7 +1104,7 @@ fn animate_mines(
         let skin = skins.get(field.player);
         transform.translation.y = scroll.y_at(field, mine.time, mine.beat);
         transform.rotation = Quat::from_rotation_z(
-            (-(beat.rem_euclid(skin.mine_spin_beats) / skin.mine_spin_beats)
+            (-(beat.0.rem_euclid(skin.mine_spin_beats) / skin.mine_spin_beats)
                 * std::f64::consts::TAU) as f32,
         );
     }

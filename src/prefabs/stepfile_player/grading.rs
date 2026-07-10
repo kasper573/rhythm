@@ -302,13 +302,13 @@ fn update_holds(
                     hold.life = 1.0;
                 }
                 hold.held_now = ctx.held(field, arrow.column);
-                hold.life -= delta / config.grading.roll_grace_seconds;
+                hold.life -= delta / config.grading.roll_grace_seconds.0 as f32;
             } else if ctx.held(field, arrow.column) {
                 hold.held_now = true;
                 hold.life = 1.0;
             } else {
                 hold.held_now = false;
-                hold.life -= delta / config.grading.hold_grace_seconds;
+                hold.life -= delta / config.grading.hold_grace_seconds.0 as f32;
             }
             hold.life = hold.life.clamp(0.0, 1.0);
 
