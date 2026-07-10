@@ -134,9 +134,29 @@ fn copy_into(source: &Path, target: &Path) {
 fn serve(repo: &Path, site: &Path, host: &str, port: u16) {
     let assets = Arc::new(repo.join("assets"));
     let site = Arc::new(site.to_path_buf());
-    let server = tiny_http::Server::http((host, port))
-        .unwrap_or_else(|error| panic!("failed to bind {host}:{port}: {error}"));
-    println!("serving the web build at http://{host}:{port}/");
+    // Godot web exports only run in a secure context: loopback qualifies
+    // as-is, but any other interface must serve HTTPS — with a throwaway
+    // self-signed certificate, so browsers warn once per device.
+    let loopback = matches!(host, "127.0.0.1" | "localhost" | "::1");
+    let server = if loopback {
+        tiny_http::Server::http((host, port))
+    } else {
+        let key = rcgen::generate_simple_self_signed(vec!["rhythm-dev".to_string()])
+            .expect("failed to generate the self-signed certificate");
+        tiny_http::Server::https(
+            (host, port),
+            tiny_http::SslConfig {
+                certificate: key.cert.pem().into_bytes(),
+                private_key: key.key_pair.serialize_pem().into_bytes(),
+            },
+        )
+    }
+    .unwrap_or_else(|error| panic!("failed to bind {host}:{port}: {error}"));
+    let scheme = if loopback { "http" } else { "https" };
+    println!("serving the web build at {scheme}://{host}:{port}/");
+    if !loopback {
+        println!("(self-signed certificate: accept the browser warning once per device)");
+    }
     for request in server.incoming_requests() {
         let assets = assets.clone();
         let site = site.clone();

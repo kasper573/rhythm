@@ -27,7 +27,8 @@ tracing-subscriber = { version = "0.3", optional = true, default-features = fals
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 clap = { version = "4", features = ["derive"] }
-tiny_http = "0.12"
+rcgen = "0.13"
+tiny_http = { version = "0.12", features = ["ssl-rustls"] }
 video-rs = { version = "0.11.0", features = ["ndarray"] }
 walkdir = "2"
 
