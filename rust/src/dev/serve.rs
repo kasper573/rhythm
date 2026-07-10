@@ -1,7 +1,7 @@
-//! Development web server for the browser build. Builds the exact site
-//! that gets deployed — the Godot web export plus the asset tree and its
-//! index — and serves it together with the local `assets/` folder.
-//! `--emit` writes the whole site out as static files instead, which is
+//! The development web server for the browser build. Builds the exact
+//! site that gets deployed — the Godot web export plus the asset tree and
+//! its index — and serves it together with the local `assets/` folder;
+//! emitting instead writes the whole site out as static files, which is
 //! how the deploy workflow produces the published site.
 //!
 //! Building the wasm extension needs the pinned nightly toolchain (see
@@ -9,43 +9,26 @@
 //! emsdk matching the Godot version's emscripten, and Godot 4 export
 //! templates installed.
 
-use clap::Parser;
-use rhythm::dev::launcher;
+use crate::dev::launcher;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
+
+/// Builds the site, then serves it — or writes it to `emit` and exits.
+pub fn run(emit: Option<PathBuf>, host: &str, port: u16) {
+    let repo = launcher::repo_root();
+    let site = build_site(&repo);
+    match emit {
+        Some(directory) => self::emit(&repo, &site, &directory),
+        None => serve(&repo, &site, host, port),
+    }
+}
 
 /// The toolchain the browser build compiles with: the Godot 4.7 web
 /// templates use emscripten's JS exception handling, and this is the last
 /// nightly line whose emscripten target can still opt out of wasm-eh to
 /// match them.
 const WEB_TOOLCHAIN: &str = "+nightly-2026-01-01";
-
-#[derive(Parser)]
-struct Cli {
-    /// Write the complete static site (game, assets, index) to this
-    /// directory and exit, instead of serving. Copies the entire assets
-    /// folder.
-    #[arg(long)]
-    emit: Option<PathBuf>,
-    /// Interface to bind; 0.0.0.0 exposes the server to the LAN for
-    /// testing from other devices.
-    #[arg(long, default_value = "127.0.0.1")]
-    host: String,
-    /// Port to serve on.
-    #[arg(long, default_value_t = 8080)]
-    port: u16,
-}
-
-fn main() {
-    let cli = Cli::parse();
-    let repo = launcher::repo_root();
-    let site = build_site(&repo);
-    match cli.emit {
-        Some(directory) => emit(&repo, &site, &directory),
-        None => serve(&repo, &site, &cli.host, cli.port),
-    }
-}
 
 /// Compiles the extension for the browser and exports the web build to
 /// `target/site/`.

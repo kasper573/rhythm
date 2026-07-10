@@ -1,7 +1,7 @@
 //! In-game development modes, activated by user args after `--` on the
 //! godot command line: frame-rate benchmarks and headless-style renders.
-//! The launcher binaries in `src/bin` build the extension, boot the real
-//! game with these args, and collect the artifacts.
+//! The dev command line (`src/main.rs`) builds the extension, boots the
+//! real game with these args, and collects the artifacts.
 
 pub mod note_scenarios;
 pub mod profiling;
@@ -12,6 +12,8 @@ mod render_note;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod launcher;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod serve;
 
 pub use bench::scenario_names as bench_scenario_names;
 

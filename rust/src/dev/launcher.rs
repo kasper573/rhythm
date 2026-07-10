@@ -1,15 +1,15 @@
-//! Shared plumbing for the dev launcher binaries: they rebuild the
-//! extension, locate a Godot 4 binary, and boot the real game with dev
-//! user args — so `cargo run --bin <tool>` always measures and renders the
-//! code as it currently stands, never a stale library.
+//! Shared plumbing for the dev command line: it rebuilds the extension,
+//! locates a Godot 4 binary, and boots the real game with dev user args —
+//! so `cargo run -- <tool>` always measures and renders the code as it
+//! currently stands, never a stale library.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// The repository root, from the crate the binaries are built in.
 pub fn repo_root() -> PathBuf {
-    let manifest = std::env::var("CARGO_MANIFEST_DIR")
-        .expect("dev tools are run via `cargo run --bin <tool>`");
+    let manifest =
+        std::env::var("CARGO_MANIFEST_DIR").expect("dev tools are run via `cargo run -- <tool>`");
     PathBuf::from(manifest)
         .parent()
         .expect("the crate lives inside the repository")

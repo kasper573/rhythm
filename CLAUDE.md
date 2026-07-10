@@ -13,7 +13,7 @@
 
 ## Layout
 
-- `rust/` — the extension crate (`cdylib` + the dev launcher binaries), following the godot-rust convention of a Rust crate beside the Godot project.
+- `rust/` — the extension crate (`cdylib` + the dev command line in `main.rs`), following the godot-rust convention of a Rust crate beside the Godot project.
 - `godot/` — the Godot project: `project.godot`, the boot scene, `rhythm.gdextension`, and `export_presets.cfg`. All game logic stays in Rust; the project holds configuration only.
 - `assets/` — the game's data, loaded at runtime from the filesystem (or over HTTP on the web); deliberately not packed into the export so a shipped build's `assets/stepfiles/` stays a drop-in library folder.
 
@@ -60,27 +60,27 @@ Two capture paths:
 - **Headless render binaries** — for one component or animation in isolation,
   with no navigation. They rebuild the extension, boot the real game offscreen
   in a dev mode, and dump to `out/`, reusing the game's own node/shader paths
-  so the output is exactly what the game draws. Current ones: `cargo run --bin
-render_grade` (→ `out/grades.png`) and `cargo run --bin render_note
+  so the output is exactly what the game draws. Current ones: `cargo run --
+render-grade` (→ `out/grades.png`) and `cargo run -- render-note
 <scenario|all> [--skin .. --bpm ..]` / `--list` (→ `out/*.mp4`). Prefer this:
   when the thing under test can be isolated, add or extend a scenario instead
   of clicking through menus. They need a display (any X server; the drive
   harness's Xvfb works) and a Godot 4 binary (`godot` on PATH or `GODOT_BIN`).
 
-- **Live drive harness** — `rust/src/bin/drive.sh` boots the actual windowed
+- **Live drive harness** — `rust/src/dev/drive.sh` boots the actual windowed
   game on an isolated virtual display and drives it with synthesized input +
   capture. It never touches the real desktop, mutes audio to a null sink, and
   sandboxes user data. Primitives (artifacts land in `out/drive/`):
 
   ```
-  bash rust/src/bin/drive.sh start                 # build + boot, print window id
-  bash rust/src/bin/drive.sh key <keysym> [n]      # tap a key n times at the window
-  bash rust/src/bin/drive.sh hold <keysym> <secs>  # press-hold-release a key
-  bash rust/src/bin/drive.sh shot <name>           # PNG of the window
-  bash rust/src/bin/drive.sh rec <name> <secs>     # mp4 of the window
-  bash rust/src/bin/drive.sh frames <video> [fps]  # extract stills from an mp4
-  bash rust/src/bin/drive.sh strip <out.png> [NxM] <png...>   # tile stills into a sheet
-  bash rust/src/bin/drive.sh stop
+  bash rust/src/dev/drive.sh start                 # build + boot, print window id
+  bash rust/src/dev/drive.sh key <keysym> [n]      # tap a key n times at the window
+  bash rust/src/dev/drive.sh hold <keysym> <secs>  # press-hold-release a key
+  bash rust/src/dev/drive.sh shot <name>           # PNG of the window
+  bash rust/src/dev/drive.sh rec <name> <secs>     # mp4 of the window
+  bash rust/src/dev/drive.sh frames <video> [fps]  # extract stills from an mp4
+  bash rust/src/dev/drive.sh strip <out.png> [NxM] <png...>   # tile stills into a sheet
+  bash rust/src/dev/drive.sh stop
   ```
 
 The loop: reach the state (`start`, then `key`/`hold`, pausing a beat between

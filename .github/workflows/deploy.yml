@@ -59,7 +59,7 @@ jobs:
       - name: build site
         run: |
           source emsdk/emsdk_env.sh
-          cargo run --bin serve -- --emit dist
+          cargo run -- serve --emit dist
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
@@ -148,7 +148,7 @@ jobs:
             cp "$FFMPEG_DIR"/bin/*.dll target/debug/
             cp "$FFMPEG_DIR"/bin/*.dll target/release/
           fi
-          cargo run --bin export -- "${{ matrix.preset }}" "${{ matrix.out }}"
+          cargo run -- export "${{ matrix.preset }}" "${{ matrix.out }}"
       - name: package
         shell: bash
         run: |
