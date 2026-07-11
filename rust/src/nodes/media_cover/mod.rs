@@ -1,14 +1,16 @@
+mod stream;
+
 use crate::core::library::is_video_file;
 use crate::core::platform::{AssetFetch, FetchPoll, platform};
 use crate::core::textures::decode_texture;
 use crate::core::units::Seconds;
-use crate::core::video::VideoStream;
 use godot::classes::control::LayoutPreset;
 use godot::classes::texture_rect::{ExpandMode, StretchMode};
 use godot::classes::{ITextureRect, TextureRect};
 use godot::global::godot_warn;
 use godot::prelude::*;
 use std::path::PathBuf;
+use stream::{MediaVideoPlayback, MediaVideoStream};
 
 pub struct MediaCoverOptions {
     /// Absolute path to the image or video file to show.
@@ -37,8 +39,12 @@ pub struct MediaCoverOptions {
 #[class(base=TextureRect)]
 pub struct MediaCover {
     clock: Seconds,
+    /// The clock moment the video starts at, subtracted before pacing it.
+    start: Seconds,
     pace: MediaPace,
-    stream: Option<VideoStream>,
+    /// The engine-typed playback the cover drives every frame; its texture
+    /// shows on the cover, cover-cropped like any image.
+    playback: Option<Gd<MediaVideoPlayback>>,
     fetch: Option<Box<dyn AssetFetch>>,
     image_path: PathBuf,
     ready: bool,
@@ -68,16 +74,17 @@ impl MediaCover {
 
         let mut bound = cover.bind_mut();
         bound.clock = opt.start;
+        bound.start = opt.start;
         bound.pace = opt.pace;
         if is_video_file(&opt.path.to_string_lossy()) {
-            match VideoStream::open(&opt.path, opt.start, opt.looping) {
-                Ok(stream) => {
-                    let texture = stream.texture.clone();
-                    bound.stream = Some(stream);
-                    bound.ready = true;
-                    drop(bound);
-                    cover.set_texture(&texture);
-                }
+            let playback = MediaVideoStream::open(&opt.path, opt.looping).and_then(|mut video| {
+                video
+                    .bind_mut()
+                    .start_playback()
+                    .ok_or("the stream was already playing".to_string())
+            });
+            let playback = match playback {
+                Ok(playback) => playback,
                 Err(error) => {
                     godot_warn!(
                         "media cover unavailable for {}: {error}",
@@ -87,7 +94,12 @@ impl MediaCover {
                     cover.queue_free();
                     return None;
                 }
-            }
+            };
+            let texture = playback.bind().texture();
+            bound.playback = Some(playback);
+            bound.ready = true;
+            drop(bound);
+            cover.set_texture(&texture);
         } else {
             bound.fetch = Some(platform().fetch_asset(&opt.path));
             bound.image_path = opt.path;
@@ -114,8 +126,9 @@ impl ITextureRect for MediaCover {
     fn init(base: Base<TextureRect>) -> MediaCover {
         MediaCover {
             clock: Seconds::ZERO,
+            start: Seconds::ZERO,
             pace: MediaPace::Wall,
-            stream: None,
+            playback: None,
             fetch: None,
             image_path: PathBuf::new(),
             ready: false,
@@ -146,12 +159,14 @@ impl ITextureRect for MediaCover {
                 }
             }
         }
-        if self.pace == MediaPace::Wall {
-            self.clock += Seconds(delta);
-        }
-        let clock = self.clock;
-        if let Some(stream) = &mut self.stream {
-            stream.update(clock);
+        // Wall-paced playback rides the frame clock; a manual clock
+        // overrides it.
+        if let Some(playback) = &mut self.playback {
+            let mut playback = playback.bind_mut();
+            if self.pace == MediaPace::Manual {
+                playback.set_clock(self.clock - self.start);
+            }
+            playback.advance(delta);
         }
     }
 }

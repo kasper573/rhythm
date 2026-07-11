@@ -29,7 +29,7 @@
 export DISPLAY="${DRIVE_DISPLAY:-:99}"
 set -u
 
-ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WORK="${DRIVE_OUT:-$ROOT/out/drive}"
 SCREEN="${DRIVE_SCREEN:-1280x720x24}"
 SINK="${DRIVE_SINK:-rhythm_test}"

@@ -7,7 +7,6 @@ use godot::classes::{
 use godot::global::linear_to_db;
 use godot::prelude::*;
 use std::cell::Cell;
-use std::io::Cursor;
 use std::rc::Rc;
 
 /// The game's audio buses. Music and sound effects each get their own so
@@ -263,36 +262,10 @@ impl Drop for SoundChannel {
     }
 }
 
-/// Decodes a WAV via hound into an [`AudioStreamWav`] — deterministic
-/// across platforms, and the same decoding the tick-track renderer uses.
+/// Decodes a WAV into an [`AudioStreamWav`] with the engine's own loader.
 pub fn wav_stream(bytes: &[u8]) -> Result<Gd<AudioStreamWav>, String> {
-    let mut reader = hound::WavReader::new(Cursor::new(bytes)).map_err(|e| e.to_string())?;
-    let spec = reader.spec();
-    let samples: Vec<i16> = match spec.sample_format {
-        hound::SampleFormat::Int => {
-            let shift = spec.bits_per_sample.saturating_sub(16) as u32;
-            reader
-                .samples::<i32>()
-                .map(|sample| sample.map(|sample| (sample >> shift) as i16))
-                .collect::<Result<_, _>>()
-                .map_err(|e| e.to_string())?
-        }
-        hound::SampleFormat::Float => reader
-            .samples::<f32>()
-            .map(|sample| sample.map(|sample| (sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16))
-            .collect::<Result<_, _>>()
-            .map_err(|e| e.to_string())?,
-    };
-    let mut data = Vec::with_capacity(samples.len() * 2);
-    for sample in samples {
-        data.extend_from_slice(&sample.to_le_bytes());
-    }
-    let mut stream = AudioStreamWav::new_gd();
-    stream.set_data(&PackedByteArray::from(data.as_slice()));
-    stream.set_format(audio_stream_wav::Format::FORMAT_16_BITS);
-    stream.set_mix_rate(spec.sample_rate as i32);
-    stream.set_stereo(spec.channels >= 2);
-    Ok(stream)
+    AudioStreamWav::load_from_buffer(&PackedByteArray::from(bytes))
+        .ok_or_else(|| "not a playable WAV".to_string())
 }
 
 fn pcm_stream(samples: &[i16], sample_rate: u32) -> Gd<AudioStreamWav> {
