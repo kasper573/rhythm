@@ -906,25 +906,21 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 name = "rhythm"
 version = "0.1.0"
 dependencies = [
- "clap",
  "derive_more",
  "ffmpeg-sys-next",
  "godot",
  "hound",
  "json_comments",
  "percent-encoding",
- "rcgen",
  "serde",
  "serde_json",
  "sha2",
  "strum",
  "thiserror",
- "tiny_http",
  "tracing",
  "tracing-chrome",
  "tracing-subscriber",
  "video-rs",
- "walkdir",
 ]
 
 [[package]]
@@ -1245,6 +1241,18 @@ checksum = "c8323304221c2a851516f22236c5722a72eaa19749016521d6dff0824447d96d"
 dependencies = [
  "displaydoc",
  "zerovec",
+]
+
+[[package]]
+name = "tools"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "percent-encoding",
+ "rcgen",
+ "serde_json",
+ "tiny_http",
+ "walkdir",
 ]
 
 [[package]]

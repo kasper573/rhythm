@@ -9,7 +9,7 @@
 //! emsdk matching the Godot version's emscripten, and Godot 4 export
 //! templates installed.
 
-use crate::dev::launcher;
+use crate::launcher;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
@@ -33,9 +33,9 @@ const WEB_TOOLCHAIN: &str = "+nightly-2026-01-01";
 /// Compiles the extension for the browser and exports the web build to
 /// `target/site/`.
 fn build_site(repo: &Path) -> PathBuf {
-    // The editor performing the export loads the native debug library;
-    // build it so the project imports with its classes present.
-    launcher::build_extension(false);
+    // Only the wasm library is built: the exporting editor tolerates the
+    // native one being absent (it errors and carries on), and requiring it
+    // would drag the game's whole native dependency tree into web deploys.
     let status = Command::new("cargo")
         .current_dir(repo)
         .args([

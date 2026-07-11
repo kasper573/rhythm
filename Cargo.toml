@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["rust"]
+members = ["rust", "tools"]
 
 [profile.dev]
 opt-level = 1

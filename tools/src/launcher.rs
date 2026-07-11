@@ -73,15 +73,43 @@ pub fn export_release(preset: &str, output: &Path) {
     );
 }
 
-/// Boots the game with the given dev user args and waits for it. The
+/// Boots the game with engine args (movie maker, headless) before the
+/// project and the launch directives after `--`, then waits for it. The
 /// child's user data is sandboxed under `sandbox` when given, so tool runs
 /// always start from default settings and never touch the player's files.
-pub fn run_game(user_args: &[String], sandbox: Option<&PathBuf>) -> std::process::ExitStatus {
+pub fn run_game(
+    engine_args: &[String],
+    user_args: &[String],
+    sandbox: Option<&PathBuf>,
+) -> std::process::ExitStatus {
+    game_command(engine_args, user_args, sandbox)
+        .status()
+        .expect("failed to run godot: install Godot 4 or set GODOT_BIN")
+}
+
+/// [`run_game`], with the game's stdout captured and returned.
+pub fn run_game_captured(
+    engine_args: &[String],
+    user_args: &[String],
+    sandbox: Option<&PathBuf>,
+) -> String {
+    let output = game_command(engine_args, user_args, sandbox)
+        .output()
+        .expect("failed to run godot: install Godot 4 or set GODOT_BIN");
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+fn game_command(
+    engine_args: &[String],
+    user_args: &[String],
+    sandbox: Option<&PathBuf>,
+) -> Command {
     let root = repo_root();
     write_extension_manifest(&root.join("godot"));
     let mut command = Command::new(godot_binary());
     command
         .current_dir(&root)
+        .args(engine_args)
         .arg("--path")
         .arg(root.join("godot"))
         .arg("--")
@@ -92,8 +120,6 @@ pub fn run_game(user_args: &[String], sandbox: Option<&PathBuf>) -> std::process
         command.env("XDG_DATA_HOME", sandbox);
     }
     command
-        .status()
-        .expect("failed to run godot: install Godot 4 or set GODOT_BIN")
 }
 
 /// Godot loads GDExtensions from this project-data manifest, which

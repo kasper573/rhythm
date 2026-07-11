@@ -1,9 +1,10 @@
 pub mod core;
-pub mod dev;
 pub mod game;
+pub mod launch;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod native;
 pub mod nodes;
+pub mod profiling;
 pub mod scenes;
 #[cfg(target_arch = "wasm32")]
 pub mod web;

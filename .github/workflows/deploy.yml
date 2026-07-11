@@ -35,10 +35,6 @@ jobs:
           targets: wasm32-unknown-emscripten
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: install build tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y nasm
       # The emsdk version whose emscripten matches the Godot 4.7 web export
       # templates; the build step sources its environment.
       - name: install emsdk
@@ -59,7 +55,7 @@ jobs:
       - name: build site
         run: |
           source emsdk/emsdk_env.sh
-          cargo run -- serve --emit dist
+          cargo run -p tools -- serve --emit dist
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
@@ -148,7 +144,7 @@ jobs:
             cp "$FFMPEG_DIR"/bin/*.dll target/debug/
             cp "$FFMPEG_DIR"/bin/*.dll target/release/
           fi
-          cargo run -- export "${{ matrix.preset }}" "${{ matrix.out }}"
+          cargo run -p tools -- export "${{ matrix.preset }}" "${{ matrix.out }}"
       - name: package
         shell: bash
         run: |

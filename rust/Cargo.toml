@@ -26,11 +26,7 @@ tracing-chrome = { version = "0.7", optional = true }
 tracing-subscriber = { version = "0.3", optional = true, default-features = false, features = ["registry"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-clap = { version = "4", features = ["derive"] }
-rcgen = "0.13"
-tiny_http = { version = "0.12", features = ["ssl-rustls"] }
 video-rs = { version = "0.11.0", features = ["ndarray"] }
-walkdir = "2"
 
 # The ffmpeg behind video-rs compiles from source and links statically on
 # unix; ffmpeg's configure cannot run on Windows, which links the prebuilt

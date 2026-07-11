@@ -8,11 +8,12 @@ use crate::core::stepfile::{Difficulty, MusicPlayer};
 use crate::nodes::fps_overlay::{FpsOverlay, FpsOverlayOptions};
 use crate::nodes::menu::NavInput;
 use crate::nodes::stepfile_player::note_skin::NoteSkinLibrary;
+use crate::scenes::note_demo::NoteDemoParams;
 use crate::scenes::play::SelectedStepfile;
 use crate::scenes::score::ScoreResults;
 use crate::scenes::{self, GameScene};
 use godot::classes::control::LayoutPreset;
-use godot::classes::{CanvasLayer, ColorRect, Engine, INode, Node, Os};
+use godot::classes::{CanvasLayer, ColorRect, Engine, INode, Node};
 use godot::prelude::*;
 
 const FADE_SECONDS: f32 = 0.3;
@@ -42,6 +43,7 @@ pub struct Game {
     preferred_difficulty: PerPlayer<u8>,
     wheel_target: Option<StepfileId>,
     selected_stepfile: Option<SelectedStepfile>,
+    note_demo: Option<NoteDemoParams>,
     score_results: Option<ScoreResults>,
     base: Base<Node>,
 }
@@ -126,6 +128,16 @@ impl Game {
         self.score_results.take()
     }
 
+    /// The note demo's entry params, inserted by the launch directives;
+    /// consumed on enter.
+    pub fn set_note_demo(&mut self, params: NoteDemoParams) {
+        self.note_demo = Some(params);
+    }
+
+    pub fn take_note_demo(&mut self) -> Option<NoteDemoParams> {
+        self.note_demo.take()
+    }
+
     fn boot(&mut self) {
         GameConfig::install();
         StepfileLibrary::install();
@@ -174,15 +186,8 @@ impl Game {
         self.fade = FadePhase::FadingIn;
         self.fade_alpha = 1.0;
 
-        let args: Vec<String> = Os::singleton()
-            .get_cmdline_user_args()
-            .as_slice()
-            .iter()
-            .map(|arg| arg.to_string())
-            .collect();
-        if !crate::dev::dispatch(self, &args) {
-            self.swap_to(GameScene::MainMenu);
-        }
+        let scene = crate::launch::boot(self);
+        self.swap_to(scene);
     }
 
     fn swap_to(&mut self, scene: GameScene) {
@@ -246,6 +251,7 @@ impl INode for Game {
             },
             wheel_target: None,
             selected_stepfile: None,
+            note_demo: None,
             score_results: None,
             base,
         }

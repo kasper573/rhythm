@@ -13,7 +13,8 @@
 
 ## Layout
 
-- `rust/` — the extension crate (`cdylib` + the dev command line in `main.rs`), following the godot-rust convention of a Rust crate beside the Godot project.
+- `rust/` — the extension crate (`cdylib`), following the godot-rust convention of a Rust crate beside the Godot project. The game exposes generic launch directives (`rust/src/launch.rs`: `--scene` deep links with params, `--pulse`/`--hold` input automation, `--frame-report`, `--quit-after-seconds`) and knows nothing about the tooling built on them.
+- `tools/` — the dev command line (`cargo run -p tools -- bench|render-note|render-grade|serve|export`) plus `drive.sh`; it composes the game's launch directives with Godot's movie-maker capture and never links the game crate.
 - `godot/` — the Godot project: `project.godot`, the boot scene, `rhythm.gdextension`, and `export_presets.cfg`. All game logic stays in Rust; the project holds configuration only.
 - `assets/` — the game's data, loaded at runtime from the filesystem (or over HTTP on the web); deliberately not packed into the export so a shipped build's `assets/stepfiles/` stays a drop-in library folder.
 
@@ -57,30 +58,33 @@ tool and compare against the intent.
 
 Two capture paths:
 
-- **Headless render binaries** — for one component or animation in isolation,
-  with no navigation. They rebuild the extension, boot the real game offscreen
-  in a dev mode, and dump to `out/`, reusing the game's own node/shader paths
-  so the output is exactly what the game draws. Current ones: `cargo run --
-render-grade` (→ `out/grades.png`) and `cargo run -- render-note
+- **Render tools** — for one component or animation in isolation, with no
+  navigation. They rebuild the extension, deep-link the game into a review
+  scene (`grade-sheet`, `note-demo`), and capture it deterministically with
+  Godot's movie maker into `out/`, reusing the game's own node/shader paths
+  so the output is exactly what the game draws. `cargo run -p tools --
+render-grade` (→ `out/grades.png`) and `cargo run -p tools -- render-note
 <scenario|all> [--skin .. --bpm ..]` / `--list` (→ `out/*.mp4`). Prefer this:
   when the thing under test can be isolated, add or extend a scenario instead
   of clicking through menus. They need a display (any X server; the drive
-  harness's Xvfb works) and a Godot 4 binary (`godot` on PATH or `GODOT_BIN`).
+  harness's Xvfb works), a Godot 4 binary (`godot` on PATH or `GODOT_BIN`),
+  and ffmpeg on the PATH. To reach any other state directly, deep-link it:
+  `godot --path godot -- --scene wheel` (see `rust/src/launch.rs`).
 
-- **Live drive harness** — `rust/src/dev/drive.sh` boots the actual windowed
+- **Live drive harness** — `tools/drive.sh` boots the actual windowed
   game on an isolated virtual display and drives it with synthesized input +
   capture. It never touches the real desktop, mutes audio to a null sink, and
   sandboxes user data. Primitives (artifacts land in `out/drive/`):
 
   ```
-  bash rust/src/dev/drive.sh start                 # build + boot, print window id
-  bash rust/src/dev/drive.sh key <keysym> [n]      # tap a key n times at the window
-  bash rust/src/dev/drive.sh hold <keysym> <secs>  # press-hold-release a key
-  bash rust/src/dev/drive.sh shot <name>           # PNG of the window
-  bash rust/src/dev/drive.sh rec <name> <secs>     # mp4 of the window
-  bash rust/src/dev/drive.sh frames <video> [fps]  # extract stills from an mp4
-  bash rust/src/dev/drive.sh strip <out.png> [NxM] <png...>   # tile stills into a sheet
-  bash rust/src/dev/drive.sh stop
+  bash tools/drive.sh start                 # build + boot, print window id
+  bash tools/drive.sh key <keysym> [n]      # tap a key n times at the window
+  bash tools/drive.sh hold <keysym> <secs>  # press-hold-release a key
+  bash tools/drive.sh shot <name>           # PNG of the window
+  bash tools/drive.sh rec <name> <secs>     # mp4 of the window
+  bash tools/drive.sh frames <video> [fps]  # extract stills from an mp4
+  bash tools/drive.sh strip <out.png> [NxM] <png...>   # tile stills into a sheet
+  bash tools/drive.sh stop
   ```
 
 The loop: reach the state (`start`, then `key`/`hold`, pausing a beat between

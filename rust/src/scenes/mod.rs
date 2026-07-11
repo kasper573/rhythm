@@ -1,7 +1,9 @@
 pub mod audio_settings;
+pub mod grade_sheet;
 pub mod keymap;
 pub mod main_menu;
 pub mod mode_select;
+pub mod note_demo;
 pub mod play;
 pub mod score;
 pub mod settings_menu;
@@ -14,8 +16,10 @@ use crate::game::Game;
 use crate::nodes::media_cover::{MediaCover, MediaCoverOptions, MediaPace};
 use godot::classes::{Control, Node};
 use godot::prelude::*;
+use strum::{EnumIter, EnumString, IntoStaticStr};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, EnumIter, EnumString, IntoStaticStr)]
+#[strum(serialize_all = "kebab-case")]
 pub enum GameScene {
     #[default]
     MainMenu,
@@ -26,6 +30,9 @@ pub enum GameScene {
     Wheel,
     Play,
     Score,
+    /// Review scenes, reachable only by deep link.
+    GradeSheet,
+    NoteDemo,
 }
 
 /// The scene node the router swaps in for each [`GameScene`]. Runs inside
@@ -41,6 +48,8 @@ pub fn instantiate_scene(scene: GameScene, game: &mut Game) -> Gd<Node> {
         GameScene::Wheel => wheel::WheelScene::instantiate(game).upcast(),
         GameScene::Play => play::PlayScene::instantiate(game).upcast(),
         GameScene::Score => score::ScoreScene::instantiate(game).upcast(),
+        GameScene::GradeSheet => grade_sheet::GradeSheetScene::instantiate(game).upcast(),
+        GameScene::NoteDemo => note_demo::NoteDemoScene::instantiate(game).upcast(),
     }
 }
 

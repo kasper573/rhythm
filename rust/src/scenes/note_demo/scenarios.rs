@@ -1,6 +1,5 @@
-//! The note-field animation scenarios the `render_note` tool renders:
-//! plain data, defined here so the launcher binary can list names without
-//! booting an engine and the in-game driver can execute them.
+//! The note-field animation scenarios the demo scene plays: plain data,
+//! one deterministic timeline per rendering behavior worth reviewing.
 
 use crate::nodes::stepfile_player::note_field::HoldVisualState;
 
