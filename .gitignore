@@ -1,4 +1,8 @@
-target
+bin
+obj
+.godot
+.mono
+*.user
 assets/stepfiles
 out
 /dist

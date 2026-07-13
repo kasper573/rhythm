@@ -1,0 +1,23 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+
+[*.cs]
+indent_size = 4
+dotnet_sort_system_directives_first = true
+csharp_using_directive_placement = outside_namespace:error
+csharp_style_namespace_declarations = file_scoped:error
+dotnet_style_require_accessibility_modifiers = for_non_interface_members:error
+csharp_prefer_braces = true:silent
+dotnet_diagnostic.IDE0005.severity = error
+
+[*.{tscn,tres,godot,gdshader}]
+indent_size = 2
+
+[*.{json,csproj,props,yml,yaml}]
+indent_size = 2
