@@ -32,7 +32,19 @@ thread_local! {
 /// Drops the cached font; the extension calls this on deinit, before the
 /// engine tears its servers down.
 pub fn drop_caches() {
+    if let Some(mut theme) = godot::classes::ThemeDb::singleton().get_default_theme() {
+        theme.set_default_font(None::<&Gd<godot::classes::Font>>);
+    }
     FONT.with_borrow_mut(|font| *font = None);
+}
+
+/// Installs the game font as the default theme's font, so every Control
+/// renders with it without per-node overrides. Called once at boot, after
+/// the platform can read assets.
+pub fn install_default() {
+    if let Some(mut theme) = godot::classes::ThemeDb::singleton().get_default_theme() {
+        theme.set_default_font(&game_font());
+    }
 }
 
 /// A label in the game font at a size and color — the one way text is made.
@@ -42,7 +54,6 @@ pub fn drop_caches() {
 pub fn label(text: &str, size: f32, color: Color) -> Gd<Label> {
     let mut label = Label::new_alloc();
     label.set_text(text);
-    label.add_theme_font_override("font", &game_font());
     label.add_theme_font_size_override("font_size", size.round() as i32);
     label.add_theme_color_override("font_color", color);
     label.set_vertical_alignment(godot::global::VerticalAlignment::CENTER);

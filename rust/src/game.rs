@@ -13,7 +13,7 @@ use crate::scenes::play::SelectedStepfile;
 use crate::scenes::score::ScoreResults;
 use crate::scenes::{self, GameScene};
 use godot::classes::control::LayoutPreset;
-use godot::classes::{CanvasLayer, ColorRect, Engine, INode, Node};
+use godot::classes::{CanvasLayer, ColorRect, Engine, INode, Node, Tween};
 use godot::prelude::*;
 
 const FADE_SECONDS: f32 = 0.3;
@@ -35,6 +35,7 @@ pub struct Game {
     current: Option<Gd<Node>>,
     fade: FadePhase,
     fade_alpha: f32,
+    fade_tween: Option<Gd<Tween>>,
     fade_rect: Option<Gd<ColorRect>>,
     play_mode: PlayMode,
     /// The difficulty rank each player is aiming for, kept across
@@ -67,9 +68,12 @@ impl Game {
     /// Drives the mandatory scene transition: fade to black, swap scene
     /// while black, fade back in. All scene switches go through here.
     pub fn change_scene(&mut self, to: GameScene) {
-        if !matches!(self.fade, FadePhase::FadingOut(_)) {
-            self.fade = FadePhase::FadingOut(to);
+        if matches!(self.fade, FadePhase::FadingOut(_)) {
+            return;
         }
+        self.fade = FadePhase::FadingOut(to);
+        NavInput::singleton().bind_mut().set_suspended(true);
+        self.fade_to(1.0, "finish_fade_out");
     }
 
     pub fn scene(&self) -> GameScene {
@@ -140,6 +144,7 @@ impl Game {
 
     fn boot(&mut self) {
         GameConfig::install();
+        crate::core::font::install_default();
         StepfileLibrary::install();
         NoteSkinLibrary::install();
 
@@ -185,6 +190,8 @@ impl Game {
         self.fade_rect = Some(fade_rect);
         self.fade = FadePhase::FadingIn;
         self.fade_alpha = 1.0;
+        self.apply_fade(1.0);
+        self.fade_to(0.0, "finish_fade_in");
 
         let scene = crate::launch::boot(self);
         self.swap_to(scene);
@@ -200,34 +207,53 @@ impl Game {
         self.current = Some(node);
     }
 
-    fn run_fade(&mut self, delta: f32) {
-        let step = delta / FADE_SECONDS;
-        match self.fade {
-            FadePhase::Idle => return,
-            FadePhase::FadingOut(to) => {
-                self.fade_alpha = (self.fade_alpha + step).min(1.0);
-                if self.fade_alpha >= 1.0 {
-                    // Swap scenes while the screen is fully black.
-                    self.swap_to(to);
-                    self.fade = FadePhase::FadingIn;
-                }
-            }
-            FadePhase::FadingIn => {
-                self.fade_alpha = (self.fade_alpha - step).max(0.0);
-                if self.fade_alpha <= 0.0 {
-                    self.fade = FadePhase::Idle;
-                }
-            }
+    /// Tweens the overlay from the current alpha to `target` at the fade's
+    /// constant rate, then calls `then`. Interrupting an opposite-direction
+    /// fade continues smoothly from wherever the alpha is.
+    fn fade_to(&mut self, target: f32, then: &str) {
+        if let Some(mut tween) = self.fade_tween.take() {
+            tween.kill();
         }
-        let alpha = self.fade_alpha;
+        let duration = (FADE_SECONDS * (target - self.fade_alpha).abs()) as f64;
+        let this = self.to_gd();
+        let mut tween = self.base_mut().create_tween();
+        tween.tween_method(
+            &Callable::from_object_method(&this, "apply_fade"),
+            &self.fade_alpha.to_variant(),
+            &target.to_variant(),
+            duration,
+        );
+        tween.tween_callback(&Callable::from_object_method(&this, then));
+        self.fade_tween = Some(tween);
+    }
+
+    /// The overlay's coverage, encoded for the canvas' sRGB blending.
+    #[func]
+    fn apply_fade(&mut self, alpha: f32) {
+        self.fade_alpha = alpha;
         if let Some(rect) = &mut self.fade_rect {
             let mut color = rect.get_color();
             color.a = 1.0 - linear_blend(1.0 - alpha);
             rect.set_color(color);
         }
-        NavInput::singleton()
-            .bind_mut()
-            .set_suspended(!self.accepts_input());
+    }
+
+    /// Fully black: swap scenes behind the overlay, then fade back in.
+    #[func]
+    fn finish_fade_out(&mut self) {
+        let FadePhase::FadingOut(to) = self.fade else {
+            return;
+        };
+        self.swap_to(to);
+        self.fade = FadePhase::FadingIn;
+        NavInput::singleton().bind_mut().set_suspended(false);
+        self.fade_to(0.0, "finish_fade_in");
+    }
+
+    #[func]
+    fn finish_fade_in(&mut self) {
+        self.fade = FadePhase::Idle;
+        self.fade_tween = None;
     }
 }
 
@@ -243,6 +269,7 @@ impl INode for Game {
             current: None,
             fade: FadePhase::Idle,
             fade_alpha: 0.0,
+            fade_tween: None,
             fade_rect: None,
             play_mode: PlayMode::default(),
             preferred_difficulty: PerPlayer {
@@ -287,11 +314,13 @@ impl INode for Game {
         self.web_boot = Some(crate::web::WebBoot::start(host));
     }
 
-    fn process(&mut self, delta: f64) {
+    /// The web boots asynchronously: the asset prefetch is polled until
+    /// the platform can install, then the game boots.
+    #[cfg(target_arch = "wasm32")]
+    fn process(&mut self, _delta: f64) {
         if Engine::singleton().is_editor_hint() {
             return;
         }
-        #[cfg(target_arch = "wasm32")]
         if let Some(boot) = &mut self.web_boot {
             let Some(platform) = boot.poll() else {
                 return;
@@ -303,6 +332,5 @@ impl INode for Game {
             }
             self.boot();
         }
-        self.run_fade(delta as f32);
     }
 }

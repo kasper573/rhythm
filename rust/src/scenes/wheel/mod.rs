@@ -137,6 +137,10 @@ impl WheelScene {
     pub fn instantiate(game: &mut Game) -> Gd<WheelScene> {
         let mut scene = WheelScene::new_alloc();
         scene.set_anchors_and_offsets_preset(LayoutPreset::FULL_RECT);
+        Settings::singleton()
+            .signals()
+            .changed()
+            .connect_other(&scene, WheelScene::on_settings_changed);
 
         let mut backdrop = ColorRect::new_alloc();
         backdrop.set_color(BACKDROP_COLOR);
@@ -255,6 +259,14 @@ impl WheelScene {
 
     /// Every active player scrolls the one wheel; in versus they race
     /// for it.
+    /// The settings' `changed` signal: previews mirror the options they
+    /// render, so an open modal rebuilds them.
+    fn on_settings_changed(&mut self) {
+        if let Some(modal) = &mut self.modal {
+            modal.mark_rebuild();
+        }
+    }
+
     fn navigate(&mut self) {
         for pulse in NavInput::pulses() {
             if self.entries.is_empty() {

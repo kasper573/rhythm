@@ -63,7 +63,6 @@ pub(super) struct OptionsModal {
     /// The mocked chart and loop tracking; `None` until the wheel music
     /// reports its loop window.
     state: Option<PreviewState>,
-    settings_revision: u64,
 }
 
 /// One player's cursor.
@@ -203,7 +202,6 @@ impl OptionsModal {
         content.add_child(&stripe_row);
         root.add_child(&content);
 
-        let revision = settings.bind().revision();
         OptionsModal {
             root,
             background,
@@ -224,7 +222,14 @@ impl OptionsModal {
             values,
             previews,
             state: None,
-            settings_revision: revision,
+        }
+    }
+
+    /// Rebuilds the previews on the next frame — the wheel forwards the
+    /// settings' `changed` signal here while the modal is open.
+    pub fn mark_rebuild(&mut self) {
+        if let Some(state) = &mut self.state {
+            state.rebuild = true;
         }
     }
 
@@ -426,12 +431,6 @@ impl OptionsModal {
             state.rebuild = true;
         }
         state.last_visible = visible;
-
-        let revision = settings.bind().revision();
-        if revision != self.settings_revision {
-            self.settings_revision = revision;
-            state.rebuild = true;
-        }
 
         if state.rebuild {
             state.rebuild = false;

@@ -13,14 +13,13 @@ use strum::{EnumIter, EnumString, IntoEnumIterator, IntoStaticStr};
 /// The user settings singleton: the machine's own settings (keymap,
 /// timing calibration, volumes) and each player slot's presentation
 /// options. Any edit is applied on the spot — input map, audio buses —
-/// persisted at the end of the frame, and visible to pollers through the
-/// bumped [`revision`](Settings::revision).
+/// persisted at the end of the frame, and announced through the
+/// [`changed`](Settings::changed) signal.
 #[derive(GodotClass)]
 #[class(base=Node)]
 pub struct Settings {
     machine: MachineSettings,
     players: PlayerSettings,
-    revision: u64,
     dirty_machine: bool,
     dirty_players: bool,
     base: Base<Node>,
@@ -47,22 +46,21 @@ impl Settings {
         &self.players
     }
 
-    /// Bumped by every edit; consumers poll it to react to changes.
-    pub fn revision(&self) -> u64 {
-        self.revision
-    }
+    /// Fires after every edit, once it is applied.
+    #[signal]
+    pub fn changed();
 
     pub fn edit_machine(&mut self, edit: impl FnOnce(&mut MachineSettings)) {
         edit(&mut self.machine);
-        self.revision += 1;
         self.dirty_machine = true;
         self.apply_machine();
+        self.signals().changed().emit();
     }
 
     pub fn edit_player(&mut self, player: PlayerId, edit: impl FnOnce(&mut PlayerOptions)) {
         edit(&mut self.players[player]);
-        self.revision += 1;
         self.dirty_players = true;
+        self.signals().changed().emit();
     }
 
     fn apply_machine(&self) {
@@ -98,7 +96,6 @@ impl INode for Settings {
                 grade_layer: GradeLayer::Behind,
                 grade_position: Percent(50.0),
             }),
-            revision: 0,
             dirty_machine: false,
             dirty_players: false,
             base,
