@@ -3,45 +3,45 @@ using Godot;
 namespace Rhythm;
 
 /// <summary>
-/// A texture that may still be loading from disk. Call Poll() each frame
-/// to check if it's ready.
+/// An image decoding from the asset filesystem off the main thread. The
+/// decode runs on a task; <see cref="Poll"/> returns null until it
+/// finishes, then a <see cref="Loaded"/> once — carrying the texture, or a
+/// null texture when the file was missing or unreadable. Owners poll every
+/// frame and act on the first non-null result.
 /// </summary>
-public class PendingTexture
+public sealed class PendingTexture
 {
-    private string path;
-    private Texture2D? texture;
-    private bool attempted;
+    /// <summary>A finished decode: <see cref="Texture"/> is null when the load failed.</summary>
+    public readonly record struct Loaded(Texture2D? Texture);
+
+    private readonly Task<Image?> decode;
+    private bool resolved;
 
     private PendingTexture(string path)
     {
-        this.path = path;
+        decode = Task.Run(() =>
+        {
+            var image = new Image();
+            return image.Load(path) == Error.Ok ? image : null;
+        });
     }
 
-    /// <summary>Start loading a texture from the given asset path.</summary>
+    /// <summary>Begins decoding the image at the given asset filesystem path.</summary>
     public static PendingTexture Load(string path) => new(path);
 
     /// <summary>
-    /// Poll for completion. Returns null if still loading, or the texture
-    /// (which may be null if the file didn't exist).
+    /// The decode's outcome: null while it is still working, then a
+    /// <see cref="Loaded"/> exactly once when it finishes.
     /// </summary>
-    public Texture2D? Poll()
+    public Loaded? Poll()
     {
-        if (texture is not null)
-            return texture;
-
-        if (attempted)
+        if (resolved || !decode.IsCompleted)
+        {
             return null;
-
-        attempted = true;
-        try
-        {
-            texture = GD.Load<Texture2D>(path);
-        }
-        catch
-        {
-            // File not found or couldn't load
         }
 
-        return texture;
+        resolved = true;
+        var image = decode.Result;
+        return new Loaded(image is not null ? ImageTexture.CreateFromImage(image) : null);
     }
 }
