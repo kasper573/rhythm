@@ -11,6 +11,12 @@ namespace Rhythm;
 /// demo reads <c>--scenario/--skin/--bpm/--perspective</c>, the play scene
 /// reads <c>--stepfile &lt;group&gt;/&lt;title&gt;</c> — which land in the
 /// <see cref="Game"/> mailbox for the entered scene to consume.
+///
+/// Input automation and frame reporting:
+/// <c>--pulse &lt;action&gt;[:&lt;seconds&gt;]</c> taps an action on a cycle.
+/// <c>--hold &lt;action&gt;</c> holds an action down.
+/// <c>--frame-report &lt;file&gt;</c> writes per-frame delta times as JSON on exit.
+/// <c>--quit-after-seconds &lt;s&gt;</c> quits after this duration.
 /// </summary>
 public static class Launch
 {
@@ -18,6 +24,19 @@ public static class Launch
     {
         var args = OS.GetCmdlineUserArgs();
         var scene = SceneArg(args) ?? GameScene.MainMenu;
+
+        if (Value(args, "--mode") is { } mode)
+        {
+            game.PlayMode = ParsePlayMode(mode);
+        }
+
+        if (Value(args, "--difficulty") is { } rank && byte.TryParse(rank, out var difficulty))
+        {
+            var preferred = game.PreferredDifficulty;
+            preferred.P1 = difficulty;
+            preferred.P2 = difficulty;
+            game.PreferredDifficulty = preferred;
+        }
 
         switch (scene)
         {
@@ -36,6 +55,38 @@ public static class Launch
                 }
 
                 break;
+        }
+
+        (GameAction, double)? pulse = null;
+        if (Value(args, "--pulse") is { } pulseSpec)
+        {
+            pulse = ParsePulse(pulseSpec);
+        }
+
+        GameAction? hold = null;
+        if (Value(args, "--hold") is { } holdSpec)
+        {
+            hold = ParseAction(holdSpec);
+        }
+
+        var frameReport = Value(args, "--frame-report");
+
+        double? quitAfter = null;
+        if (Value(args, "--quit-after-seconds") is { } quitSpec && double.TryParse(quitSpec, System.Globalization.CultureInfo.InvariantCulture, out var seconds))
+        {
+            quitAfter = seconds;
+        }
+
+        if (pulse is not null || hold is not null || frameReport is not null || quitAfter is not null)
+        {
+            var rig = new LaunchRig
+            {
+                Pulse = pulse,
+                Hold = hold,
+                FrameReport = frameReport,
+                QuitAfter = quitAfter,
+            };
+            game.AddChild(rig);
         }
 
         return scene;
@@ -92,5 +143,36 @@ public static class Launch
     {
         var index = Array.IndexOf(args, flag);
         return index >= 0 && index + 1 < args.Length ? args[index + 1] : null;
+    }
+
+    private static PlayMode ParsePlayMode(string mode)
+    {
+        return mode.ToLowerInvariant() switch
+        {
+            "singles" => PlayMode.Singles,
+            "doubles" => PlayMode.Doubles,
+            "versus" => PlayMode.Versus,
+            _ => throw new InvalidOperationException($"unknown --mode {mode}; one of: singles, doubles, versus"),
+        };
+    }
+
+    private static GameAction ParseAction(string name)
+    {
+        if (Enum.TryParse<GameAction>(name, ignoreCase: true, out var action))
+        {
+            return action;
+        }
+
+        throw new InvalidOperationException($"unknown action {name}");
+    }
+
+    private static (GameAction, double) ParsePulse(string spec)
+    {
+        var parts = spec.Split(':', 2);
+        var action = ParseAction(parts[0]);
+        var interval = parts.Length > 1
+            ? double.Parse(parts[1], System.Globalization.CultureInfo.InvariantCulture)
+            : 0.5;
+        return (action, interval);
     }
 }
