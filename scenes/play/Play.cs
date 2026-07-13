@@ -6,8 +6,8 @@ namespace Rhythm;
 /// <summary>
 /// The play scene: the real gameplay adapter around the stepfile player.
 /// It fills the engine's ports from the audio clock and the keyboard,
-/// composes the stage furniture (health vials), and turns the
-/// session's end into ScoreResults.
+/// composes the stage furniture (health vials, backgrounds, tuning HUD),
+/// and turns the session's end into ScoreResults.
 /// </summary>
 [GlobalClass]
 public partial class Play : Control
@@ -16,6 +16,12 @@ public partial class Play : Control
     private StepfilePlayer? engine;
     private Playback? playback;
     private List<(PlayerId, HealthVial)> vials = [];
+    private Backgrounds? backgrounds;
+    private Tuning? tuning;
+    private SoundChannel? musicChannel;
+    private SoundChannel? tickChannel;
+    private AssetLoader? musicFetch;
+    private string musicFileName = "";
     private bool checkFailure;
     private bool finished;
 
@@ -61,6 +67,10 @@ public partial class Play : Control
         var config = Config.Current!;
         var fieldSpecs = BuildFieldSpecs(charts);
 
+        // The background sits behind everything: added first so the note
+        // field, vials, and HUD draw on top of it.
+        backgrounds = new Backgrounds(this, entry, timing);
+
         engine = StepfilePlayer.Instantiate(new StepfilePlayerOptions
         {
             Fields = fieldSpecs,
@@ -69,8 +79,20 @@ public partial class Play : Control
         });
         AddChild(engine);
 
+        // Wire the signals
+        engine.Connect(StepfilePlayer.SignalName.PressBanked, Callable.From((float error) =>
+        {
+            tuning?.PushSample(new Seconds(error));
+        }));
+        engine.Connect(StepfilePlayer.SignalName.StageFailed, Callable.From((int player) =>
+        {
+            Sfx.Fail.Play();
+            checkFailure = true;
+        }));
+
         var lastNoteTime = engine.LastNoteTime;
 
+        // Add health vials
         foreach (var (player, _) in charts)
         {
             var side = player == PlayerId.P1 ? VialSide.Left : VialSide.Right;
@@ -82,6 +104,55 @@ public partial class Play : Control
             });
             AddChild(vial);
             vials.Add((player, vial));
+        }
+
+        // Initialize tuning HUD
+        tuning = new Tuning(this);
+
+        // Render tick track
+        var tickTimes = new List<Seconds>();
+        foreach (var (_, chart) in charts)
+        {
+            foreach (var row in chart.Rows)
+            {
+                var seconds = timing.SecondsAtBeat(row.Beat);
+                if (!tickTimes.Contains(seconds))
+                {
+                    tickTimes.Add(seconds);
+                }
+            }
+        }
+        tickTimes.Sort((a, b) => a.Value.CompareTo(b.Value));
+
+        var tickWavPath = Assets.Path("sfx/tick.wav");
+        try
+        {
+            if (TickTrackRenderer.Render(File.ReadAllBytes(tickWavPath), tickTimes, config.TickVolume) is { } tickTrack)
+            {
+                tickChannel = new SoundChannel(this, tickTrack, new SoundOptions
+                {
+                    Timeline = new SoundTimeline.WholeFile(),
+                    Paused = true,
+                    Muted = true,
+                    Bus = AudioBuses.Sfx,
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            GD.PushWarning($"could not render tick track: {ex.Message}");
+        }
+
+        // Start music loading
+        var musicPath = entry.MusicPath();
+        if (musicPath == null)
+        {
+            GD.Print($"no music file for \"{entry.DisplayTitle()}\", playing silent");
+        }
+        else
+        {
+            musicFileName = System.IO.Path.GetFileName(musicPath);
+            musicFetch = new AssetLoader(musicPath);
         }
 
         playback = new Playback(entry.DisplayTitle(), timing, config.Stage?.LeadIn ?? Seconds.Zero, lastNoteTime);
@@ -171,20 +242,62 @@ public partial class Play : Control
         if (playback is null || engine is null)
             return;
 
+        PollMusic();
         RefitToWindow();
-        playback.Advance(delta);
+        playback.Advance(delta, musicChannel, tickChannel, musicFetch != null);
         var (graded, visible) = playback.GetClockPorts();
         engine.SetTime(graded, visible);
 
-        WireKeyboard();
-        SyncHealthVials();
-
-        if (engine.AllSettled())
+        // Update backgrounds with visible time
+        if (backgrounds is not null)
         {
-            FinishSession();
+            backgrounds.Update(playback.VisibleNow, (float)delta);
         }
 
+        WireKeyboard();
+        SyncHealthVials();
+        tuning?.Update(tickChannel, delta);
+
+        FinishWhenComplete();
+        checkFailure = false;
         HandleCancel();
+    }
+
+    /// <summary>
+    /// Opens the music channel (paused) once its bytes arrive; failures
+    /// drop the music and the session plays with whatever survives.
+    /// </summary>
+    private void PollMusic()
+    {
+        if (musicFetch is null)
+        {
+            return;
+        }
+
+        var poll = musicFetch.Poll();
+        if (poll is AssetLoader.PollResult.Ready ready)
+        {
+            musicFetch = null;
+            try
+            {
+                musicChannel = new SoundChannel(this, ready.Bytes, musicFileName, new SoundOptions
+                {
+                    Timeline = new SoundTimeline.WholeFile(),
+                    Paused = true,
+                    Muted = false,
+                    Bus = AudioBuses.Music,
+                });
+            }
+            catch (Exception ex)
+            {
+                GD.PushWarning($"music cannot play: {ex.Message}");
+            }
+        }
+        else if (poll is AssetLoader.PollResult.Failed)
+        {
+            GD.PushWarning("music failed to load");
+            musicFetch = null;
+        }
     }
 
     private void WireKeyboard()
@@ -227,12 +340,52 @@ public partial class Play : Control
         }
     }
 
-    private void FinishSession()
+    /// <summary>
+    /// The session ends when every stage settled and the audio ran out (or
+    /// nothing plays and the chart is over); the grades given so far become
+    /// the final result.
+    /// </summary>
+    private void FinishWhenComplete()
     {
-        if (finished || engine is null || selected is null || playback is null)
+        if (finished)
+        {
             return;
+        }
+
+        if (engine is null || playback is null)
+        {
+            return;
+        }
+
+        // Check if all stages have failed (hard stop)
+        var failedOut = checkFailure && engine.AllFailed();
+        if (!failedOut)
+        {
+            // Check if all stages settled (grading complete)
+            if (!engine.AllSettled())
+            {
+                return;
+            }
+
+            // Check if audio has finished
+            var audioDone = musicChannel?.IsFinished ?? (musicFetch is null && tickChannel?.IsFinished != false);
+
+            // Trailing mines and hold tails can outlive the audio; wait for them.
+            var chartDone = playback.Position.Value >= playback.LastNoteTime.Value;
+
+            // Only finish if both audio and chart are done
+            if (!audioDone || !chartDone || !playback.IsPlaying)
+            {
+                return;
+            }
+        }
 
         finished = true;
+        if (selected is null)
+        {
+            return;
+        }
+
         var players = new List<PlayerResult>();
         var results = engine.Results;
 
@@ -274,5 +427,51 @@ public partial class Play : Control
     public override void _ExitTree()
     {
         MusicPlayer.Instance.Stop();
+    }
+}
+
+/// <summary>
+/// Loads an asset file asynchronously.
+/// </summary>
+internal class AssetLoader
+{
+    private readonly string path;
+    private byte[]? buffer;
+    private bool attempted;
+
+    public AssetLoader(string path)
+    {
+        this.path = path;
+    }
+
+    public PollResult Poll()
+    {
+        if (buffer is not null)
+        {
+            return new PollResult.Ready(buffer);
+        }
+
+        if (attempted)
+        {
+            return new PollResult.Failed();
+        }
+
+        attempted = true;
+        try
+        {
+            buffer = File.ReadAllBytes(path);
+            return new PollResult.Ready(buffer);
+        }
+        catch
+        {
+            return new PollResult.Failed();
+        }
+    }
+
+    internal abstract record PollResult
+    {
+        public sealed record Pending : PollResult;
+        public sealed record Failed : PollResult;
+        public sealed record Ready(byte[] Bytes) : PollResult;
     }
 }

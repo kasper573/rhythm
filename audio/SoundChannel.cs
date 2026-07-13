@@ -19,16 +19,16 @@ public sealed class SoundChannel : IDisposable
     private bool started;
 
     public SoundChannel(Node parent, byte[] bytes, string fileName, SoundOptions options)
+        : this(parent, LoadStream(bytes, fileName) ?? throw new InvalidOperationException($"unsupported sound format: {fileName}"), options)
+    {
+    }
+
+    public SoundChannel(Node parent, AudioStream stream, SoundOptions options)
     {
         player = new AudioStreamPlayer();
         timeline = options.Timeline;
         muted = options.Muted;
         paused = options.Paused;
-        finished = false;
-        started = false;
-
-        var stream = LoadStream(bytes, fileName)
-            ?? throw new InvalidOperationException($"unsupported sound format: {fileName}");
 
         player.Stream = stream;
         player.Bus = options.Bus;
