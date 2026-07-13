@@ -9,5 +9,9 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
     <AnalysisLevel>latest</AnalysisLevel>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="**/*.cs" Exclude=".godot/**/*.cs;**/obj/**/*.cs;**/bin/**/*.cs" />
+  </ItemGroup>
 </Project>
