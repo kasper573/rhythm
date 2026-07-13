@@ -63,6 +63,7 @@ public partial class StepfilePlayer : Control
     private List<NoteFieldRig> _rigs = [];
     private List<GradeDisplay> _grades = [];
     private List<ComboDisplay> _combos = [];
+    private List<Fading2d> _fades = [];
     private Node2D? _behind;
     private Node2D? _overlay;
     private Seconds _lastNoteTime = Seconds.Zero;
@@ -236,7 +237,7 @@ public partial class StepfilePlayer : Control
             var time = timing.SecondsAtBeat(mine.Beat);
             _lastNoteTime = _lastNoteTime.Max(time);
             var index = rig.SpawnMine(time, mine.Beat, (uint)mine.Column);
-            sessionMines.Add(new SessionMine(time, mine.Column, index.Value));
+            sessionMines.Add(new SessionMine(time, (uint)mine.Column, index));
         }
 
         var sessionRows = new List<SessionRow>();
@@ -263,7 +264,7 @@ public partial class StepfilePlayer : Control
 
                 var noteIndex = rig.SpawnNote(spawn);
 
-                var sessionArrow = new SessionArrow((uint)Math.Abs(arrow.Column), noteIndex.Value);
+                var sessionArrow = new SessionArrow((uint)Math.Abs(arrow.Column), noteIndex);
                 if (arrow.Tail.HasValue)
                 {
                     sessionArrow.Hold = new HoldState(
@@ -287,77 +288,173 @@ public partial class StepfilePlayer : Control
         _stages[^1].Mines = sessionMines;
     }
 
+    private const float HoldPopupSeconds = 0.6f;
+
     public override void _Process(double delta)
     {
-        if (_stages.Count == 0) return;
-
-        // Run grading pass
-        Grading.RunGradingPass(_stages[0], Config.Current, _gradedNow,
-            _timing,
-            out var events);
-
-        // Apply grading events
-        foreach (var evt in events)
+        if (_stages.Count == 0)
         {
-            if (evt is GradingEvent.Graded graded)
-            {
-                ApplyCombo(graded.Player, graded.Combo);
-                var grade = Config.Current.ClassifyGrade(graded.Outcome);
+            return;
+        }
 
-                foreach (var display in _grades)
-                {
-                    if (display.Player == graded.Player)
+        // The adapter (our parent) filled the ports before this runs.
+        foreach (var evt in RunGrading(delta))
+        {
+            switch (evt)
+            {
+                case GradingEvent.Graded graded:
+                    foreach (var display in _grades)
                     {
-                        display.Apply(Config.Current, graded.Outcome);
+                        if (display.Player == graded.Player)
+                        {
+                            display.Apply(Config.Current!, graded.Outcome);
+                        }
                     }
-                }
+                    ApplyCombo(graded.Player, graded.Combo);
+                    break;
 
-                EmitSignal(SignalName.PressBanked,
-                    graded.Outcome is RowOutcome.Hit hit ? hit.Error.Value : 0.0);
-            }
-            else if (evt is GradingEvent.Failed failed)
-            {
-                EmitSignal(SignalName.StageFailed, (int)failed.Player);
+                case GradingEvent.PressBanked banked:
+                    EmitSignal(SignalName.PressBanked, banked.Error.Value);
+                    break;
+
+                case GradingEvent.Failed failed:
+                    EmitSignal(SignalName.StageFailed, (int)failed.Player);
+                    break;
             }
         }
 
-        // Update fields
+        SyncFields();
+
+        // The sandwich layers hold canvas-unit content while the control itself
+        // spans window pixels: place and scale them by the canvas' pixel density
+        // so their content lands wherever the canvas does.
+        var center = _canvas * _pixelScale / 2.0f;
+        var density = Vector2.One * _pixelScale;
+        if (_behind is not null)
+        {
+            _behind.Position = center;
+            _behind.Scale = density;
+        }
+        if (_overlay is not null)
+        {
+            _overlay.Position = center;
+            _overlay.Scale = density;
+        }
+
+        var clock = new FieldClock(_visibleNow, _timing, _targetY);
         foreach (var rig in _rigs)
         {
-            rig.Update(new FieldClock(_visibleNow, _timing, _targetY), (float)delta);
+            rig.Update(clock, (float)delta);
         }
 
-        // Animate grades
-        foreach (var display in _grades)
-        {
-            display.Animate((float)delta, GradeText.ComboGap);
-        }
+        AnimateHud(delta);
+    }
 
-        // Animate combos
-        foreach (var combo in _combos)
+    /// <summary>Pushes the session's state into the fields: pressed panels and every hold's render state.</summary>
+    private void SyncFields()
+    {
+        for (int s = 0; s < _stages.Count; s++)
         {
-            combo.Animate((float)delta);
+            var stage = _stages[s];
+            var rig = _rigs[s];
+            for (uint column = 0; column < rig.Layout.Columns; column++)
+            {
+                rig.SetReceptorHeld(column, _input.IsHeld(rig.Layout.StepAction(column)));
+            }
+            foreach (var arrow in stage.Rows.SelectMany(row => row.Arrows))
+            {
+                if (arrow.Hold is not HoldState hold)
+                {
+                    continue;
+                }
+                var state = (hold.Engaged, hold.Result) switch
+                {
+                    (_, HoldOutcome.Ok) => HoldVisualState.Ok,
+                    (_, HoldOutcome.Ng) => HoldVisualState.Dropped,
+                    (false, null) => HoldVisualState.Pending,
+                    (true, null) when hold.HeldNow => HoldVisualState.Held,
+                    (true, null) => HoldVisualState.Released,
+                    _ => HoldVisualState.Pending,
+                };
+                if (rig.HoldState(arrow.Note) != state)
+                {
+                    rig.SetHoldState(arrow.Note, state);
+                }
+            }
         }
     }
 
+    /// <summary>Refreshes and bounces a player's combo readout on their graded row.</summary>
     private void ApplyCombo(PlayerId player, uint combo)
     {
         foreach (var display in _combos)
         {
-            if (display.Player == player)
+            if (display.Player != player)
             {
-                display.Combo = combo;
-                if (combo == 0)
-                {
-                    display.Label.Visible = false;
-                }
-                else
-                {
-                    display.Label.Visible = true;
-                    display.Label.Text = $"{combo} combo";
-                }
+                continue;
+            }
+            if (combo > display.LastCombo)
+            {
+                display.Bounce();
+            }
+            display.LastCombo = combo;
+            if (combo == 0)
+            {
+                display.Label.Visible = false;
+            }
+            else
+            {
+                display.Label.Visible = true;
+                display.Label.Text = $"{combo} combo";
             }
         }
+    }
+
+    private void AnimateHud(double delta)
+    {
+        foreach (var grade in _grades)
+        {
+            var position = Settings.Instance.Player(grade.Player).GradePosition;
+            grade.Animate((float)delta, GradeText.GradeY(_gradeArea, position));
+        }
+        foreach (var combo in _combos)
+        {
+            var position = Settings.Instance.Player(combo.Player).GradePosition;
+            combo.Animate((float)delta, GradeText.GradeY(_gradeArea, position) - GradeText.ComboGap);
+        }
+        for (int i = _fades.Count - 1; i >= 0; i--)
+        {
+            var fade = _fades[i];
+            fade.Remaining -= (float)delta;
+            if (fade.Remaining <= 0.0f)
+            {
+                fade.Node.QueueFree();
+                _fades.RemoveAt(i);
+                continue;
+            }
+            var alpha = fade.Remaining / fade.Total;
+            if (fade.Growth != 0.0f)
+            {
+                fade.Node.Scale = fade.BaseScale * (1.0f + fade.Growth * (1.0f - alpha));
+            }
+            var modulate = fade.Node.Modulate;
+            modulate.A = alpha;
+            fade.Node.Modulate = modulate;
+        }
+    }
+
+    private void SpawnHoldPopup(float x, HoldOutcome outcome)
+    {
+        if (_overlay is null)
+        {
+            return;
+        }
+        var def = outcome == HoldOutcome.Ok ? Config.Current!.Grading!.Ok! : Config.Current!.Grading!.Ng!;
+        var popup = Text.Label(def.Name, 30.0f, def.Color);
+        _overlay.AddChild(popup);
+        Text.Place(popup, new Vector2(x, -(_targetY - 54.0f)), TextPivot.Center);
+        popup.PivotOffset = popup.Size / 2.0f;
+        _fades.Add(new Fading2d { Node = popup, Remaining = HoldPopupSeconds, Total = HoldPopupSeconds, Growth = 0.25f, BaseScale = Vector2.One });
     }
 }
 
@@ -371,15 +468,15 @@ internal class PlayInput
     public bool IsStruck(GameAction action) => Struck.Contains(action);
 }
 
-/// <summary>One player's combo display with bounce animation.</summary>
-internal class ComboDisplay
+/// <summary>The combo readout under a player's grade word, with its bounce.</summary>
+internal sealed class ComboDisplay
 {
     private static readonly Seconds ComboBounce = new(0.18);
 
     public PlayerId Player { get; }
     public float OriginX { get; set; }
     public Label Label { get; }
-    public uint Combo { get; set; }
+    public uint LastCombo { get; set; }
     private Seconds _bounce;
 
     public ComboDisplay(PlayerId player, float originX, Label label)
@@ -387,26 +484,27 @@ internal class ComboDisplay
         Player = player;
         OriginX = originX;
         Label = label;
-        Combo = 0;
-        _bounce = Seconds.Zero;
     }
 
-    public void Animate(float delta)
+    /// <summary>Kicks the bounce on a growing combo.</summary>
+    public void Bounce() => _bounce = ComboBounce;
+
+    public void Animate(float delta, float y)
     {
         _bounce = new Seconds(Math.Max(0.0, _bounce.Value - delta));
-
-        if (_bounce.Value > 0.0)
-        {
-            var t = (float)(1.0 - _bounce.Value / ComboBounce.Value);
-            var easeOut = Mathf.Sin(t * Mathf.Pi / 2.0f);
-            var scale = 1.0f + (1.0f - easeOut) * 0.15f;
-            Label.Scale = Vector2.One * scale;
-        }
-        else if (!Label.Scale.IsEqualApprox(Vector2.One))
-        {
-            Label.Scale = Vector2.One;
-        }
-
-        Label.Position = new Vector2(OriginX, -GradeText.ComboGap);
+        var scale = 1.0f + 0.22f * (float)(_bounce.Value / ComboBounce.Value);
+        Text.Place(Label, new Vector2(OriginX, -y), TextPivot.Center);
+        Label.PivotOffset = Label.Size / 2.0f;
+        Label.Scale = Vector2.One * scale;
     }
+}
+
+/// <summary>A 2D label fading — and optionally growing — out over a fixed lifetime.</summary>
+internal sealed class Fading2d
+{
+    public required Control Node { get; init; }
+    public required float Remaining { get; set; }
+    public required float Total { get; init; }
+    public required float Growth { get; init; }
+    public required Vector2 BaseScale { get; init; }
 }
