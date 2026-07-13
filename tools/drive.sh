@@ -17,7 +17,7 @@
 #    is untouched and every run starts from default settings.
 #
 # Commands (see the Visual Testing section of CLAUDE.md for the loop):
-#   drive.sh start                 # build + boot, wait for the window, print id
+#   drive.sh start [-- <game args>]  # build + boot; args deep-link, e.g. -- --scene keymap
 #   drive.sh key <keysym> [n]      # tap a key n times at the window
 #   drive.sh hold <keysym> <secs>  # press-hold-release a key
 #   drive.sh shot <name>           # PNG of the window   -> out/drive/<name>.png
@@ -49,7 +49,7 @@ start() {
   pactl list short sinks 2>/dev/null | grep -q "$SINK" \
     || pactl load-module module-null-sink sink_name="$SINK" >/dev/null 2>&1
   PULSE_SINK="$SINK" XDG_DATA_HOME="$WORK/home" LIBGL_ALWAYS_SOFTWARE=1 \
-    "$GODOT" --path "$ROOT" >"$WORK/game.log" 2>&1 &
+    "$GODOT" --path "$ROOT" "$@" >"$WORK/game.log" 2>&1 &
   local w=""
   for _ in $(seq 40); do w="$(wid)"; [ -n "$w" ] && break; sleep 1; done
   [ -z "$w" ] && { echo "no window; tail of game.log:"; tail -15 "$WORK/game.log"; return 1; }
