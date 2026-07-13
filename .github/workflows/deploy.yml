@@ -1,0 +1,57 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GODOT_VERSION: "4.7-stable"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: install Godot mono + export templates
+        run: |
+          base="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}"
+          curl -sSfL -o godot.zip "$base/Godot_v${GODOT_VERSION}_mono_linux_x86_64.zip"
+          unzip -q godot.zip -d godot-bin
+          echo "GODOT=$PWD/godot-bin/Godot_v${GODOT_VERSION}_mono_linux_x86_64/Godot_v${GODOT_VERSION}_mono_linux.x86_64" >> "$GITHUB_ENV"
+          curl -sSfL -o templates.tpz "$base/Godot_v${GODOT_VERSION}_mono_export_templates.tpz"
+          unzip -q templates.tpz -d templates-extract
+          dest="$HOME/.local/share/godot/export_templates/4.7.stable.mono"
+          mkdir -p "$dest"
+          mv templates-extract/templates/* "$dest/"
+
+      - name: export (linux + windows)
+        run: |
+          "$GODOT" --headless --path . --import || true
+          mkdir -p dist/linux dist/windows
+          "$GODOT" --headless --path . --export-release "Linux" dist/linux/rhythm.x86_64
+          "$GODOT" --headless --path . --export-release "Windows Desktop" dist/windows/rhythm.exe
+
+      - name: package
+        run: |
+          # The asset library is loaded from the filesystem at runtime, so it
+          # ships beside the binary (stepfiles are the player's to add).
+          for platform in linux windows; do
+            cp -r assets "dist/$platform/assets"
+          done
+          (cd dist/linux && zip -qr "$GITHUB_WORKSPACE/rhythm-linux-x86_64.zip" .)
+          (cd dist/windows && zip -qr "$GITHUB_WORKSPACE/rhythm-windows-x86_64.zip" .)
+
+      - name: publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${{ github.run_number }}" rhythm-*.zip \
+            --title "rhythm v${{ github.run_number }}" \
+            --notes "Automated build of commit ${{ github.sha }}. Each archive contains the game and its built-in assets; add your stepfile library under assets/stepfiles/."
