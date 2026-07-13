@@ -26,6 +26,9 @@ public enum MediaPace
 [GlobalClass]
 public partial class MediaCover : TextureRect
 {
+    private MediaVideoPlayback? _videoPlayback;
+    private MediaPace _pace;
+
     /// <summary>
     /// Whether the cover has real pixels to show. Owners cross-fading layers
     /// wait for this before retiring what is underneath.
@@ -34,7 +37,6 @@ public partial class MediaCover : TextureRect
 
     public static MediaCover? Create(string path, Color color, int z, Seconds start, bool looping, MediaPace pace)
     {
-        _ = (start, looping, pace);
         var cover = new MediaCover
         {
             StretchMode = StretchModeEnum.KeepAspectCovered,
@@ -42,14 +44,23 @@ public partial class MediaCover : TextureRect
             Modulate = color,
             ZIndex = z,
             MouseFilter = MouseFilterEnum.Ignore,
+            _pace = pace,
         };
         cover.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
 
         if (StepfileLibrary.IsVideoFile(path))
         {
-            GD.PushWarning($"media cover video not yet supported: {path}");
-            cover.QueueFree();
-            return null;
+            var playback = MediaVideoPlayback.Open(cover, path, looping, start, pace);
+            if (playback is null)
+            {
+                GD.PushWarning($"media cover video unavailable: {path}");
+                cover.QueueFree();
+                return null;
+            }
+            // The decoder's first frame arrives a few frames later; the cover
+            // stays not-ready (invisible to cross-fading owners) until then.
+            cover._videoPlayback = playback;
+            return cover;
         }
 
         var image = new Image();
@@ -65,9 +76,24 @@ public partial class MediaCover : TextureRect
         return cover;
     }
 
+    public override void _Process(double delta)
+    {
+        if (_videoPlayback?.GetTexture() is { } texture)
+        {
+            Texture = texture;
+            IsReady = true;
+        }
+    }
+
     /// <summary>
     /// Drives a <see cref="MediaPace.Manual"/> cover's playback clock; image
-    /// covers ignore it (video covers, once added, pace on it).
+    /// covers ignore it (video covers pace on it).
     /// </summary>
-    public void SetClock(Seconds clock) => _ = clock;
+    public void SetClock(Seconds clock)
+    {
+        if (_videoPlayback != null)
+        {
+            _videoPlayback.SetClock(clock);
+        }
+    }
 }
