@@ -164,7 +164,7 @@ public sealed class NoteFieldRig
     {
         var visual = Skin.MineVisual();
         var node = SpawnElement(visual, column, OffscreenY, 20.0f - BeatZNudge(beat), Quaternion.Identity);
-        mines.Add(new MineEl(node, time, beat, column));
+        mines.Add(new MineEl(node, time, beat, column, visual.Cell));
         return new MineIndex(mines.Count - 1);
     }
 
@@ -454,7 +454,7 @@ public sealed class NoteFieldRig
 
             var y = scroll.YAt(Layout, mine.Time, mine.Beat);
             var angle = (float)(-(SheetNotes.RemEuclid(beat.Value, spin) / spin) * Math.Tau);
-            var scale = Layout.ArrowSize / NoteSkin.NoteCell;
+            var scale = Layout.ArrowSize / mine.Cell;
             mine.Node.Position = new Vector3(Layout.ColumnX(mine.Column), y, mine.Node.Position.Z);
             mine.Node.Basis = new Basis(Vector3.Back, angle).Scaled(Vector3.One * scale);
         }
@@ -671,12 +671,13 @@ public sealed class NoteFieldRig
         public StandardMaterial3D CapMaterial { get; } = capMaterial;
     }
 
-    private sealed class MineEl(MeshInstance3D node, Seconds time, Beat beat, uint column)
+    private sealed class MineEl(MeshInstance3D node, Seconds time, Beat beat, uint column, float cell)
     {
         public MeshInstance3D Node { get; } = node;
         public Seconds Time { get; } = time;
         public Beat Beat { get; } = beat;
         public uint Column { get; } = column;
+        public float Cell { get; } = cell;
         public bool Live { get; set; } = true;
     }
 
