@@ -19,13 +19,12 @@ The game is built for a non-coding game designer to edit in the Godot editor; th
 - Everything visual is designer-editable: every `[Export]` carries hints and groups so inspectors read like settings panels; visual nodes are `[Tool]` classes that render a meaningful editor preview; misconfiguration reports through `_GetConfigurationWarnings()`, not runtime errors.
 - Designer-tunable data lives in custom `Resource` classes under `godot/data` (`.tres`), not in code and not in ad-hoc JSON.
 - Mechanics stay code: judgment, timing, input, and note-field internals expose tunables as exports but never surrender their invariants to the scene tree.
-- Custom asset formats (stepfiles, noteskins) are editor citizens through import plugins (`godot/addons`) that reuse the runtime parsers from `core/`.
+- Custom asset formats (stepfiles, noteskins) are editor citizens through import plugins (`godot/addons`) that reuse the runtime parsers from `godot/core`.
 
 ## Layout
 
-- `godot/` — the Godot project and all game code: editor-authored scenes, custom nodes, autoloads, designer data, import plugins. The game exposes generic launch directives (`godot/Launch.cs`: `--scene` deep links with params, `--pulse`/`--hold` input automation, `--frame-report`, `--quit-after-seconds`) and knows nothing about the tooling built on them.
-- `core/` — the engine-free game vocabulary and mechanics (units, timing, stepfile model, scoring, library) as a plain .NET library; referenced by the game and the tools, referencing nothing engine-shaped.
-- `tools/` — the dev command line (`dotnet run --project tools -- bench|render-note|render-grade|export`) plus `drive.sh`; it composes the game's launch directives with Godot's movie-maker capture and never references the game assembly.
+- `godot/` — the whole game: one Godot project, one `.csproj`, one `.sln`, exactly as Godot generates them. Editor-authored scenes, custom nodes, autoloads, designer data (`.tres`), import plugins, and `godot/core` (the engine-agnostic vocabulary and mechanics — units, timing, stepfile model, scoring — as plain classes in the game assembly). The game exposes generic launch directives (`godot/Launch.cs`: `--scene` deep links with params, `--pulse`/`--hold` input automation, `--frame-report`, `--quit-after-seconds`) and knows nothing about the tooling built on them.
+- `tools/` — the dev command line as shell scripts (`bash tools/dev.sh bench|render-note|render-grade|export` plus `drive.sh`); each composes the game's launch directives and Godot's movie-maker capture by running the `godot` binary, never linking the game.
 - `assets/` — the game's data, loaded at runtime from the filesystem; deliberately not imported into the Godot project nor packed into exports, so a shipped build's `assets/stepfiles/` stays a drop-in library folder.
 
 ## Code style
@@ -39,15 +38,13 @@ The game is built for a non-coding game designer to edit in the Godot editor; th
 - Every public type name must be intuitive and unambiguous when listed alongside the other public types; never rely on namespacing to disambiguate.
 - Zero warnings, enforced (`TreatWarningsAsErrors`); NEVER suppress a diagnostic (`#pragma warning`, `[SuppressMessage]`).
 
-## Architecture
+## Nodes & scenes
 
-`tests/` enforces systematically testable rules. They must always be followed and pass checks.
+Design guidance, not enforced boundaries — the editor is the designer's, and they compose scenes however they like. What the code should offer them:
 
-These rules cannot be enforced systematically, but must be followed:
-
-- All code in `core/` is engine-agnostic; anything touching a Godot API lives in `godot/`.
-- `godot/nodes/` holds the game's custom nodes: parameterized, reusable visual building blocks. Whenever something is rendered the same way in more than one context, make it a node — and design its interface with deliberate intent: options in (`[Export]` properties), ports (methods the owner drives every frame) for live inputs, signals out. Nodes never couple to global scene state; everything arrives via exports, ports, or the autoloads. Each node colocates all it owns — shaders included, as `.gdshader` files beside the script. Nodes never depend on each other: compose them from the outside or inject.
-- Scenes (`godot/scenes/`) are swapped by the `Game` root and discard all state on teardown; anything a scene hands the next one travels as a consumed route param through `Game`.
+- `godot/nodes/` holds reusable visual building blocks as `[GlobalClass]` nodes: whenever something is rendered the same way in more than one context, make it a node. Its interface is options in (`[Export]` properties, grouped and hinted), ports (methods the owner drives each frame) for live inputs, and signals out. A node colocates all it owns — its `.gdshader` files beside its script. Nodes stay independent: compose them from the outside rather than referencing one another.
+- Scenes (`godot/scenes/`) are swapped by the `Game` root and discard their state on teardown; anything a scene hands the next travels as a consumed route param through `Game`.
+- `godot/core` stays engine-agnostic by preference — it is the game's vocabulary and mechanics as plain classes — but nothing enforces this; use a Godot type there when it is genuinely the clearest option.
 
 ## Comments
 
@@ -69,8 +66,8 @@ Two capture paths:
   (`grade-sheet`, `note-demo`), and capture it deterministically with Godot's
   movie maker into `out/`, reusing the game's own node/shader paths so the
   output is exactly what the game draws. `dotnet run --project tools --
-  render-grade` (→ `out/grades.png`) and `dotnet run --project tools --
-  render-note <scenario|all> [--skin .. --bpm ..]` / `--list` (→ `out/*.mp4`).
+render-grade` (→ `out/grades.png`) and `dotnet run --project tools --
+render-note <scenario|all> [--skin .. --bpm ..]` / `--list` (→ `out/*.mp4`).
   Prefer this: when the thing under test can be isolated, add or extend a
   scenario instead of clicking through menus. They need a display (any X
   server; the drive harness's Xvfb works), the Godot 4.7 .NET binary (`godot`
@@ -116,6 +113,6 @@ Gotchas:
 
 ## Verification
 
-Run `dotnet format Rhythm.sln --verify-no-changes`, `dotnet build Rhythm.sln`
-(zero warnings — warnings are errors), and `dotnet test tests` (architecture
-rules). Boot checks run the game from the project: `godot --path godot`.
+Run `dotnet format godot/Rhythm.sln --verify-no-changes` and
+`dotnet build godot/Rhythm.sln` (zero warnings — warnings are errors). Boot
+checks run the game from the project: `godot --path godot`.
