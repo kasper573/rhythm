@@ -337,7 +337,7 @@ public partial class StepfilePlayer : Control
         // Animate grades
         foreach (var display in _grades)
         {
-            display.Animate((float)delta, GradeTextConstants.ComboGap);
+            display.Animate((float)delta, GradeText.ComboGap);
         }
 
         // Animate combos
@@ -414,6 +414,6 @@ internal class ComboDisplay
             Label.Scale = Vector2.One;
         }
 
-        Label.Position = new Vector2(OriginX, -GradeTextConstants.ComboGap);
+        Label.Position = new Vector2(OriginX, -GradeText.ComboGap);
     }
 }

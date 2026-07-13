@@ -76,17 +76,14 @@ public partial class GradeSheet : Control
         for (int row = 0; row < outcomes.Count; row++)
         {
             var outcome = outcomes[row];
-            var style = GradeStyleUtility.ComputeStyle(Config.Current, outcome);
-            var y = top - row * rowGap;
+            var style = GradeText.StyleFor(Config.Current, outcome);
+            var y = top - (row * rowGap);
 
             foreach (var x in ColumnX)
             {
                 var rig = GradeRig.SpawnRig(canvas);
                 rig.SetText(style.Text);
-                rig.Material.SetShaderParameter("base_color",
-                    new Vector4(style.BaseColor.R, style.BaseColor.G, style.BaseColor.B, 1.0f));
-                rig.Material.SetShaderParameter("glow_color",
-                    new Vector4(style.GlowColor.R, style.GlowColor.G, style.GlowColor.B, 1.0f));
+                GradeText.ApplyStyle(rig.Material, style.Base, style.Glow, style.Strength, 1.0f, GradeText.GlowPulse(0.0f));
                 rig.Sprite.Position = new Vector2(x, -y);
             }
         }
