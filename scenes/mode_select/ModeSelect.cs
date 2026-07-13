@@ -10,6 +10,7 @@ public partial class ModeSelect : Control
     public override void _Ready()
     {
         Scenes.PlayDefaultBgm();
+        Scenes.SpawnDefaultBackground(this);
         var menu = GetNode<Menu>("Menu");
         menu.Items = Enum.GetValues<PlayMode>().Select(mode => mode.ToString()).ToArray();
         menu.Selected += OnSelected;

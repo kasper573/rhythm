@@ -32,6 +32,7 @@ public partial class Score : Control
         }
 
         Scenes.PlayDefaultBgm();
+        Scenes.SpawnDefaultBackground(this);
 
         var center = new CenterContainer();
         center.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);

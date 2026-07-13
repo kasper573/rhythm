@@ -10,6 +10,7 @@ public partial class SettingsMenu : Control
     public override void _Ready()
     {
         Scenes.PlayDefaultBgm();
+        Scenes.SpawnDefaultBackground(this);
         GetNode<Menu>("Menu").Selected += OnSelected;
     }
 
