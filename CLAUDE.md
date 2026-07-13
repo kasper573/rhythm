@@ -17,13 +17,13 @@ The game is built for a non-coding game designer to edit in the Godot editor; th
 
 - Scenes are authored in the editor and `.tscn` is the source of truth: layout via containers/anchors/theme, transitions via `AnimationPlayer`, repeated elements as instanced sub-scenes. Scripts hold behavior only — a scene script that constructs layout is a defect.
 - Everything visual is designer-editable: every `[Export]` carries hints and groups so inspectors read like settings panels; visual nodes are `[Tool]` classes that render a meaningful editor preview; misconfiguration reports through `_GetConfigurationWarnings()`, not runtime errors.
-- Designer-tunable data lives in custom `Resource` classes under `data/` (`.tres`), not in code and not in ad-hoc JSON.
+- Designer-tunable data lives in custom `Resource` classes as `.tres` beside the classes that type them (the game config in `config/`), not in code and not in ad-hoc JSON.
 - Mechanics stay code: judgment, timing, input, and note-field internals expose tunables as exports but never surrender their invariants to the scene tree.
 - Custom asset formats (stepfiles, noteskins) are editor citizens through import plugins (`addons/`) that reuse the runtime parsers from `core/`.
 
 ## Layout
 
-- The repository root **is** the Godot project: `project.godot`, `Rhythm.csproj`, and `Rhythm.sln` sit at the top exactly as Godot generates them, alongside editor-authored scenes (`scenes/`), custom nodes (`nodes/`), autoloads, designer data (`data/`, `.tres`), import plugins (`addons/`), and `core/` (the engine-agnostic vocabulary and mechanics — units, timing, stepfile model, scoring — as plain classes in the game assembly). The game exposes generic launch directives (`Launch.cs`: `--scene` deep links with params, `--pulse`/`--hold` input automation, `--frame-report`, `--quit-after-seconds`) and knows nothing about the tooling built on them.
+- The repository root **is** the Godot project: `project.godot`, `Rhythm.csproj`, and `Rhythm.sln` sit at the top exactly as Godot generates them, alongside editor-authored scenes (`scenes/`), custom nodes (`nodes/`), autoloads (`autoload/`), designer data (`.tres` Resources), import plugins (`addons/`), and `core/` (the engine-agnostic vocabulary and mechanics — units, timing, stepfile model, scoring — as plain classes in the game assembly). The game exposes generic launch directives (`Launch.cs`: `--scene` deep links with params, `--pulse`/`--hold` input automation, `--frame-report`, `--quit-after-seconds`) and knows nothing about the tooling built on them.
 - `tools/` — the dev command line as shell scripts (`bash tools/dev.sh bench|render-note|render-grade|export` plus `drive.sh`); each composes the game's launch directives and Godot's movie-maker capture by running the `godot` binary, never linking the game.
 - `assets/` — the game's data, loaded at runtime from the filesystem; deliberately not imported into the Godot project nor packed into exports, so a shipped build's `assets/stepfiles/` stays a drop-in library folder.
 

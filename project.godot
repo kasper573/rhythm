@@ -6,6 +6,18 @@ config/name="Rhythm"
 run/main_scene="res://main.tscn"
 config/features=PackedStringArray("4.7", "C#")
 
+[autoload]
+
+Boot="*res://autoload/Boot.cs"
+Config="*res://config/Config.cs"
+Settings="*res://autoload/Settings.cs"
+NavInput="*res://input/NavInput.cs"
+Library="*res://autoload/Library.cs"
+MusicPlayer="*res://audio/MusicPlayer.cs"
+HighScores="*res://autoload/HighScores.cs"
+SfxPlayer="*res://audio/SfxPlayer.cs"
+TouchSteps="*res://input/TouchSteps.cs"
+
 [display]
 
 window/size/viewport_width=1280
@@ -14,8 +26,13 @@ window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 window/vsync/vsync_mode=0
 
+[gui]
+
+theme/custom="res://ui/theme.tres"
+
 [rendering]
 
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
 textures/vram_compression/import_etc2_astc=true
+environment/defaults/default_clear_color=Color(0.04, 0.04, 0.07, 1)

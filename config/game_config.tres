@@ -1,0 +1,277 @@
+[gd_resource type="Resource" script_class="GameConfig" format=3]
+
+[ext_resource type="Script" path="res://config/SettingsDefaults.cs" id="1_llujv"]
+[ext_resource type="Script" path="res://config/GradeDef.cs" id="2_uhp44"]
+[ext_resource type="Script" path="res://config/GradingConfig.cs" id="3_3pxlu"]
+[ext_resource type="Script" path="res://config/FixedGradeDef.cs" id="3_d3tc0"]
+[ext_resource type="Script" path="res://config/HealthGradient.cs" id="4_d3tc0"]
+[ext_resource type="Script" path="res://config/RhythmCycle.cs" id="5_6ud31"]
+[ext_resource type="Script" path="res://config/HealthColorStop.cs" id="6_6ud31"]
+[ext_resource type="Script" path="res://config/HealthBarConfig.cs" id="6_8hwtl"]
+[ext_resource type="Script" path="res://config/LaneCameraConfig.cs" id="7_g4ral"]
+[ext_resource type="Script" path="res://config/RatingDef.cs" id="8_qkoce"]
+[ext_resource type="Script" path="res://config/SpeedModifiers.cs" id="9_rlq72"]
+[ext_resource type="Script" path="res://config/StageConfig.cs" id="10_g77pd"]
+[ext_resource type="Script" path="res://config/SpeedModifierSet.cs" id="11_8hwtl"]
+[ext_resource type="Script" path="res://config/GameConfig.cs" id="11_n4e23"]
+
+[sub_resource type="Resource" id="Resource_g4ral"]
+script = ExtResource("1_llujv")
+KeymapBindings = {
+"DecreaseAudioLatency": "F7",
+"DecreaseMachineOffset": "F11",
+"DecreaseVisualDelay": "F9",
+"IncreaseAudioLatency": "F8",
+"IncreaseMachineOffset": "F12",
+"IncreaseVisualDelay": "F10",
+"P1Cancel": "Escape",
+"P1Down": "Down",
+"P1Left": "Left",
+"P1Right": "Right",
+"P1Select": "Enter",
+"P1Up": "Up",
+"P2Cancel": "E",
+"P2Down": "S",
+"P2Left": "A",
+"P2Right": "D",
+"P2Select": "Q",
+"P2Up": "W",
+"ToggleAutoSync": "F5",
+"ToggleFps": "F3",
+"ToggleTickAudio": "F6"
+}
+NoteSkin = "ddrextreme_note"
+NoteSpeedKind = 1
+GradePositionPercent = 50.0
+MachineOffsetMs = -100
+
+[sub_resource type="Resource" id="Resource_qkoce"]
+script = ExtResource("2_uhp44")
+Name = "Marvelous"
+WindowMs = 16.667
+HasArrowFlash = true
+HealthOffset = 2
+Points = 10
+GlowColor = Color(0, 0.63529414, 1, 1)
+GlowStrength = 1.0
+
+[sub_resource type="Resource" id="Resource_rlq72"]
+script = ExtResource("2_uhp44")
+Name = "Perfect"
+WindowMs = 33.333
+Color = Color(0.98039216, 0.8509804, 0.3019608, 1)
+TimingFeedback = 1
+HasArrowFlash = true
+ArrowFlash = Color(1, 1, 0.2509804, 1)
+HealthOffset = 2
+Points = 9
+GlowColor = Color(0.98039216, 0.8509804, 0.3019608, 1)
+GlowStrength = 1.0
+
+[sub_resource type="Resource" id="Resource_g77pd"]
+script = ExtResource("2_uhp44")
+Name = "Great"
+WindowMs = 91.667
+Color = Color(0.34901962, 0.9019608, 0.4509804, 1)
+TimingFeedback = 1
+HasArrowFlash = true
+ArrowFlash = Color(0, 0.9490196, 0.9490196, 1)
+HealthOffset = 1
+Points = 5
+GlowColor = Color(0.34901962, 0.9019608, 0.4509804, 1)
+GlowStrength = 1.0
+
+[sub_resource type="Resource" id="Resource_n4e23"]
+script = ExtResource("2_uhp44")
+Name = "Good"
+WindowMs = 141.667
+Color = Color(0.34901962, 0.6509804, 0.9490196, 1)
+TimingFeedback = 1
+Points = 2
+GlowColor = Color(0.34901962, 0.6509804, 0.9490196, 1)
+GlowStrength = 1.0
+
+[sub_resource type="Resource" id="Resource_0b6me"]
+script = ExtResource("2_uhp44")
+Name = "Bad"
+WindowMs = 225.0
+Color = Color(0.7490196, 0.4509804, 0.9019608, 1)
+BreaksCombo = true
+TimingFeedback = 1
+HealthOffset = -4
+GlowColor = Color(0.7490196, 0.4509804, 0.9019608, 1)
+GlowStrength = 1.0
+
+[sub_resource type="Resource" id="Resource_e2uw2"]
+script = ExtResource("3_d3tc0")
+Name = "Miss"
+Color = Color(0.9490196, 0.24705882, 0.24705882, 1)
+HealthOffset = -8
+GlowColor = Color(0.9490196, 0.24705882, 0.24705882, 1)
+GlowStrength = 1.0
+
+[sub_resource type="Resource" id="Resource_1eslq"]
+script = ExtResource("3_d3tc0")
+Name = "NG"
+Color = Color(0.9490196, 0.34901962, 0.34901962, 1)
+HealthOffset = -4
+
+[sub_resource type="Resource" id="Resource_lrn8w"]
+script = ExtResource("3_d3tc0")
+Name = "OK"
+Color = Color(0.4509804, 0.9490196, 0.5019608, 1)
+HealthOffset = 2
+Points = 6
+
+[sub_resource type="Resource" id="Resource_bssww"]
+script = ExtResource("3_3pxlu")
+Dynamic = Array[ExtResource("2_uhp44")]([SubResource("Resource_qkoce"), SubResource("Resource_rlq72"), SubResource("Resource_g77pd"), SubResource("Resource_n4e23"), SubResource("Resource_0b6me")])
+Miss = SubResource("Resource_e2uw2")
+Ok = SubResource("Resource_lrn8w")
+Ng = SubResource("Resource_1eslq")
+
+[sub_resource type="Resource" id="Resource_6f1tg"]
+script = ExtResource("6_6ud31")
+Color = Color(1, 0.25490198, 0.42352942, 1)
+
+[sub_resource type="Resource" id="Resource_4viie"]
+script = ExtResource("6_6ud31")
+Percent = 42.0
+Color = Color(1, 0.29411766, 0.16862746, 1)
+
+[sub_resource type="Resource" id="Resource_hv6sv"]
+script = ExtResource("6_6ud31")
+Percent = 100.0
+Color = Color(1, 0.7647059, 0.44313726, 1)
+
+[sub_resource type="Resource" id="Resource_bv1ge"]
+script = ExtResource("4_d3tc0")
+Stops = Array[ExtResource("6_6ud31")]([SubResource("Resource_6f1tg"), SubResource("Resource_4viie"), SubResource("Resource_hv6sv")])
+
+[sub_resource type="Resource" id="Resource_phejw"]
+script = ExtResource("6_6ud31")
+Color = Color(0.94509804, 0.15294118, 0.06666667, 1)
+
+[sub_resource type="Resource" id="Resource_ur060"]
+script = ExtResource("6_6ud31")
+Percent = 50.0
+Color = Color(0.9607843, 0.6862745, 0.09803922, 1)
+
+[sub_resource type="Resource" id="Resource_rtt3t"]
+script = ExtResource("6_6ud31")
+Percent = 100.0
+Color = Color(1, 0.6039216, 0.26666668, 1)
+
+[sub_resource type="Resource" id="Resource_br7i1"]
+script = ExtResource("4_d3tc0")
+MinHealth = 50.0
+Stops = Array[ExtResource("6_6ud31")]([SubResource("Resource_phejw"), SubResource("Resource_ur060"), SubResource("Resource_rtt3t")])
+
+[sub_resource type="Resource" id="Resource_bocbm"]
+script = ExtResource("6_6ud31")
+Color = Color(0.101960786, 0.16078432, 0.5019608, 1)
+
+[sub_resource type="Resource" id="Resource_lnbvw"]
+script = ExtResource("6_6ud31")
+Percent = 45.0
+Color = Color(0.14901961, 0.8156863, 0.80784315, 1)
+
+[sub_resource type="Resource" id="Resource_avvsh"]
+script = ExtResource("6_6ud31")
+Percent = 100.0
+Color = Color(0.21960784, 0.9372549, 0.49019608, 1)
+
+[sub_resource type="Resource" id="Resource_mrl8g"]
+script = ExtResource("4_d3tc0")
+MinHealth = 100.0
+Stops = Array[ExtResource("6_6ud31")]([SubResource("Resource_bocbm"), SubResource("Resource_lnbvw"), SubResource("Resource_avvsh")])
+
+[sub_resource type="Resource" id="Resource_teixa"]
+script = ExtResource("5_6ud31")
+Speed = 4.0
+
+[sub_resource type="Resource" id="Resource_e1fpj"]
+script = ExtResource("5_6ud31")
+Easing = Vector4(0.37, 0, 0.63, 1)
+
+[sub_resource type="Resource" id="Resource_elhag"]
+script = ExtResource("6_8hwtl")
+Glow = SubResource("Resource_teixa")
+Liquid = SubResource("Resource_e1fpj")
+Colors = Array[ExtResource("4_d3tc0")]([SubResource("Resource_bv1ge"), SubResource("Resource_br7i1"), SubResource("Resource_mrl8g")])
+
+[sub_resource type="Resource" id="Resource_w0ptl"]
+script = ExtResource("7_g4ral")
+
+[sub_resource type="Resource" id="Resource_62ein"]
+script = ExtResource("8_qkoce")
+Image = "ratings/aaa.png"
+RuleKind = 1
+AllGradesGte = "Perfect"
+
+[sub_resource type="Resource" id="Resource_f8a0u"]
+script = ExtResource("8_qkoce")
+Image = "ratings/aa.png"
+PointPercentage = 93
+
+[sub_resource type="Resource" id="Resource_s1up8"]
+script = ExtResource("8_qkoce")
+Image = "ratings/a.png"
+PointPercentage = 85
+
+[sub_resource type="Resource" id="Resource_jds06"]
+script = ExtResource("8_qkoce")
+Image = "ratings/b.png"
+PointPercentage = 75
+
+[sub_resource type="Resource" id="Resource_t3j71"]
+script = ExtResource("8_qkoce")
+Image = "ratings/c.png"
+PointPercentage = 65
+
+[sub_resource type="Resource" id="Resource_0wjca"]
+script = ExtResource("8_qkoce")
+Image = "ratings/d.png"
+PointPercentage = 45
+
+[sub_resource type="Resource" id="Resource_ypse5"]
+script = ExtResource("8_qkoce")
+Image = "ratings/e.png"
+
+[sub_resource type="Resource" id="Resource_6wd2v"]
+script = ExtResource("11_8hwtl")
+Options = PackedFloat32Array(150, 300, 500, 700, 850, 1000)
+Default = 500.0
+
+[sub_resource type="Resource" id="Resource_jtrbe"]
+script = ExtResource("11_8hwtl")
+Options = PackedFloat32Array(0.25, 0.5, 1, 1.5, 2, 3)
+Default = 1.0
+
+[sub_resource type="Resource" id="Resource_id03j"]
+script = ExtResource("9_rlq72")
+Constant = SubResource("Resource_6wd2v")
+Dynamic = SubResource("Resource_jtrbe")
+
+[sub_resource type="Resource" id="Resource_jsktf"]
+script = ExtResource("10_g77pd")
+MarginX = 150
+FieldGapColumns = 2.0
+LeadInSeconds = 2.0
+ScreenEdgePadding = 50
+
+[resource]
+script = ExtResource("11_n4e23")
+WheelDefaultGroup = "EXTREME"
+WheelDefaultStepfile = "Dance Dance Revolution"
+Defaults = SubResource("Resource_g4ral")
+Stage = SubResource("Resource_jsktf")
+LaneCamera = SubResource("Resource_w0ptl")
+Grading = SubResource("Resource_bssww")
+BrightArrowFlashCombo = 100
+PlayerMaxHealth = 100
+HealthBar = SubResource("Resource_elhag")
+Ratings = Array[ExtResource("8_qkoce")]([SubResource("Resource_62ein"), SubResource("Resource_f8a0u"), SubResource("Resource_s1up8"), SubResource("Resource_jds06"), SubResource("Resource_t3j71"), SubResource("Resource_0wjca"), SubResource("Resource_ypse5")])
+TickVolume = 1.3
+NoteQuants = PackedInt32Array(4, 8, 12, 16, 24, 32, 48, 64)
+SpeedModifiers = SubResource("Resource_id03j")

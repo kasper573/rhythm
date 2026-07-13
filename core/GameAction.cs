@@ -1,3 +1,6 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace Rhythm.Core;
 
 /// <summary>
@@ -105,6 +108,7 @@ public static class GameActions
 /// settings hold the players' overrides; actions without one resolve through
 /// the config's default keymap, which binds everything.
 /// </summary>
+[JsonConverter(typeof(KeymapJsonConverter))]
 public sealed class Keymap
 {
     private readonly Dictionary<GameAction, string> bindings;
@@ -121,10 +125,22 @@ public sealed class Keymap
 
     public IReadOnlyDictionary<GameAction, string> Bindings => bindings;
 
-    public string Key(GameAction action, Keymap defaults) =>
-        Binding(action)
-        ?? defaults.Binding(action)
-        ?? throw new InvalidOperationException($"default keymap must bind {action}");
+    public string Key(GameAction action, Keymap defaults)
+    {
+        var binding = Binding(action);
+        if (binding is not null)
+        {
+            return binding;
+        }
+
+        var defaultBinding = defaults.Binding(action);
+        if (defaultBinding is not null)
+        {
+            return defaultBinding;
+        }
+
+        throw new InvalidOperationException($"default keymap must bind {action}");
+    }
 
     public string? Binding(GameAction action) =>
         bindings.TryGetValue(action, out var key) ? key : null;
@@ -142,4 +158,34 @@ public sealed class Keymap
     public override bool Equals(object? obj) => Equals(obj as Keymap);
 
     public override int GetHashCode() => bindings.Count;
+}
+
+/// <summary>Persists a keymap as a plain <c>{action-name: key-name}</c> object.</summary>
+internal sealed class KeymapJsonConverter : JsonConverter<Keymap>
+{
+    public override Keymap Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        var raw = JsonSerializer.Deserialize<Dictionary<string, string>>(ref reader, options) ?? [];
+        var bindings = new Dictionary<GameAction, string>();
+        foreach (var (name, key) in raw)
+        {
+            if (Enum.TryParse<GameAction>(name, out var action))
+            {
+                bindings[action] = key;
+            }
+        }
+
+        return new Keymap(bindings);
+    }
+
+    public override void Write(Utf8JsonWriter writer, Keymap value, JsonSerializerOptions options)
+    {
+        writer.WriteStartObject();
+        foreach (var (action, key) in value.Bindings)
+        {
+            writer.WriteString(action.ToString(), key);
+        }
+
+        writer.WriteEndObject();
+    }
 }

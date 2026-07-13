@@ -3,6 +3,7 @@ obj
 .godot
 .mono
 *.user
+*.uid
 assets/stepfiles
 out
 /dist
