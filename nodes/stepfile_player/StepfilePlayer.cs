@@ -70,7 +70,7 @@ public partial class StepfilePlayer : Control
     public override void _Ready()
     {
         MouseFilter = MouseFilterEnum.Ignore;
-        AnchorsPreset = (int)LayoutPreset.FullRect;
+        SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
     }
 
     /// <summary>
@@ -104,15 +104,7 @@ public partial class StepfilePlayer : Control
 
             player._grades.Add(new GradeDisplay(behind, playerId, originX));
 
-            var comboLabel = new Label();
-            comboLabel.AddThemeColorOverride("font_color", Colors.White);
-            var fontFile = GD.Load<FontFile>("res://assets/fonts/JetBrainsMono-Regular.ttf");
-            if (fontFile != null)
-            {
-                comboLabel.AddThemeFontOverride("font", fontFile);
-            }
-            comboLabel.AddThemeFontSizeOverride("font_size", 44);
-            comboLabel.Text = "";
+            var comboLabel = Text.Label(string.Empty, 44.0f, Colors.White);
             comboLabel.Visible = false;
             behind.AddChild(comboLabel);
 
@@ -224,15 +216,16 @@ public partial class StepfilePlayer : Control
     private void BuildField(FieldSpec spec)
     {
         var layout = spec.Layout;
-        var noteSkin = NoteSkin.Load("default");
+        var options = Settings.Instance.Player(layout.Player);
+        var camera = Config.Current.LaneCamera!;
 
         var rig = NoteFieldRig.Build(
             this,
             layout,
-            noteSkin,
-            Perspective.None,
-            45.0f,
-            0.0f,
+            NoteSkin.Load(options.NoteSkin),
+            options.Perspective,
+            camera.FovDegrees,
+            camera.TiltDegrees,
             _canvas
         );
 

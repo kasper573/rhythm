@@ -1,0 +1,11 @@
+[gd_scene load_steps=2 format=3 uid="uid://c3vvdj4wm6yt2"]
+
+[ext_resource type="Script" path="res://scenes/play/Play.cs" id="1_yd5oj"]
+
+[node name="Play" type="Control" node_paths=PackedStringArray()]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+script = ExtResource("1_yd5oj")
