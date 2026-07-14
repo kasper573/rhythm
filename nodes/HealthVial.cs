@@ -3,14 +3,6 @@ using Rhythm.Core;
 
 namespace Rhythm;
 
-/// <summary>Options for a health vial.</summary>
-public class HealthVialOptions
-{
-    public required float Fill { get; init; }
-    public required VialSide Side { get; init; }
-    public required float EdgePadding { get; init; }
-}
-
 /// <summary>Which screen edge a vial is pinned to.</summary>
 public enum VialSide
 {
@@ -28,6 +20,7 @@ public enum VialSide
 /// <see cref="SetFill"/> (changes stir up waves that settle back flat) and
 /// the glow and gradient scroll pulse on <see cref="SetBeat"/>.
 /// </summary>
+[Tool]
 [GlobalClass]
 public partial class HealthVial : Control
 {
@@ -38,11 +31,28 @@ public partial class HealthVial : Control
     private const float ColorTau = 0.35f;
     private const int GradientSamples = 16;
 
+    private VialSide _sideType = VialSide.Left;
+    private float edgePadding = 20.0f;
     private float fill;
     private Beat beat;
     private VialMotion motion = new();
     private ShaderMaterial? material;
     private ColorRect? shaderRect;
+
+    [ExportGroup("Vial")]
+    [Export]
+    public VialSide Side
+    {
+        get => _sideType;
+        set { _sideType = value; Build(); }
+    }
+
+    [Export(PropertyHint.Range, "0,64,1")]
+    public float EdgePadding
+    {
+        get => edgePadding;
+        set { edgePadding = value; Build(); }
+    }
 
     /// <summary>0..=1 of the vial's capacity.</summary>
     public void SetFill(float value) => fill = value;
@@ -53,47 +63,18 @@ public partial class HealthVial : Control
     /// </summary>
     public void SetBeat(Beat value) => beat = value;
 
-    public static HealthVial Instantiate(HealthVialOptions opt)
+    public override void _Ready()
     {
-        var vial = new HealthVial();
-        var preset = opt.Side == VialSide.Left
-            ? Control.LayoutPreset.LeftWide
-            : Control.LayoutPreset.RightWide;
-        vial.SetAnchorsAndOffsetsPreset(preset);
-        vial.SetAnchor(Side.Top, 0.1f);
-        vial.SetAnchor(Side.Bottom, 0.9f);
-
-        var (leftOffset, rightOffset) = opt.Side == VialSide.Left
-            ? (opt.EdgePadding, opt.EdgePadding + VialWidth)
-            : (-opt.EdgePadding - VialWidth, -opt.EdgePadding);
-        vial.SetOffset(Side.Left, leftOffset);
-        vial.SetOffset(Side.Right, rightOffset);
-        vial.MouseFilter = MouseFilterEnum.Ignore;
-
-        var shader = GD.Load<Shader>("res://nodes/health_vial.gdshader");
-        var shaderMat = new ShaderMaterial { Shader = shader };
-
-        var rect = new ColorRect
-        {
-            Material = shaderMat,
-            MouseFilter = MouseFilterEnum.Ignore
-        };
-        rect.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
-        rect.SetOffset(Side.Left, -GlowMargin);
-        rect.SetOffset(Side.Top, -GlowMargin);
-        rect.SetOffset(Side.Right, GlowMargin);
-        rect.SetOffset(Side.Bottom, GlowMargin);
-
-        vial.AddChild(rect);
-        vial.fill = opt.Fill;
-        vial.material = shaderMat;
-        vial.shaderRect = rect;
-
-        return vial;
+        Build();
     }
 
     public override void _Process(double delta)
     {
+        if (Engine.IsEditorHint())
+        {
+            return;
+        }
+
         var deltaF = (float)delta;
         var config = Config.Current;
         var healthBar = config?.HealthBar;
@@ -158,6 +139,51 @@ public partial class HealthVial : Control
             material.SetShaderParameter("glow_margin", GlowMargin);
             material.SetShaderParameter("colors", colors);
         }
+    }
+
+    private void Build()
+    {
+        if (!IsInsideTree())
+        {
+            return;
+        }
+
+        foreach (var child in GetChildren())
+        {
+            child.QueueFree();
+        }
+
+        var preset = _sideType == VialSide.Left
+            ? Control.LayoutPreset.LeftWide
+            : Control.LayoutPreset.RightWide;
+        SetAnchorsAndOffsetsPreset(preset);
+        SetAnchor(Godot.Side.Top, 0.1f);
+        SetAnchor(Godot.Side.Bottom, 0.9f);
+
+        var (leftOffset, rightOffset) = _sideType == VialSide.Left
+            ? (edgePadding, edgePadding + VialWidth)
+            : (-edgePadding - VialWidth, -edgePadding);
+        SetOffset(Godot.Side.Left, leftOffset);
+        SetOffset(Godot.Side.Right, rightOffset);
+        MouseFilter = MouseFilterEnum.Ignore;
+
+        var shader = GD.Load<Shader>("res://nodes/health_vial.gdshader");
+        var shaderMat = new ShaderMaterial { Shader = shader };
+
+        var rect = new ColorRect
+        {
+            Material = shaderMat,
+            MouseFilter = MouseFilterEnum.Ignore
+        };
+        rect.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+        rect.SetOffset(Godot.Side.Left, -GlowMargin);
+        rect.SetOffset(Godot.Side.Top, -GlowMargin);
+        rect.SetOffset(Godot.Side.Right, GlowMargin);
+        rect.SetOffset(Godot.Side.Bottom, GlowMargin);
+
+        AddChild(rect);
+        material = shaderMat;
+        shaderRect = rect;
     }
 
     private static Color SampleStops(HealthGradient gradient, Percent percent)

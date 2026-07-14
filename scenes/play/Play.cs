@@ -96,12 +96,12 @@ public partial class Play : Control
         foreach (var (player, _) in charts)
         {
             var side = player == PlayerId.P1 ? VialSide.Left : VialSide.Right;
-            var vial = HealthVial.Instantiate(new HealthVialOptions
+            var vial = new HealthVial
             {
-                Fill = 1.0f,
                 Side = side,
                 EdgePadding = config.Stage?.ScreenEdgePadding ?? 20
-            });
+            };
+            vial.SetFill(1.0f);
             AddChild(vial);
             vials.Add((player, vial));
         }

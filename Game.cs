@@ -92,6 +92,10 @@ public partial class Game : Node
         fadeLayer.AddChild(fadeRect);
         AddChild(fadeLayer);
 
+        var fpsLayer = new CanvasLayer { Layer = 101 };
+        fpsLayer.AddChild(new FpsOverlay());
+        AddChild(fpsLayer);
+
         fade = FadePhase.FadingIn;
         fadeAlpha = 1.0f;
         ApplyFade(1.0f);
