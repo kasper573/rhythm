@@ -176,6 +176,19 @@ public partial class StepfilePlayer : Control
         }
     }
 
+    /// <summary>Eases a player's lane camera to a new perspective in place, so
+    /// changing it live glides rather than snapping.</summary>
+    public void SetPerspective(PlayerId player, Perspective perspective)
+    {
+        foreach (var rig in _rigs)
+        {
+            if (rig.Layout.Player == player)
+            {
+                rig.SetPerspective(perspective);
+            }
+        }
+    }
+
     /// <summary>Re-sizes and re-places the fields without respawning them.</summary>
     public void Refit(IEnumerable<FieldLayout> layouts)
     {

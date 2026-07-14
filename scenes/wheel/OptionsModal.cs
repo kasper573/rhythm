@@ -48,6 +48,10 @@ public class OptionsModal
         public required Control Flank { get; init; }
         public SubViewport? Viewport { get; set; }
         public StepfilePlayer? Engine { get; set; }
+
+        /// <summary>The options the live engine was built from — used to tell a
+        /// perspective-only change (glide the camera) from one that needs a rebuild.</summary>
+        public PlayerOptions? Built { get; set; }
     }
 
     private class PreviewState
@@ -435,11 +439,24 @@ public class OptionsModal
 
             foreach (var preview in previews)
             {
-                if (preview.Engine is not null)
-                    preview.Engine.QueueFree();
-
                 if (preview.Viewport is null)
                     continue;
+
+                var current = Settings.Instance.Player(preview.Player);
+
+                // A perspective-only change glides the camera in place; every
+                // other change (and the loop wrap) rebuilds the field.
+                if (preview.Engine is not null && preview.Built is { } built
+                    && current.Perspective != built.Perspective
+                    && (built with { Perspective = current.Perspective }) == current)
+                {
+                    preview.Engine.SetPerspective(preview.Player, current.Perspective);
+                    preview.Built = current;
+                    continue;
+                }
+
+                if (preview.Engine is not null)
+                    preview.Engine.QueueFree();
 
                 var surface = preview.Flank.GetSize();
                 var canvas = BandCanvas(surface);
@@ -455,13 +472,13 @@ public class OptionsModal
                                 preview.Player,
                                 0.0f,
                                 4,
-                                Settings.Instance.Player(preview.Player).NoteSpeed,
+                                current.NoteSpeed,
                                 arrow
                             ),
                             Rows = live,
                             Mines = [],
                             MaxHealth = uint.MaxValue,
-                            GradeLayer = Settings.Instance.Player(preview.Player).GradeLayer,
+                            GradeLayer = current.GradeLayer,
                         }
                     },
                     Timing = state.Timing,
@@ -477,6 +494,7 @@ public class OptionsModal
                 engine.SetGradeArea(GradeText.AreaOf(half - padding, -half + padding));
 
                 preview.Engine = engine;
+                preview.Built = current;
             }
         }
 

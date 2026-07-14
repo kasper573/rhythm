@@ -17,6 +17,7 @@ public sealed class NoteFieldRig
     public const float HoldOkFadeSeconds = 0.05f;
     private const float MineExplosionSeconds = 0.4f;
     private const float PressSeconds = 0.25f;
+    private const float PerspectiveTweenSeconds = 0.3f;
 
     /// <summary>The body slides this far under the cap, blending the cap's filtered top edge into the body.</summary>
     private const float BodyCapOverlap = 1.0f;
@@ -30,7 +31,10 @@ public sealed class NoteFieldRig
     private readonly Node3D space;
     private readonly float fov;
     private readonly float tilt;
-    private readonly Perspective perspective;
+    private float pitch;
+    private float pitchStart;
+    private float pitchTarget;
+    private float pitchElapsed;
     private readonly List<ReceptorEl> receptors = [];
     private readonly List<NoteEl> notes = [];
     private readonly List<MineEl> mines = [];
@@ -43,9 +47,10 @@ public sealed class NoteFieldRig
     {
         Layout = layout;
         Skin = skin;
-        this.perspective = perspective;
         this.fov = fov;
         this.tilt = tilt;
+        pitch = pitchStart = pitchTarget = PitchFor(perspective, tilt);
+        pitchElapsed = PerspectiveTweenSeconds;
         this.canvas = canvas;
         this.viewport = viewport;
         this.display = display;
@@ -184,6 +189,30 @@ public sealed class NoteFieldRig
         space.AddChild(node);
         return node;
     }
+
+    /// <summary>
+    /// Retargets the lane camera to a new perspective, easing the pitch there
+    /// over <see cref="PerspectiveTweenSeconds"/> rather than snapping.
+    /// </summary>
+    public void SetPerspective(Perspective perspective)
+    {
+        var target = PitchFor(perspective, tilt);
+        if (Mathf.IsEqualApprox(target, pitchTarget))
+        {
+            return;
+        }
+        pitchStart = pitch;
+        pitchTarget = target;
+        pitchElapsed = 0.0f;
+    }
+
+    /// <summary>The camera pitch (radians) a perspective looks at the field from.</summary>
+    private static float PitchFor(Perspective perspective, float tilt) => perspective switch
+    {
+        Perspective.Above => -tilt,
+        Perspective.Below => tilt,
+        _ => 0.0f,
+    };
 
     /// <summary>Whether the panel of <paramref name="column"/> renders pressed.</summary>
     public void SetReceptorHeld(uint column, bool held)
@@ -334,7 +363,20 @@ public sealed class NoteFieldRig
         AnimateMines(scroll, beat);
         ScrollModelTextures();
         RunFades(delta);
+        AdvancePitch(delta);
         SyncCamera(clock.TargetY);
+    }
+
+    /// <summary>Eases the camera pitch toward the perspective it was last retargeted to.</summary>
+    private void AdvancePitch(float delta)
+    {
+        if (pitchElapsed >= PerspectiveTweenSeconds)
+        {
+            return;
+        }
+        pitchElapsed += delta;
+        var t = Mathf.Clamp(pitchElapsed / PerspectiveTweenSeconds, 0.0f, 1.0f);
+        pitch = Mathf.Lerp(pitchStart, pitchTarget, EaseCubicInOut(t));
     }
 
     private void ScrollAndAnimateNotes(NoteScroll scroll)
@@ -509,12 +551,6 @@ public sealed class NoteFieldRig
         var distance = canvas.Y * 0.5f / Mathf.Tan(fov * 0.5f);
         var near = distance * 0.05f;
         var far = distance * 4.0f;
-        var pitch = perspective switch
-        {
-            Perspective.Above => -tilt,
-            Perspective.Below => tilt,
-            _ => 0.0f,
-        };
         var originX = Layout.OriginX;
         var pivot = new Vector3(originX, targetY, 0.0f);
         var rotation = new Basis(Vector3.Right, pitch);
