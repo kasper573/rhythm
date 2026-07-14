@@ -221,7 +221,7 @@ public partial class NoteDemo : Control
                     rig!.VanishNote(noteIndex);
                     var flashColor = Config.Current.Grading?.Dynamic.FirstOrDefault()?
                         .ArrowFlash ?? Colors.White;
-                    rig.ArrowFlash(column, NoteField.TargetY, flashColor, false);
+                    rig.ArrowFlash(column, NoteField.TargetY, flashColor, false, Config.Current.FlashTiming(false));
                     break;
                 }
 

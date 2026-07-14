@@ -27,6 +27,21 @@ public partial class GameConfig : Resource
     [ExportGroup("Arrow Flash")]
     [Export(PropertyHint.Range, "0,1000")] public int BrightArrowFlashCombo { get; set; }
 
+    [ExportSubgroup("Dim (below the bright combo)")]
+    [Export(PropertyHint.Range, "0.02,1,0.01,or_greater")] public float FlashDimSeconds { get; set; } = 0.18f;
+    [Export(PropertyHint.Range, "0.1,3,0.05")] public float FlashDimZoom { get; set; } = 1.0f;
+    [Export(PropertyHint.Range, "0,2,0.05")] public float FlashDimGrowth { get; set; } = 0.4f;
+
+    [ExportSubgroup("Bright (at or above the bright combo)")]
+    [Export(PropertyHint.Range, "0.02,1,0.01,or_greater")] public float FlashBrightSeconds { get; set; } = 0.13f;
+    [Export(PropertyHint.Range, "0.1,3,0.05")] public float FlashBrightZoom { get; set; } = 0.8f;
+    [Export(PropertyHint.Range, "0,2,0.05")] public float FlashBrightGrowth { get; set; } = 0.5f;
+
+    /// <summary>The arrow-flash lifetime, size, and growth for the given combo tier.</summary>
+    public ArrowFlashTiming FlashTiming(bool bright) => bright
+        ? new ArrowFlashTiming(new Seconds(FlashBrightSeconds), FlashBrightZoom, FlashBrightGrowth)
+        : new ArrowFlashTiming(new Seconds(FlashDimSeconds), FlashDimZoom, FlashDimGrowth);
+
     [ExportGroup("Health")]
     [Export(PropertyHint.Range, "1,1000")] public int PlayerMaxHealth { get; set; }
     [Export] public HealthBarConfig? HealthBar { get; set; }
@@ -340,5 +355,15 @@ public partial class GameConfig : Resource
 
         if (musicVolume < 0 || musicVolume > 1)
             throw new InvalidOperationException($"Music volume must be in 0..1, got {musicVolume}");
+
+        foreach (var seconds in new[] { FlashDimSeconds, FlashBrightSeconds })
+        {
+            if (seconds <= 0)
+                throw new InvalidOperationException($"Arrow-flash seconds must be positive, got {seconds}");
+        }
     }
 }
+
+/// <summary>How an arrow flash plays: its lifetime, its size relative to the
+/// arrow, and how much it grows over that lifetime.</summary>
+public readonly record struct ArrowFlashTiming(Seconds Life, float BaseZoom, float Growth);

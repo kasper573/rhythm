@@ -250,18 +250,16 @@ public sealed class NoteFieldRig
     /// while it fades. The bright variant plays at high combo: larger art,
     /// snappier, starting smaller.
     /// </summary>
-    public void ArrowFlash(uint column, float targetY, Color color, bool bright)
+    public void ArrowFlash(uint column, float targetY, Color color, bool bright, ArrowFlashTiming timing)
     {
-        var (flash, seconds, baseZoom, growth) = bright
-            ? (Skin.FlashBright, 0.13f, 0.8f, 0.5f)
-            : (Skin.FlashDim, 0.18f, 1.0f, 0.4f);
-        var size = flash.Size * (Layout.ArrowSize / NoteSkin.NoteCell) * baseZoom;
+        var flash = bright ? Skin.FlashBright : Skin.FlashDim;
+        var size = flash.Size * (Layout.ArrowSize / NoteSkin.NoteCell) * timing.BaseZoom;
         Effect(
             SkinMaterials.Effect(flash.Texture, color),
             new Transform3D(
                 new Basis(ColumnRotation(column)).Scaled(new Vector3(size.X, size.Y, 1.0f)),
                 new Vector3(Layout.ColumnX(column), targetY, 22.0f)),
-            seconds, growth);
+            (float)timing.Life.Value, timing.Growth);
     }
 
     public void MineExplosion(uint column, float targetY)

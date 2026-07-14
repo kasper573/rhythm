@@ -124,9 +124,10 @@ public partial class StepfilePlayer
                     continue;
                 }
                 var bright = stage.Combo >= (uint)config.BrightArrowFlashCombo;
+                var timing = config.FlashTiming(bright);
                 foreach (var arrow in stage.Rows[index].Arrows)
                 {
-                    rig.ArrowFlash(arrow.Column, _targetY, grade.ArrowFlash, bright);
+                    rig.ArrowFlash(arrow.Column, _targetY, grade.ArrowFlash, bright, timing);
                     if (arrow.Hold is null)
                     {
                         rig.VanishNote(arrow.Note);
