@@ -12,6 +12,8 @@ namespace Rhythm;
 /// </summary>
 internal sealed class MediaVideoPlayback
 {
+    private const double SyncThresholdSeconds = 0.25;
+
     private readonly VideoStreamPlayer player;
     private readonly Seconds start;
     private readonly MediaPace pace;
@@ -49,12 +51,22 @@ internal sealed class MediaVideoPlayback
     /// <summary>The current frame, or null until the first one decodes.</summary>
     public Texture2D? GetTexture() => player.GetVideoTexture();
 
-    /// <summary>Locks a Manual cover to the owner's clock; Wall covers play freely.</summary>
+    /// <summary>
+    /// Nudges a Manual cover back onto the owner's clock. The video plays
+    /// forward on its own; we only seek when it has drifted past the
+    /// threshold, because seeking the decoder every frame (often to a
+    /// non-keyframe) stalls it into gray/black frames.
+    /// </summary>
     public void SetClock(Seconds clock)
     {
-        if (pace == MediaPace.Manual)
+        if (pace != MediaPace.Manual)
         {
-            player.StreamPosition = Math.Max(0.0, (clock - start).Value);
+            return;
+        }
+        var target = Math.Max(0.0, (clock - start).Value);
+        if (Math.Abs(player.StreamPosition - target) > SyncThresholdSeconds)
+        {
+            player.StreamPosition = target;
         }
     }
 
