@@ -37,8 +37,15 @@ public static class Text
     /// </summary>
     public static void Place(Label label, Vector2 position, TextPivot pivot)
     {
+        // Measure the glyphs directly from the font: a label's
+        // GetCombinedMinimumSize ignores its font-size override until it is in
+        // the tree and laid out, so before that it underestimates the width
+        // and pivot-centering lands the text off to one side.
+        var fontSize = label is GameLabel gameLabel
+            ? Mathf.RoundToInt(gameLabel.FontSize)
+            : label.GetThemeFontSize("font_size");
+        var size = Font.GetMultilineStringSize(label.Text, HorizontalAlignment.Left, -1.0f, fontSize);
         label.ResetSize();
-        var size = label.GetCombinedMinimumSize();
         label.Position = position - new Vector2(size.X * pivot.X, size.Y * pivot.Y);
     }
 }
