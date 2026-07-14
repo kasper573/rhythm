@@ -13,8 +13,6 @@ namespace Rhythm;
 [GlobalClass]
 public partial class Game : Node
 {
-    private const float FadeSeconds = 0.3f;
-
     public static Game Instance { get; private set; } = null!;
 
     public PlayMode PlayMode { get; set; } = PlayMode.Singles;
@@ -29,9 +27,8 @@ public partial class Game : Node
     private Node? current;
     private FadePhase fade = FadePhase.Idle;
     private GameScene fadeTarget;
-    private float fadeAlpha;
-    private Tween? fadeTween;
-    private ColorRect? fadeRect;
+    private AnimationPlayer fadeAnim = null!;
+    private ShaderMaterial fadeMaterial = null!;
 
     private StepfileId? wheelTarget;
     private SelectedStepfile? selectedStepfile;
@@ -51,9 +48,13 @@ public partial class Game : Node
             return;
         }
 
+        // Resume the cover from wherever the current coverage sits, so a change
+        // that interrupts a fade-in reverses smoothly instead of snapping.
+        var coverage = fadeMaterial.GetShaderParameter("coverage").AsSingle();
         fade = FadePhase.FadingOut;
         fadeTarget = to;
-        FadeTo(1.0f, nameof(FinishFadeOut));
+        fadeAnim.Play("fade_out");
+        fadeAnim.Seek(coverage * fadeAnim.GetAnimation("fade_out").Length, update: true);
     }
 
     /// <summary>The wheel row to land on, inserted by whichever scene navigates there; consumed on enter.</summary>
@@ -86,22 +87,13 @@ public partial class Game : Node
 
     private void Boot()
     {
-        var fadeLayer = new CanvasLayer { Layer = 100 };
-        fadeRect = new ColorRect { Color = Colors.Black, MouseFilter = Control.MouseFilterEnum.Ignore };
-        fadeRect.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
-        fadeLayer.AddChild(fadeRect);
-        AddChild(fadeLayer);
-
-        var fpsLayer = new CanvasLayer { Layer = 101 };
-        fpsLayer.AddChild(new FpsOverlay());
-        AddChild(fpsLayer);
+        fadeAnim = GetNode<AnimationPlayer>("%FadeAnim");
+        fadeMaterial = (ShaderMaterial)GetNode<ColorRect>("%FadeRect").Material;
+        fadeAnim.AnimationFinished += OnFadeFinished;
 
         fade = FadePhase.FadingIn;
-        fadeAlpha = 1.0f;
-        ApplyFade(1.0f);
-        FadeTo(0.0f, nameof(FinishFadeIn));
-
         SwapTo(Launch.Boot(this));
+        fadeAnim.Play("fade_in");
     }
 
     private void SwapTo(GameScene next)
@@ -114,49 +106,21 @@ public partial class Game : Node
     }
 
     /// <summary>
-    /// Tweens the overlay from the current alpha to <paramref name="target"/>
-    /// at the fade's constant rate, then calls <paramref name="then"/>.
-    /// Interrupting an opposite-direction fade continues smoothly from
-    /// wherever the alpha is.
+    /// Fully black ends the fade-out: swap scenes behind the cover, then start
+    /// the reveal; the reveal reaching clear returns input to the new scene.
     /// </summary>
-    private void FadeTo(float target, string then)
+    private void OnFadeFinished(StringName animation)
     {
-        fadeTween?.Kill();
-        var duration = FadeSeconds * Mathf.Abs(target - fadeAlpha);
-        fadeTween = CreateTween();
-        fadeTween.TweenMethod(Callable.From<float>(ApplyFade), fadeAlpha, target, duration);
-        fadeTween.TweenCallback(Callable.From(() => Call(then)));
-    }
-
-    /// <summary>The overlay's coverage, encoded for the canvas' sRGB blending.</summary>
-    private void ApplyFade(float alpha)
-    {
-        fadeAlpha = alpha;
-        if (fadeRect is not null)
+        if (animation == "fade_out" && fade == FadePhase.FadingOut)
         {
-            var color = fadeRect.Color;
-            color.A = 1.0f - Screen.LinearBlend(1.0f - alpha);
-            fadeRect.Color = color;
+            SwapTo(fadeTarget);
+            fade = FadePhase.FadingIn;
+            fadeAnim.Play("fade_in");
         }
-    }
-
-    /// <summary>Fully black: swap scenes behind the overlay, then fade back in.</summary>
-    private void FinishFadeOut()
-    {
-        if (fade != FadePhase.FadingOut)
+        else if (animation == "fade_in")
         {
-            return;
+            fade = FadePhase.Idle;
         }
-
-        SwapTo(fadeTarget);
-        fade = FadePhase.FadingIn;
-        FadeTo(0.0f, nameof(FinishFadeIn));
-    }
-
-    private void FinishFadeIn()
-    {
-        fade = FadePhase.Idle;
-        fadeTween = null;
     }
 
     private static T? Take<T>(ref T? slot)
