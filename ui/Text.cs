@@ -25,13 +25,8 @@ public static class Text
     /// </summary>
     public static Label Label(string text, float size, Color color)
     {
-        var pixels = Mathf.RoundToInt(size);
-        var label = new Label { Text = text, VerticalAlignment = VerticalAlignment.Center };
-        label.AddThemeFontSizeOverride("font_size", pixels);
+        var label = new GameLabel { Text = text, FontSize = size };
         label.AddThemeColorOverride("font_color", color);
-        label.CustomMinimumSize = new Vector2(0.0f, Mathf.Round(size * 1.2f));
-        var natural = Font.GetHeight(pixels);
-        label.AddThemeConstantOverride("line_spacing", Mathf.RoundToInt((size * 1.2f) - natural));
         return label;
     }
 
