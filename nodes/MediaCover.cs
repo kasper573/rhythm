@@ -26,8 +26,7 @@ public enum MediaPace
 [GlobalClass]
 public partial class MediaCover : TextureRect
 {
-    private MediaVideoPlayback? _videoPlayback;
-    private MediaPace _pace;
+    private MediaVideoPlayback? videoPlayback;
 
     /// <summary>
     /// Whether the cover has real pixels to show. Owners cross-fading layers
@@ -44,7 +43,6 @@ public partial class MediaCover : TextureRect
             Modulate = color,
             ZIndex = z,
             MouseFilter = MouseFilterEnum.Ignore,
-            _pace = pace,
         };
         cover.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
 
@@ -59,7 +57,7 @@ public partial class MediaCover : TextureRect
             }
             // The decoder's first frame arrives a few frames later; the cover
             // stays not-ready (invisible to cross-fading owners) until then.
-            cover._videoPlayback = playback;
+            cover.videoPlayback = playback;
             return cover;
         }
 
@@ -78,7 +76,7 @@ public partial class MediaCover : TextureRect
 
     public override void _Process(double delta)
     {
-        if (_videoPlayback?.GetTexture() is { } texture)
+        if (videoPlayback?.GetTexture() is { } texture)
         {
             Texture = texture;
             IsReady = true;
@@ -91,9 +89,9 @@ public partial class MediaCover : TextureRect
     /// </summary>
     public void SetClock(Seconds clock)
     {
-        if (_videoPlayback is not null)
+        if (videoPlayback is not null)
         {
-            _videoPlayback.SetClock(clock);
+            videoPlayback.SetClock(clock);
         }
     }
 }

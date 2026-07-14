@@ -37,7 +37,7 @@ public partial class HealthVial : Control
     public const float MinScreenWidth = 20.0f;
     public const float MaxScreenWidth = 50.0f;
 
-    private VialSide _sideType = VialSide.Left;
+    private VialSide sideType = VialSide.Left;
     private float fill;
     private Beat beat;
     private VialMotion motion = new();
@@ -48,8 +48,8 @@ public partial class HealthVial : Control
     [Export]
     public VialSide Side
     {
-        get => _sideType;
-        set { _sideType = value; Build(); }
+        get => sideType;
+        set { sideType = value; Build(); }
     }
 
     /// <summary>0..=1 of the vial's capacity.</summary>
