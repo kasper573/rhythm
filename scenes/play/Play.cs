@@ -168,6 +168,7 @@ public partial class Play : Control
             Rows = chart.Item2.Rows,
             Mines = chart.Item2.Mines,
             MaxHealth = (uint)config.PlayerMaxHealth,
+            GradeLayer = settings.Player(chart.Item1).GradeLayer,
         }).ToList();
     }
 

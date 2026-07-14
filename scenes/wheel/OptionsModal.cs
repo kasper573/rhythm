@@ -461,6 +461,7 @@ public class OptionsModal
                             Rows = live,
                             Mines = [],
                             MaxHealth = uint.MaxValue,
+                            GradeLayer = Settings.Instance.Player(preview.Player).GradeLayer,
                         }
                     },
                     Timing = state.Timing,

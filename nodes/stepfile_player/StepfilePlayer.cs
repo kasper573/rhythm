@@ -22,6 +22,10 @@ public class FieldSpec
     public required IReadOnlyList<Row> Rows { get; init; }
     public required IReadOnlyList<Mine> Mines { get; init; }
     public required uint MaxHealth { get; init; }
+
+    /// <summary>Whether this player's grade word and combo pop out behind the
+    /// arrows or in front of them.</summary>
+    public required GradeLayer GradeLayer { get; init; }
 }
 
 /// <summary>
@@ -97,17 +101,19 @@ public partial class StepfilePlayer : Control
         player._behind = behind;
         player._overlay = overlay;
 
-        // Add grade displays and combos
+        // The grade word and the combo under it pop out on the player's chosen
+        // layer: behind the arrows, or in the overlay in front of them.
         for (int index = 0; index < player._rigs.Count; index++)
         {
             var playerId = player._rigs[index].Layout.Player;
             var originX = player._rigs[index].Layout.OriginX;
+            var gradeLayer = options.Fields[index].GradeLayer == GradeLayer.InFront ? overlay : behind;
 
-            player._grades.Add(new GradeDisplay(behind, playerId, originX));
+            player._grades.Add(new GradeDisplay(gradeLayer, playerId, originX));
 
             var comboLabel = Text.Label(string.Empty, 44.0f, Colors.White);
             comboLabel.Visible = false;
-            behind.AddChild(comboLabel);
+            gradeLayer.AddChild(comboLabel);
 
             player._combos.Add(new ComboDisplay(playerId, originX, comboLabel));
         }
