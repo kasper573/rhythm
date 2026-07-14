@@ -55,7 +55,6 @@ public partial class Wheel : Control
     private const float BannerSizeY = 168.0f;
     private const float BackgroundOpacity = 0.25f;
 
-    private static readonly Color BackdropColor = new(0.05f, 0.085f, 0.03f);
     private static readonly Color StepfileBarColor = new(0.10f, 0.19f, 0.07f);
     private static readonly Color GroupBarColor = new(0.055f, 0.10f, 0.045f);
     private static readonly Color BorderColor = new(0.97f, 1.0f, 0.62f);
@@ -67,7 +66,6 @@ public partial class Wheel : Control
     private static readonly Color BannerTintColor = new(0.10f, 0.18f, 0.07f);
     private static readonly Color BannerTextColor = new(0.9f, 1.0f, 0.85f);
     private static readonly Color StatsTextColor = new(0.75f, 0.9f, 0.7f);
-    private static readonly Color HelpTextColor = new(0.5f, 0.62f, 0.5f);
 
     /// <summary>Once every beat, apex on it, decaying cubically until the next.</summary>
     private static readonly RhythmCycle HighlightPulse = new()
@@ -106,11 +104,6 @@ public partial class Wheel : Control
     {
         SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         Settings.Instance.Changed += OnSettingsChanged;
-
-        var backdrop = new ColorRect { Color = BackdropColor };
-        backdrop.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
-        backdrop.MouseFilter = MouseFilterEnum.Ignore;
-        AddChild(backdrop);
 
         canvas = new Node2D();
         AddChild(canvas);
@@ -157,12 +150,6 @@ public partial class Wheel : Control
             Text.Place(empty, Vector2.Zero, TextPivot.Center);
             empty.ZIndex = 200;
         }
-
-        var help = Text.Label("up/down: change difficulty\nhold select: change options", 20.0f, HelpTextColor);
-        help.HorizontalAlignment = HorizontalAlignment.Center;
-        canvas.AddChild(help);
-        Text.Place(help, new Vector2(DetailsBoxCenterX, 214.0f), TextPivot.Center);
-        help.ZIndex = 50;
 
         dirty = true;
         MarkSettled();
