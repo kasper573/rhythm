@@ -1,0 +1,24 @@
+name: check
+
+on:
+  push:
+    branches: [main, godot-cs]
+  pull_request:
+
+jobs:
+  lint-format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      # The build runs the .NET analyzers with warnings-as-errors — the linter.
+      - name: build
+        run: dotnet build Rhythm.sln
+
+      # Style + whitespace check; --verify-no-changes only reports, never writes.
+      - name: format
+        run: dotnet format Rhythm.sln --verify-no-changes --no-restore
