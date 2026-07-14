@@ -51,40 +51,46 @@ public partial class RhythmCycle : Resource
 
     private static float CubicBezierEase(float x1, float y1, float x2, float y2, float t)
     {
-        t = Mathf.Clamp(t, 0, 1);
+        t = Mathf.Clamp(t, 0.0f, 1.0f);
 
-        float s = t;
+        var s = t;
         for (int i = 0; i < 8; i++)
         {
-            var cs = CubicBezierAxis(x1, x2, s);
-            var ds = CubicBezierDerivative(x1, x2, s);
-            if (Mathf.Abs(ds) < 1e-6f) break;
-            s -= (cs - t) / ds;
+            var error = CubicBezierAxis(x1, x2, s) - t;
+            if (Mathf.Abs(error) < 1e-5f)
+            {
+                return CubicBezierAxis(y1, y2, s);
+            }
+            var derivative = CubicBezierDerivative(x1, x2, s);
+            if (Mathf.Abs(derivative) < 1e-6f)
+            {
+                break;
+            }
+            s = Mathf.Clamp(s - error / derivative, 0.0f, 1.0f);
         }
 
+        var low = 0.0f;
+        var high = 1.0f;
         for (int i = 0; i < 24; i++)
         {
-            var cs = CubicBezierAxis(x1, x2, s);
-            if (Mathf.Abs(cs - t) < 1e-6f) break;
-
-            if (cs < t)
-                s = (s + 1.0f) / 2.0f;
+            s = (low + high) / 2.0f;
+            if (CubicBezierAxis(x1, x2, s) < t)
+                low = s;
             else
-                s = s / 2.0f;
+                high = s;
         }
-
         return CubicBezierAxis(y1, y2, s);
     }
 
     private static float CubicBezierAxis(float a, float b, float s)
     {
-        var oneMinusS = 1 - s;
-        return 3 * oneMinusS * oneMinusS * s * a + 3 * oneMinusS * s * s * (b - a) + s * s * s;
+        var oneMinusS = 1.0f - s;
+        return 3.0f * oneMinusS * oneMinusS * s * a + 3.0f * oneMinusS * s * s * b + s * s * s;
     }
 
     private static float CubicBezierDerivative(float a, float b, float s)
     {
-        var oneMinusS = 1 - s;
-        return 3 * oneMinusS * oneMinusS * a + 6 * oneMinusS * s * (b - a) + 3 * s * s * (1 - b);
+        var oneMinusS = 1.0f - s;
+        return 3.0f * oneMinusS * oneMinusS * a + 6.0f * oneMinusS * s * (b - a) + 3.0f * s * s * (1.0f - b);
     }
 }
