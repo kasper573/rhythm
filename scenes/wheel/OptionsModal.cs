@@ -339,13 +339,34 @@ public class OptionsModal
         foreach (var preview in previews)
         {
             var size = preview.Flank.GetSize();
+            var canvas = BandCanvas(size);
             var viewport = new SubViewport
             {
+                // Opaque backdrop, not transparent: the grade text's glow shader
+                // is premultiplied-alpha (it adds light onto its background, as in
+                // the play scene's opaque window). Composited into a transparent
+                // viewport and re-blended by the display TextureRect, that added
+                // light is lost and the glow disappears. The backdrop below gives
+                // it the same opaque context the play scene has.
                 TransparentBg = true,
                 Size = new Vector2I((int)size.X, (int)size.Y),
+                // Mirror the main window's canvas_items stretch (project.godot):
+                // the engine authors its HUD in logical canvas units, so the
+                // preview must stretch those units to its pixels exactly as the
+                // window does — otherwise the field self-scales but the text does
+                // not, and the grade/combo/OK words land off-place and oversized.
+                Size2DOverride = new Vector2I((int)canvas.X, (int)canvas.Y),
+                Size2DOverrideStretch = true,
                 RenderTargetUpdateMode = SubViewport.UpdateMode.Always,
             };
             preview.Flank.AddChild(viewport);
+
+            // Opaque backdrop behind the field and HUD, matching the modal's own
+            // black so the preview reads as a seamless panel while giving the
+            // premultiplied grade-text glow the opaque surface it composites on.
+            var backdrop = new ColorRect { Color = Colors.Black };
+            backdrop.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+            viewport.AddChild(backdrop);
 
             var display = new TextureRect();
             display.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
@@ -376,8 +397,10 @@ public class OptionsModal
             if (surface.X <= 0.0f || surface.Y <= 0.0f)
                 continue;
 
+            var canvas = BandCanvas(surface);
             preview.Viewport.Size = new Vector2I((int)surface.X, (int)surface.Y);
-            preview.Engine.SetCanvas(BandCanvas(surface), surface.Y / PreviewBand);
+            preview.Viewport.Size2DOverride = new Vector2I((int)canvas.X, (int)canvas.Y);
+            preview.Engine.SetCanvas(canvas, surface.Y / PreviewBand);
         }
     }
 
