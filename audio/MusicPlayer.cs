@@ -34,6 +34,10 @@ public partial class MusicPlayer : Node
             return;
         }
 
+        // Stop and free the outgoing music before switching, or its player
+        // keeps sounding and every switch stacks another.
+        playing?.Channel?.Dispose();
+
         playing = new PlayingBgm
         {
             SmPath = bgm.SmPath,
@@ -46,6 +50,7 @@ public partial class MusicPlayer : Node
 
     public void Stop()
     {
+        playing?.Channel?.Dispose();
         playing = null;
     }
 
@@ -163,6 +168,7 @@ public partial class MusicPlayer : Node
 
         if (active.IsFinished)
         {
+            active.Dispose();
             if (playing.Clock is not null)
             {
                 playing.Channel = null;
