@@ -11,11 +11,11 @@ namespace Rhythm;
 [GlobalClass]
 public partial class KeymapScene : Control
 {
-    private int active = 0;
-    private GameAction? prompt = null;
-    private bool promptJustClosed = false;
-    private bool cancelArmed = false;
-    private double cancelHeld = 0.0;
+    private int active;
+    private GameAction? prompt;
+    private bool promptJustClosed;
+    private bool cancelArmed;
+    private double cancelHeld;
     private bool[] navBefore = [false, false, false, false];
     private List<Label> actionLabels = [];
     private List<Label> bindingLabels = [];

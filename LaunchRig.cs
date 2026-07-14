@@ -81,7 +81,7 @@ public partial class LaunchRig : Node
         }
     }
 
-    private void PressAction(GameAction action, bool pressed)
+    private static void PressAction(GameAction action, bool pressed)
     {
         try
         {

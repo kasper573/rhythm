@@ -114,10 +114,9 @@ public sealed class StepfileLibrary
 
     private static string? GroupBanner(string groupPath, string groupName)
     {
-        var wantedStem = groupName.ToLowerInvariant();
         return Directory.EnumerateFiles(groupPath)
             .Where(path => HasExtension(path, ImageExtensions) &&
-                System.IO.Path.GetFileNameWithoutExtension(path).ToLowerInvariant() == wantedStem)
+                string.Equals(System.IO.Path.GetFileNameWithoutExtension(path), groupName, StringComparison.OrdinalIgnoreCase))
             .FirstOrDefault();
     }
 
@@ -185,9 +184,8 @@ public sealed class StepfileEntry(Stepfile stepfile, string smPath, string dir)
             return direct;
         }
 
-        var lowered = name.ToLowerInvariant();
         return Directory.EnumerateFileSystemEntries(dir)
-            .FirstOrDefault(path => System.IO.Path.GetFileName(path).ToLowerInvariant() == lowered);
+            .FirstOrDefault(path => string.Equals(System.IO.Path.GetFileName(path), name, StringComparison.OrdinalIgnoreCase));
     }
 
     public string? MusicPath()

@@ -70,16 +70,9 @@ public partial class HighScores : Node
     /// </summary>
     public static string HighscoreKey(StepfileLibrary library, StepfileId id, Chart chart)
     {
-        using var hasher = SHA256.Create();
         var input = $"{library.GroupName(id)}\x1f{library.Stepfile(id).Name()}\x1f{chart.StepsType:G}\x1f{chart.Difficulty:G}";
-        var hash = hasher.ComputeHash(Encoding.UTF8.GetBytes(input));
-        var sb = new StringBuilder();
-        foreach (var byte_ in hash)
-        {
-            sb.Append(byte_.ToString("x2"));
-        }
-
-        return sb.ToString();
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(input));
+        return Convert.ToHexString(hash).ToLowerInvariant();
     }
 }
 

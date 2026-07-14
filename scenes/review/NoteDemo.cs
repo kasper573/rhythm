@@ -195,7 +195,7 @@ public partial class NoteDemo : Control
         }
     }
 
-    private void PrintCatalog()
+    private static void PrintCatalog()
     {
         foreach (var name in Scenarios.Names())
         {

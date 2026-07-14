@@ -189,7 +189,7 @@ public readonly record struct BgChange(Beat Beat, string File, bool Crossfade, b
 /// <summary>The <c>#DISPLAYBPM</c> the wheel shows in place of the real tempo.</summary>
 public abstract record DisplayBpm
 {
-    public sealed record Single(Bpm Bpm) : DisplayBpm;
+    public sealed record Constant(Bpm Bpm) : DisplayBpm;
 
     public sealed record Range(Bpm Low, Bpm High) : DisplayBpm;
 

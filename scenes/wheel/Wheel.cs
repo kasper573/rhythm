@@ -85,7 +85,7 @@ public partial class Wheel : Control
     private bool dirty;
     private Seconds settle = Seconds.Zero;
     private bool justSettled;
-    private PerPlayer<SelectHold> selectHolds = new();
+    private PerPlayer<SelectHold> selectHolds;
     private Node2D? canvas;
     private Sprite2D? highlight;
     private Node2D? infoPanel;
@@ -273,25 +273,25 @@ public partial class Wheel : Control
     /// name contains the group string and that holds a stepfile whose title
     /// contains the stepfile string, both case-insensitive.
     /// </summary>
-    private StepfileId? WheelDefaultSelection()
+    private static StepfileId? WheelDefaultSelection()
     {
         if (Config.Current is null)
         {
             return null;
         }
-        var groupSearch = Config.Current.WheelDefaultGroup.ToLowerInvariant();
-        var stepfileSearch = Config.Current.WheelDefaultStepfile.ToLowerInvariant();
+        var groupSearch = Config.Current.WheelDefaultGroup;
+        var stepfileSearch = Config.Current.WheelDefaultStepfile;
 
         for (int groupIndex = 0; groupIndex < Library.Instance.Groups.Count; groupIndex++)
         {
             var group = Library.Instance.Groups[groupIndex];
-            if (!group.Name.ToLowerInvariant().Contains(groupSearch))
+            if (!group.Name.Contains(groupSearch, StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }
             for (int stepfileIndex = 0; stepfileIndex < group.Stepfiles.Count; stepfileIndex++)
             {
-                if (group.Stepfiles[stepfileIndex].DisplayTitle().ToLowerInvariant().Contains(stepfileSearch))
+                if (group.Stepfiles[stepfileIndex].DisplayTitle().Contains(stepfileSearch, StringComparison.OrdinalIgnoreCase))
                 {
                     return new StepfileId(groupIndex, stepfileIndex);
                 }
@@ -393,7 +393,8 @@ public partial class Wheel : Control
             int next = Mathf.Clamp(position + delta, 0, charts.Count - 1);
             if (next != position)
             {
-                Game.Instance.PreferredDifficulty[player] = stepfile.Charts[charts[next]].Difficulty.Rank();
+                Game.Instance.PreferredDifficulty =
+                    Game.Instance.PreferredDifficulty.With(player, stepfile.Charts[charts[next]].Difficulty.Rank());
                 dirty = true;
                 MarkSettled();
                 Sfx.Navigate.Play();
@@ -426,7 +427,7 @@ public partial class Wheel : Control
                     if (hold.Held.Value >= OptionsHoldSeconds)
                     {
                         hold.Armed = false;
-                        selectHolds[player] = hold;
+                        selectHolds = selectHolds.With(player, hold);
                         Sfx.Select.Play();
                         OpenOptions();
                         return;
@@ -435,12 +436,12 @@ public partial class Wheel : Control
                 else if (Actions.JustReleased(select))
                 {
                     hold.Armed = false;
-                    selectHolds[player] = hold;
+                    selectHolds = selectHolds.With(player, hold);
                     HandleTap();
                     return;
                 }
             }
-            selectHolds[player] = hold;
+            selectHolds = selectHolds.With(player, hold);
         }
     }
 

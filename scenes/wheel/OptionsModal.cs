@@ -1,3 +1,4 @@
+using System.Globalization;
 using Godot;
 using Rhythm.Core;
 
@@ -8,7 +9,7 @@ namespace Rhythm;
 /// The options table shows Speed Type, Speed Modifier, Note Skin, Perspective, Grade Layer, Grade Position.
 /// Each active player gets a column, with a preview on their flank showing a mocked chart.
 /// </summary>
-public class OptionsModal
+public sealed class OptionsModal : IDisposable
 {
     private const float TransitionSeconds = 0.25f;
     private const float NameWidth = 220.0f;
@@ -20,7 +21,7 @@ public class OptionsModal
     private Control content = null!;
     private VBoxContainer column = null!;
     private List<Label> texts = [];
-    private float t = 0.0f;
+    private float t;
     private float dir = 1.0f;
     private List<PlayerId> players = [];
     private List<PanelState> panels = [];
@@ -29,20 +30,20 @@ public class OptionsModal
     private List<Preview> previews = [];
     private PreviewState? state;
 
-    private class PanelState
+    private sealed class PanelState
     {
         public required PlayerId Player { get; init; }
         public required int ActiveRow { get; set; }
     }
 
-    private class ValueCell
+    private sealed class ValueCell
     {
         public required PlayerId Player { get; init; }
         public required int Row { get; init; }
         public required Label Label { get; init; }
     }
 
-    private class Preview
+    private sealed class Preview
     {
         public required PlayerId Player { get; init; }
         public required Control Flank { get; init; }
@@ -54,7 +55,7 @@ public class OptionsModal
         public PlayerOptions? Built { get; set; }
     }
 
-    private class PreviewState
+    private sealed class PreviewState
     {
         public required List<Row> Rows { get; init; }
         public required StepfileTiming Timing { get; init; }
@@ -212,7 +213,7 @@ public class OptionsModal
 
         if (!AnimateTransition(delta))
         {
-            root.QueueFree();
+            Dispose();
             return true;
         }
 
@@ -728,11 +729,20 @@ public class OptionsModal
         return best;
     }
 
+    /// <summary>Tears the modal's overlay out of the scene.</summary>
+    public void Dispose()
+    {
+        if (GodotObject.IsInstanceValid(root))
+        {
+            root.QueueFree();
+        }
+    }
+
     private static string FormatModifier(float value, NoteSpeed speed) =>
         speed is NoteSpeed.Dynamic ? $"{FormatValue(value)}x" : FormatValue(value);
 
     private static string FormatValue(float value) =>
-        value == (int)value ? value.ToString("F0") : value.ToString();
+        value == (int)value ? value.ToString("F0", CultureInfo.InvariantCulture) : value.ToString(CultureInfo.InvariantCulture);
 
     private static int NoteTier(Beat beat)
     {

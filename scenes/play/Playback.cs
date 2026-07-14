@@ -10,7 +10,7 @@ namespace Rhythm;
 /// the StepfileClock servos onto the channel's position reports so grading
 /// sees a smooth, accurate timeline.
 /// </summary>
-internal class Playback
+internal sealed class Playback
 {
     public string Title { get; }
     private StepfileClock clock;

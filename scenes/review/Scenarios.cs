@@ -30,6 +30,8 @@ public record Scenario(
 /// <summary>Catalog of all animation scenarios for visual testing and review.</summary>
 public static class Scenarios
 {
+    private static readonly uint[] Stream16thQuants = [4u, 16u, 8u, 16u];
+
     /// <summary>Gets all scenario names in order.</summary>
     public static IReadOnlyList<string> Names() =>
         Matrix().Select(s => s.Name).ToList();
@@ -240,7 +242,7 @@ public static class Scenarios
             Enumerable.Range(0, 16)
                 .Select(i =>
                 {
-                    var quant = new[] { 4u, 16u, 8u, 16u }[i % 4];
+                    var quant = Stream16thQuants[i % 4];
                     return new ScenarioNote(i * 0.25, (uint)(i % 4), quant, null, false);
                 })
                 .ToList(),

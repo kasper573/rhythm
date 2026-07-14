@@ -200,7 +200,7 @@ public static class StepfileParser
             return null;
         }
 
-        return TryBpm(value, out var single) ? new DisplayBpm.Single(single) : null;
+        return TryBpm(value, out var single) ? new DisplayBpm.Constant(single) : null;
 
         static bool TryBpm(string text, out Bpm bpm)
         {

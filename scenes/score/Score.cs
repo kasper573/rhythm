@@ -1,3 +1,4 @@
+using System.Globalization;
 using Godot;
 using Rhythm.Core;
 
@@ -136,14 +137,14 @@ public partial class Score : Control
             {
                 var grade = config.Grading.Dynamic[i];
                 labelsColumn.AddChild(Text.Label(grade.Name, 30.0f, grade.Color));
-                valuesColumn.AddChild(Text.Label(tally.GradeCounts[i].ToString(), 30.0f, grade.Color));
+                valuesColumn.AddChild(Text.Label(tally.GradeCounts[i].ToString(CultureInfo.InvariantCulture), 30.0f, grade.Color));
             }
         }
 
         if (config.Grading?.Miss is { } miss)
         {
             labelsColumn.AddChild(Text.Label(miss.Name, 30.0f, miss.Color));
-            valuesColumn.AddChild(Text.Label(tally.MissCount.ToString(), 30.0f, miss.Color));
+            valuesColumn.AddChild(Text.Label(tally.MissCount.ToString(CultureInfo.InvariantCulture), 30.0f, miss.Color));
         }
 
         labelsColumn.AddChild(Text.Label("Holds", 30.0f, new Color(0.8f, 0.85f, 0.8f, 1.0f)));
@@ -208,7 +209,7 @@ public partial class Score : Control
         Game.Instance.ChangeScene(GameScene.Wheel);
     }
 
-    private Tally ComputeTally(StageResults stage, GameConfig config)
+    private static Tally ComputeTally(StageResults stage, GameConfig config)
     {
         if (config.Grading is null)
         {
@@ -276,7 +277,7 @@ public partial class Score : Control
         };
     }
 
-    private class Tally
+    private sealed class Tally
     {
         public required uint[] GradeCounts { get; init; }
         public required uint MissCount { get; init; }

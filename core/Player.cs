@@ -17,10 +17,8 @@ public enum PlayerId
 /// </summary>
 public struct PerPlayer<T>(T p1, T p2)
 {
-    public T P1 = p1;
-    public T P2 = p2;
-
-    public static PerPlayer<T> Uniform(T value) => new(value, value);
+    public T P1 { get; set; } = p1;
+    public T P2 { get; set; } = p2;
 
     public T this[PlayerId player]
     {
@@ -37,6 +35,16 @@ public struct PerPlayer<T>(T p1, T p2)
             }
         }
     }
+
+    /// <summary>Returns a copy with <paramref name="player"/>'s slot set to <paramref name="value"/>.</summary>
+    public readonly PerPlayer<T> With(PlayerId player, T value) =>
+        player == PlayerId.P1 ? this with { P1 = value } : this with { P2 = value };
+}
+
+/// <summary>Builds <see cref="PerPlayer{T}"/> values.</summary>
+public static class PerPlayer
+{
+    public static PerPlayer<T> Uniform<T>(T value) => new(value, value);
 }
 
 /// <summary>

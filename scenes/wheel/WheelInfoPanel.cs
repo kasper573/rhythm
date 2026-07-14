@@ -1,3 +1,4 @@
+using System.Globalization;
 using Godot;
 using Rhythm.Core;
 
@@ -142,10 +143,10 @@ public partial class Wheel
         bannerPending = null;
     }
 
-    private string BpmLabel(Stepfile stepfile)
+    private static string BpmLabel(Stepfile stepfile)
     {
-        if (stepfile.DisplayBpm is DisplayBpm.Single single)
-            return $"BPM {single.Bpm}";
+        if (stepfile.DisplayBpm is DisplayBpm.Constant constant)
+            return $"BPM {constant.Bpm}";
         if (stepfile.DisplayBpm is DisplayBpm.Range range)
             return $"BPM {range.Low}-{range.High}";
         if (stepfile.DisplayBpm is DisplayBpm.Random)
@@ -157,7 +158,7 @@ public partial class Wheel
         return $"BPM {low}-{high}";
     }
 
-    private (string, Color) DifficultyStyle(Difficulty difficulty) =>
+    private static (string, Color) DifficultyStyle(Difficulty difficulty) =>
         difficulty.Kind switch
         {
             DifficultyKind.Beginner => ("Beginner", new Color(0.35f, 0.9f, 0.95f)),
@@ -170,7 +171,7 @@ public partial class Wheel
             _ => ("Unknown", new Color(0.7f, 0.7f, 0.75f)),
         };
 
-    private List<(string, float, float)> StatGrid(Stepfile stepfile, int chartIndex)
+    private static List<(string, float, float)> StatGrid(Stepfile stepfile, int chartIndex)
     {
         const float StatColumnLabel0 = -170.0f;
         const float StatColumnValue0 = -75.0f;
@@ -190,10 +191,10 @@ public partial class Wheel
 
         var pairs = new[]
         {
-            ("Steps", stats.Steps.ToString()),
-            ("Jumps", stats.Jumps.ToString()),
-            ("Holds", stats.Holds.ToString()),
-            ("Mines", stats.Mines.ToString()),
+            ("Steps", stats.Steps.ToString(CultureInfo.InvariantCulture)),
+            ("Jumps", stats.Jumps.ToString(CultureInfo.InvariantCulture)),
+            ("Holds", stats.Holds.ToString(CultureInfo.InvariantCulture)),
+            ("Mines", stats.Mines.ToString(CultureInfo.InvariantCulture)),
             ("Length", $"{minutes}:{seconds:D2}"),
         };
 

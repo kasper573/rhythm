@@ -153,12 +153,12 @@ public partial class TouchSteps : Node
         }
     }
 
-    private void Press(GameAction action)
+    private static void Press(GameAction action)
     {
         Input.ActionPress(action.ActionName());
     }
 
-    private void Release(GameAction action)
+    private static void Release(GameAction action)
     {
         Input.ActionRelease(action.ActionName());
     }

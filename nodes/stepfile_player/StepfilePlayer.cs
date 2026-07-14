@@ -479,7 +479,7 @@ public partial class StepfilePlayer : Control
 }
 
 /// <summary>Input tracking for one frame.</summary>
-internal class PlayInput
+internal sealed class PlayInput
 {
     public List<GameAction> Held { get; } = [];
     public List<GameAction> Struck { get; } = [];

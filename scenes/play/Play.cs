@@ -156,7 +156,7 @@ public partial class Play : Control
 
     private readonly record struct PackSpec(PlayerId Player, uint Columns, NoteSpeed Speed);
 
-    private List<FieldSpec> BuildFieldSpecs(List<(PlayerId, Chart)> charts)
+    private static List<FieldSpec> BuildFieldSpecs(List<(PlayerId, Chart)> charts)
     {
         var config = Config.Current!;
         var settings = Settings.Instance;
@@ -447,6 +447,8 @@ public partial class Play : Control
 
     public override void _ExitTree()
     {
+        backgrounds?.Dispose();
+        tuning?.Dispose();
         MusicPlayer.Instance.Stop();
     }
 }
@@ -454,7 +456,7 @@ public partial class Play : Control
 /// <summary>
 /// Loads an asset file asynchronously.
 /// </summary>
-internal class AssetLoader
+internal sealed class AssetLoader
 {
     private readonly string path;
     private byte[]? buffer;

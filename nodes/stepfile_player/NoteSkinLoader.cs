@@ -65,7 +65,7 @@ public static class NoteSkinLibrary
 
     public static IReadOnlyList<NoteSkinEntry> Skins => skins ??= Scan();
 
-    private static IReadOnlyList<NoteSkinEntry> Scan()
+    private static List<NoteSkinEntry> Scan()
     {
         var root = Assets.Path("note_skins");
         if (!Directory.Exists(root))
@@ -199,7 +199,7 @@ public static class NoteSkinLoader
         var texture = loader.Texture(model.Texture);
         return new MineArt.Model(new ModelArt(loader.Mesh(model.Mesh),
             SkinMaterials.Unlit(texture, Vector2.One, Vector2.Zero),
-            loader.Shell(model.StaticShell, texture),
+            SkinAssetLoader.Shell(model.StaticShell, texture),
             new Vector2(model.UvScroll[0], model.UvScroll[1])));
     }
 }
@@ -238,7 +238,7 @@ internal sealed class SkinAssetLoader(string name)
     }
 
     /// <summary>The model's texture-static outline/sheen shell — the glb's second surface — as one shared material.</summary>
-    public StandardMaterial3D? Shell(bool staticShell, Texture2D texture)
+    public static StandardMaterial3D? Shell(bool staticShell, Texture2D texture)
     {
         if (!staticShell)
         {

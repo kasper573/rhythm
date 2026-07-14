@@ -9,7 +9,7 @@ namespace Rhythm;
 /// the session's visible clock so videos stay locked to the music. Layers
 /// live in their own host under everything else the scene draws.
 /// </summary>
-internal class Backgrounds
+internal sealed class Backgrounds : IDisposable
 {
     private const float CrossfadeSeconds = 0.5f;
     private const float Dim = 0.5f;
@@ -17,10 +17,10 @@ internal class Backgrounds
     private Control host;
     private string? initialBgPath;
     private List<BackgroundChange> changes = [];
-    private int nextChangeIndex = 0;
+    private int nextChangeIndex;
     private List<Layer> layers = [];
 
-    private class BackgroundChange
+    private sealed class BackgroundChange
     {
         public Seconds Time { get; set; }
         public string Path { get; set; } = "";
@@ -28,7 +28,7 @@ internal class Backgrounds
         public bool Loops { get; set; }
     }
 
-    private class Layer
+    private sealed class Layer
     {
         public MediaCover? Cover { get; set; }
         public float Alpha { get; set; }
@@ -154,5 +154,14 @@ internal class Backgrounds
             Alpha = alpha,
             Target = 1.0f,
         });
+    }
+
+    /// <summary>Frees the background host and its layers when the stage tears down.</summary>
+    public void Dispose()
+    {
+        if (GodotObject.IsInstanceValid(host))
+        {
+            host.QueueFree();
+        }
     }
 }

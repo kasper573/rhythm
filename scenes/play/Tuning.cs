@@ -8,16 +8,16 @@ namespace Rhythm;
 /// AutoSync, and nudging the three synchronization offsets — all surfacing
 /// through the offset OSD.
 /// </summary>
-internal class Tuning
+internal sealed class Tuning : IDisposable
 {
     private const int AutosyncSamples = 24;
 
-    private bool autosyncEnabled = false;
+    private bool autosyncEnabled;
     private List<Seconds> samples = [];
-    private (bool autosyncEnabled, int sampleCount)? shown = null;
+    private (bool autosyncEnabled, int sampleCount)? shown;
     private Label? osd;
     private Label? status;
-    private float osdAlpha = 0.0f;
+    private float osdAlpha;
 
     public Tuning(Control scene)
     {
@@ -228,5 +228,18 @@ internal class Tuning
     {
         var input = Input.Singleton;
         return input.IsKeyPressed(Key.Shift);
+    }
+
+    /// <summary>Frees the OSD labels when the stage tears down.</summary>
+    public void Dispose()
+    {
+        if (osd is not null && GodotObject.IsInstanceValid(osd))
+        {
+            osd.QueueFree();
+        }
+        if (status is not null && GodotObject.IsInstanceValid(status))
+        {
+            status.QueueFree();
+        }
     }
 }

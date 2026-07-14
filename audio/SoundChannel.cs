@@ -75,9 +75,6 @@ public sealed class SoundChannel : IDisposable
         }
     }
 
-    /// <summary>Whether the sound is decoded and playback obeys this channel.</summary>
-    public bool IsReady => true;
-
     public void SetPaused(bool pause)
     {
         paused = pause;

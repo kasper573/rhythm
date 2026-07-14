@@ -21,7 +21,7 @@ public partial class Game : Node
     /// The difficulty rank each player is aiming for, kept across stepfiles
     /// and scene visits; each stepfile snaps to its nearest available chart.
     /// </summary>
-    public PerPlayer<int> PreferredDifficulty = PerPlayer<int>.Uniform((int)DifficultyKind.Medium);
+    public PerPlayer<int> PreferredDifficulty { get; set; } = PerPlayer.Uniform((int)DifficultyKind.Medium);
 
     private GameScene scene = GameScene.MainMenu;
     private Node? current;
