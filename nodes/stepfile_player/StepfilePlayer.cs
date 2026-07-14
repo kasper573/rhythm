@@ -325,20 +325,21 @@ public partial class StepfilePlayer : Control
 
         SyncFields();
 
-        // The sandwich layers hold canvas-unit content while the control itself
-        // spans window pixels: place and scale them by the canvas' pixel density
-        // so their content lands wherever the canvas does.
-        var center = _canvas * _pixelScale / 2.0f;
-        var density = Vector2.One * _pixelScale;
+        // The sandwich layers hold the 2D text overlays in canvas units,
+        // centered on the field. The canvas stretch already scales the whole
+        // scene to the window, so they must not be scaled again by pixel
+        // density — doing so drove the text off toward the bottom-right and
+        // blew up its size as the window grew.
+        var center = _canvas / 2.0f;
         if (_behind is not null)
         {
             _behind.Position = center;
-            _behind.Scale = density;
+            _behind.Scale = Vector2.One;
         }
         if (_overlay is not null)
         {
             _overlay.Position = center;
-            _overlay.Scale = density;
+            _overlay.Scale = Vector2.One;
         }
 
         var clock = new FieldClock(_visibleNow, _timing, _targetY);

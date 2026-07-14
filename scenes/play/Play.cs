@@ -96,11 +96,7 @@ public partial class Play : Control
         foreach (var (player, _) in charts)
         {
             var side = player == PlayerId.P1 ? VialSide.Left : VialSide.Right;
-            var vial = new HealthVial
-            {
-                Side = side,
-                EdgePadding = config.Stage?.ScreenEdgePadding ?? 20
-            };
+            var vial = new HealthVial { Side = side };
             vial.SetFill(1.0f);
             AddChild(vial);
             vials.Add((player, vial));
@@ -235,6 +231,30 @@ public partial class Play : Control
         var padding = Config.Current!.Stage!.ScreenEdgePadding;
         engine.SetTargetY((rect.Size.Y / 2.0f) - padding - (arrowSize / 2.0f));
         engine.SetGradeArea(GradeText.AreaOf((rect.Size.Y / 2.0f) - padding, (-rect.Size.Y / 2.0f) + padding));
+
+        PlaceVials(rect, pixelsPerUnit / deviceScale);
+    }
+
+    /// <summary>
+    /// Keeps each vial a fixed <see cref="StageConfig.ScreenEdgePadding"/>
+    /// screen pixels from the top, bottom, and its player's edge, at every
+    /// window size and aspect; only its on-screen width clamps.
+    /// </summary>
+    private void PlaceVials(Rect2 rect, float pixelScale)
+    {
+        pixelScale = Math.Max(pixelScale, 0.001f);
+        var inset = Config.Current!.Stage!.ScreenEdgePadding / pixelScale;
+        var widthOnScreen = Math.Clamp(HealthVial.NaturalWidth * pixelScale, HealthVial.MinScreenWidth, HealthVial.MaxScreenWidth);
+        var width = widthOnScreen / pixelScale;
+        var top = rect.Position.Y + inset;
+        var height = Math.Max(rect.Size.Y - (2.0f * inset), 1.0f);
+        foreach (var (player, vial) in vials)
+        {
+            var left = player == PlayerId.P1
+                ? rect.Position.X + inset
+                : rect.Position.X + rect.Size.X - inset - width;
+            vial.Place(new Rect2(left, top, width, height));
+        }
     }
 
     public override void _Process(double delta)

@@ -25,14 +25,19 @@ public enum VialSide
 public partial class HealthVial : Control
 {
     private const float GlowMargin = 32.0f;
-    private const float VialWidth = 50.0f;
     private const float LevelTau = 0.25f;
     private const float TurbulenceTau = 0.9f;
     private const float ColorTau = 0.35f;
     private const int GradientSamples = 16;
 
+    /// <summary>The vial's designed on-screen width and the pixel range its
+    /// on-screen width is clamped to, so it stays a readable sliver whatever
+    /// the window scale (mirrors the reference's VIAL_WIDTH/MIN/MAX).</summary>
+    public const float NaturalWidth = 50.0f;
+    public const float MinScreenWidth = 20.0f;
+    public const float MaxScreenWidth = 50.0f;
+
     private VialSide _sideType = VialSide.Left;
-    private float edgePadding = 20.0f;
     private float fill;
     private Beat beat;
     private VialMotion motion = new();
@@ -47,13 +52,6 @@ public partial class HealthVial : Control
         set { _sideType = value; Build(); }
     }
 
-    [Export(PropertyHint.Range, "0,64,1")]
-    public float EdgePadding
-    {
-        get => edgePadding;
-        set { edgePadding = value; Build(); }
-    }
-
     /// <summary>0..=1 of the vial's capacity.</summary>
     public void SetFill(float value) => fill = value;
 
@@ -62,6 +60,18 @@ public partial class HealthVial : Control
     /// the vial rests.
     /// </summary>
     public void SetBeat(Beat value) => beat = value;
+
+    /// <summary>
+    /// Places the vial's glass rect in canvas units. The owner drives this
+    /// from the visible screen every frame so the vial keeps a fixed screen
+    /// inset and a clamped on-screen width whatever the window size — nothing
+    /// about its edges changes with the window, only its width clamps.
+    /// </summary>
+    public void Place(Rect2 rect)
+    {
+        Position = rect.Position;
+        Size = rect.Size;
+    }
 
     public override void _Ready()
     {
@@ -148,18 +158,7 @@ public partial class HealthVial : Control
             child.QueueFree();
         }
 
-        var preset = _sideType == VialSide.Left
-            ? Control.LayoutPreset.LeftWide
-            : Control.LayoutPreset.RightWide;
-        SetAnchorsAndOffsetsPreset(preset);
-        SetAnchor(Godot.Side.Top, 0.1f);
-        SetAnchor(Godot.Side.Bottom, 0.9f);
-
-        var (leftOffset, rightOffset) = _sideType == VialSide.Left
-            ? (edgePadding, edgePadding + VialWidth)
-            : (-edgePadding - VialWidth, -edgePadding);
-        SetOffset(Godot.Side.Left, leftOffset);
-        SetOffset(Godot.Side.Right, rightOffset);
+        SetAnchorsPreset(Control.LayoutPreset.TopLeft);
         MouseFilter = MouseFilterEnum.Ignore;
 
         var shader = GD.Load<Shader>("res://nodes/health_vial.gdshader");

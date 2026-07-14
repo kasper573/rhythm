@@ -245,7 +245,7 @@ public class OptionsModal
                 int delta = direction == StepDirection.Left ? -1 : 1;
                 Settings.Instance.EditPlayer(player, options =>
                 {
-                    acted = ChangeValue(row, delta, options);
+                    acted = ChangeValue(row, delta, ref options);
                     return options;
                 });
             }
@@ -531,7 +531,7 @@ public class OptionsModal
         _ => "",
     };
 
-    private static bool ChangeValue(OptionRow row, int delta, PlayerOptions options)
+    private static bool ChangeValue(OptionRow row, int delta, ref PlayerOptions options)
     {
         return row switch
         {
