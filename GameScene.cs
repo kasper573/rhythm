@@ -15,6 +15,7 @@ public enum GameScene
     /// <summary>Review scenes, reachable only by deep link.</summary>
     GradeSheet,
     NoteDemo,
+    VialDemo,
 }
 
 public static class GameScenes
@@ -33,6 +34,7 @@ public static class GameScenes
             GameScene.Score => "score",
             GameScene.GradeSheet => "grade-sheet",
             GameScene.NoteDemo => "note-demo",
+            GameScene.VialDemo => "vial-demo",
             _ => throw new ArgumentOutOfRangeException(nameof(scene)),
         };
 

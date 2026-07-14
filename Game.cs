@@ -143,6 +143,7 @@ public partial class Game : Node
             GameScene.Score => "res://scenes/score/score.tscn",
             GameScene.GradeSheet => "res://scenes/review/grade_sheet.tscn",
             GameScene.NoteDemo => "res://scenes/review/note_demo.tscn",
+            GameScene.VialDemo => "res://scenes/review/vial_demo.tscn",
             _ => throw new ArgumentOutOfRangeException(nameof(scene)),
         };
 
