@@ -1,3 +1,6 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace Rhythm.Core;
 
 /// <summary>One player's presentation choices for playing stepfiles.</summary>
@@ -24,6 +27,7 @@ public enum GradeLayer
 }
 
 /// <summary>How fast notes scroll for one player.</summary>
+[JsonConverter(typeof(NoteSpeedJsonConverter))]
 public abstract record NoteSpeed
 {
     public abstract float Value { get; }
@@ -44,6 +48,35 @@ public abstract record NoteSpeed
     public sealed record Dynamic(float Multiplier) : NoteSpeed
     {
         public override float Value => Multiplier;
+    }
+}
+
+/// <summary>
+/// Serializes NoteSpeed as the reference does — externally tagged by variant,
+/// <c>{"Dynamic": 1.5}</c> or <c>{"Constant": 1.5}</c> — so the abstract record
+/// round-trips (System.Text.Json cannot otherwise construct it, and writing
+/// only its Value dropped the variant and failed to load).
+/// </summary>
+internal sealed class NoteSpeedJsonConverter : JsonConverter<NoteSpeed>
+{
+    public override NoteSpeed Read(ref Utf8JsonReader reader, System.Type typeToConvert, JsonSerializerOptions options)
+    {
+        using var document = JsonDocument.ParseValue(ref reader);
+        foreach (var member in document.RootElement.EnumerateObject())
+        {
+            var multiplier = member.Value.GetSingle();
+            return member.Name == "Constant"
+                ? new NoteSpeed.Constant(multiplier)
+                : new NoteSpeed.Dynamic(multiplier);
+        }
+        throw new JsonException("note speed object named no variant");
+    }
+
+    public override void Write(Utf8JsonWriter writer, NoteSpeed value, JsonSerializerOptions options)
+    {
+        writer.WriteStartObject();
+        writer.WriteNumber(value is NoteSpeed.Constant ? "Constant" : "Dynamic", value.Value);
+        writer.WriteEndObject();
     }
 }
 
