@@ -19,8 +19,8 @@ public partial class Config : Node
 
         if (!Engine.IsEditorHint())
         {
-            cached = GD.Load<GameConfig>("res://config/game_config.tres")
-                ?? throw new InvalidOperationException("Failed to load config from res://config/game_config.tres");
+            cached = GD.Load<GameConfig>("res://config/GameConfig.tres")
+                ?? throw new InvalidOperationException("Failed to load config from res://config/GameConfig.tres");
 
             cached.Validate();
             return cached;

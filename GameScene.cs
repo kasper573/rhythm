@@ -8,7 +8,7 @@ public enum GameScene
     SettingsMenu,
     Keymap,
     AudioSettings,
-    Wheel,
+    StepfileSelect,
     Play,
     Score,
 
@@ -29,7 +29,7 @@ public static class GameScenes
             GameScene.SettingsMenu => "settings-menu",
             GameScene.Keymap => "keymap",
             GameScene.AudioSettings => "audio-settings",
-            GameScene.Wheel => "wheel",
+            GameScene.StepfileSelect => "stepfile-select",
             GameScene.Play => "play",
             GameScene.Score => "score",
             GameScene.GradeSheet => "grade-sheet",

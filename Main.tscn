@@ -1,7 +1,7 @@
 [gd_scene load_steps=8 format=3]
 
 [ext_resource type="Script" path="res://Game.cs" id="1_game"]
-[ext_resource type="Shader" path="res://ui/fade.gdshader" id="2_fade"]
+[ext_resource type="Shader" path="res://ui/Fade.gdshader" id="2_fade"]
 [ext_resource type="Script" path="res://nodes/FpsOverlay.cs" id="3_fps"]
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_fade"]

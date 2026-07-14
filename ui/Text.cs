@@ -4,7 +4,7 @@ namespace Rhythm;
 
 /// <summary>
 /// How the game makes text. The default theme supplies the font
-/// (<c>res://ui/theme.tres</c>); this adds the sizing model the layout was
+/// (<c>res://ui/Theme.tres</c>); this adds the sizing model the layout was
 /// designed on and free-floating placement for canvas compositions.
 /// </summary>
 public static class Text

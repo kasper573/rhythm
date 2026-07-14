@@ -1,6 +1,6 @@
 [gd_scene load_steps=3 format=3]
 
-[ext_resource type="Script" path="res://scenes/review/VialDemo.cs" id="1_demo"]
+[ext_resource type="Script" path="res://scenes/Review/VialDemo.cs" id="1_demo"]
 [ext_resource type="Script" path="res://nodes/HealthVial.cs" id="2_vial"]
 
 [node name="VialDemo" type="Control"]

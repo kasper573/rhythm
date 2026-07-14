@@ -1,8 +1,8 @@
 [gd_scene load_steps=2 format=3]
 
-[ext_resource type="Script" path="res://scenes/review/GradeSheet.cs" id="1_scene"]
+[ext_resource type="Script" path="res://scenes/Review/NoteDemo.cs" id="1_scene"]
 
-[node name="GradeSheet" type="Control"]
+[node name="NoteDemo" type="Control"]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0

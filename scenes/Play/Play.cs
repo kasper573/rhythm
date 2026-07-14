@@ -39,7 +39,7 @@ public partial class Play : Control
 
         if (selected is null)
         {
-            game.ChangeScene(GameScene.Wheel);
+            game.ChangeScene(GameScene.StepfileSelect);
             return;
         }
 
@@ -60,7 +60,7 @@ public partial class Play : Control
 
         if (charts.Count == 0)
         {
-            game.ChangeScene(GameScene.Wheel);
+            game.ChangeScene(GameScene.StepfileSelect);
             return;
         }
 
@@ -441,7 +441,7 @@ public partial class Play : Control
             {
                 Game.Instance.SetWheelTarget(selected.Id);
             }
-            Game.Instance.ChangeScene(GameScene.Wheel);
+            Game.Instance.ChangeScene(GameScene.StepfileSelect);
         }
     }
 

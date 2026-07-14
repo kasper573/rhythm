@@ -1,6 +1,6 @@
 [gd_scene load_steps=3 format=3]
 
-[ext_resource type="Script" path="res://scenes/wheel/Wheel.cs" id="1_wheel"]
+[ext_resource type="Script" path="res://scenes/StepfileSelect/Wheel.cs" id="1_wheel"]
 [ext_resource type="Script" path="res://ui/GameLabel.cs" id="2_label"]
 
 [node name="Wheel" type="Control"]

@@ -1,6 +1,6 @@
 [gd_scene load_steps=2 format=3 uid="uid://c3vvdj4wm6yt2"]
 
-[ext_resource type="Script" path="res://scenes/play/Play.cs" id="1_yd5oj"]
+[ext_resource type="Script" path="res://scenes/Play/Play.cs" id="1_yd5oj"]
 
 [node name="Play" type="Control" node_paths=PackedStringArray()]
 layout_mode = 3

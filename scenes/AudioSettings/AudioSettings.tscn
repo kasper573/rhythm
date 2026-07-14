@@ -1,6 +1,6 @@
 [gd_scene load_steps=3 format=3 uid="uid://dfnqp7j9y6r7m"]
 
-[ext_resource type="Script" path="res://scenes/audio_settings/AudioSettings.cs" id="1_scene"]
+[ext_resource type="Script" path="res://scenes/AudioSettings/AudioSettings.cs" id="1_scene"]
 [ext_resource type="Script" path="res://ui/GameLabel.cs" id="2_label"]
 
 [node name="AudioSettings" type="Control"]

@@ -27,7 +27,7 @@ public partial class Score : Control
 
         if (results is null)
         {
-            game.ChangeScene(GameScene.Wheel);
+            game.ChangeScene(GameScene.StepfileSelect);
             return;
         }
 
@@ -206,7 +206,7 @@ public partial class Score : Control
         {
             Game.Instance.SetWheelTarget(id.Value);
         }
-        Game.Instance.ChangeScene(GameScene.Wheel);
+        Game.Instance.ChangeScene(GameScene.StepfileSelect);
     }
 
     private static Tally ComputeTally(StageResults stage, GameConfig config)

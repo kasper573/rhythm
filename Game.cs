@@ -133,17 +133,17 @@ public partial class Game : Node
     private static string ScenePath(GameScene scene) =>
         scene switch
         {
-            GameScene.MainMenu => "res://scenes/main_menu/main_menu.tscn",
-            GameScene.ModeSelect => "res://scenes/mode_select/mode_select.tscn",
-            GameScene.SettingsMenu => "res://scenes/settings_menu/settings_menu.tscn",
-            GameScene.Keymap => "res://scenes/keymap/keymap.tscn",
-            GameScene.AudioSettings => "res://scenes/audio_settings/audio_settings.tscn",
-            GameScene.Wheel => "res://scenes/wheel/wheel.tscn",
-            GameScene.Play => "res://scenes/play/play.tscn",
-            GameScene.Score => "res://scenes/score/score.tscn",
-            GameScene.GradeSheet => "res://scenes/review/grade_sheet.tscn",
-            GameScene.NoteDemo => "res://scenes/review/note_demo.tscn",
-            GameScene.VialDemo => "res://scenes/review/vial_demo.tscn",
+            GameScene.MainMenu => "res://scenes/MainMenu/MainMenu.tscn",
+            GameScene.ModeSelect => "res://scenes/ModeSelect/ModeSelect.tscn",
+            GameScene.SettingsMenu => "res://scenes/SettingsMenu/SettingsMenu.tscn",
+            GameScene.Keymap => "res://scenes/Keymap/Keymap.tscn",
+            GameScene.AudioSettings => "res://scenes/AudioSettings/AudioSettings.tscn",
+            GameScene.StepfileSelect => "res://scenes/StepfileSelect/StepfileSelect.tscn",
+            GameScene.Play => "res://scenes/Play/Play.tscn",
+            GameScene.Score => "res://scenes/Score/Score.tscn",
+            GameScene.GradeSheet => "res://scenes/Review/GradeSheet.tscn",
+            GameScene.NoteDemo => "res://scenes/Review/NoteDemo.tscn",
+            GameScene.VialDemo => "res://scenes/Review/VialDemo.tscn",
             _ => throw new ArgumentOutOfRangeException(nameof(scene)),
         };
 

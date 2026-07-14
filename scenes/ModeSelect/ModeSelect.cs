@@ -34,6 +34,6 @@ public partial class ModeSelect : Control
         }
 
         Game.Instance.PlayMode = modes[index];
-        Game.Instance.ChangeScene(GameScene.Wheel);
+        Game.Instance.ChangeScene(GameScene.StepfileSelect);
     }
 }

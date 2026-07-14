@@ -114,7 +114,7 @@ public partial class FpsOverlay : Control
         var readoutLabel = Text.Label("", ReadoutSize, fg);
         column.AddChild(readoutLabel);
 
-        var shader = GD.Load<Shader>("res://nodes/fps_overlay.gdshader");
+        var shader = GD.Load<Shader>("res://nodes/FpsOverlay.gdshader");
         var material = new ShaderMaterial { Shader = shader };
         material.SetShaderParameter("fg", fg);
         material.SetShaderParameter("bg", bg);

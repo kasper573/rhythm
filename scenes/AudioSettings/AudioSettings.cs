@@ -7,7 +7,7 @@ namespace Rhythm;
 /// The audio settings scene: one volume slider per bus, edited in place (they
 /// live in the machine settings, so changes persist immediately). Up/Down pick
 /// a slider, Left/Right adjust it — audible right away on the scene's own music
-/// and navigation sounds. The layout is authored in audio_settings.tscn; this
+/// and navigation sounds. The layout is authored in AudioSettings.tscn; this
 /// binds the sliders to the volumes and drives them.
 /// </summary>
 [GlobalClass]

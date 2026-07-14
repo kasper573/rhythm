@@ -161,7 +161,7 @@ public partial class HealthVial : Control
         SetAnchorsPreset(Control.LayoutPreset.TopLeft);
         MouseFilter = MouseFilterEnum.Ignore;
 
-        var shader = GD.Load<Shader>("res://nodes/health_vial.gdshader");
+        var shader = GD.Load<Shader>("res://nodes/HealthVial.gdshader");
         var shaderMat = new ShaderMaterial { Shader = shader };
 
         var rect = new ColorRect

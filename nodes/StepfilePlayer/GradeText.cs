@@ -8,7 +8,7 @@ namespace Rhythm;
 /// rendered white into an offscreen viewport so its alpha is pure coverage,
 /// then presented on a sprite whose material tints it to the grade color and
 /// layers on an additive glow that pulses — one shader (the colocated
-/// <c>grade_text.gdshader</c>), per-grade colors and strengths.
+/// <c>GradeText.gdshader</c>), per-grade colors and strengths.
 /// </summary>
 public static class GradeText
 {
@@ -42,7 +42,7 @@ public static class GradeText
     /// <summary>Seconds a grade takes to fade out once the player stops hitting.</summary>
     public const float FadeSeconds = 1.0f;
 
-    public static readonly Shader GlowShader = GD.Load<Shader>("res://nodes/stepfile_player/grade_text.gdshader");
+    public static readonly Shader GlowShader = GD.Load<Shader>("res://nodes/StepfilePlayer/GradeText.gdshader");
 
     /// <summary>
     /// The grade word's y for a player's grade-position percentage within its

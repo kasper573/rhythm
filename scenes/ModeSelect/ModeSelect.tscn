@@ -1,6 +1,6 @@
 [gd_scene load_steps=3 format=3]
 
-[ext_resource type="Script" path="res://scenes/mode_select/ModeSelect.cs" id="1_scene"]
+[ext_resource type="Script" path="res://scenes/ModeSelect/ModeSelect.cs" id="1_scene"]
 [ext_resource type="Script" path="res://nodes/Menu.cs" id="2_menu"]
 
 [node name="ModeSelect" type="Control"]

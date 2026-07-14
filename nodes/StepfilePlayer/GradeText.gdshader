@@ -7,7 +7,7 @@
 // glow luminous, not flat) and spreading past them into a soft halo. Output
 // is PREMULTIPLIED (blend_premul_alpha) so the bloom adds light on top of
 // any background, reading the same on black and on the dark playfield. Its
-// strength pulses each hit (see grade_text.rs): striking bright, then
+// strength pulses each hit (see GradeText.cs): striking bright, then
 // draining.
 shader_type canvas_item;
 render_mode blend_premul_alpha;

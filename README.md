@@ -23,7 +23,7 @@ Open the project in the Godot editor, or from the command line:
 
 Deep-link any scene, with params, via the launch directives (see `Launch.cs`):
 
-    godot --path . -- --scene wheel
+    godot --path . -- --scene stepfile-select
     godot --path . -- --scene play --stepfile "Dance Dance Revolution/Butterfly"
 
 ## Verify

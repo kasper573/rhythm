@@ -1,6 +1,6 @@
 [gd_scene load_steps=3 format=3 uid="uid://d24pou6nvj49d"]
 
-[ext_resource type="Script" path="res://scenes/score/Score.cs" id="1_w8fbk"]
+[ext_resource type="Script" path="res://scenes/Score/Score.cs" id="1_w8fbk"]
 [ext_resource type="Script" path="res://ui/GameLabel.cs" id="2_label"]
 
 [node name="Score" type="Control"]
