@@ -175,6 +175,7 @@ public sealed class SoundChannel : IDisposable
         return extension switch
         {
             "ogg" => AudioStreamOggVorbis.LoadFromBuffer(bytes),
+            "mp3" => AudioStreamMP3.LoadFromBuffer(bytes),
             "wav" => AudioStreamWav.LoadFromBuffer(bytes),
             _ => null,
         };
