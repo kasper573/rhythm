@@ -91,7 +91,7 @@ public partial class MediaCover : TextureRect
     /// </summary>
     public void SetClock(Seconds clock)
     {
-        if (_videoPlayback != null)
+        if (_videoPlayback is not null)
         {
             _videoPlayback.SetClock(clock);
         }

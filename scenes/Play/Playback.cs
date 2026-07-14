@@ -88,7 +88,6 @@ internal sealed class Playback
             return;
         }
 
-        // Music fetch completed (or failed); start playback.
         music?.SetPaused(false);
         tick?.SetPaused(false);
         phase = PlayPhase.Playing;
@@ -98,15 +97,12 @@ internal sealed class Playback
     {
         wallSincePlay += delta;
 
-        // Poll channels to update their position reports.
         music?.Poll();
         tick?.Poll();
 
-        // Servo onto the music channel (falling back to tick).
         var report = music?.Position ?? tick?.Position;
         var fresh = clock.Advance(delta, report);
 
-        // Measure audio latency once at the start if not yet calibrated.
         var settings = Settings.Instance;
         var timing = settings.Machine.Timing;
         if (fresh && timing.AudioLatency is null && report.HasValue)

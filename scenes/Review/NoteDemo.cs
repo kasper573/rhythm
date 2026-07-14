@@ -24,19 +24,19 @@ public partial class NoteDemo : Control
     private const double TailSeconds = 1.2;
 
     private NoteFieldRig? rig;
-    private StepfileTiming timing = null!;
+    private StepfileTiming? timing;
     private Seconds start;
     private Seconds end;
     private double elapsed;
-    private List<(NoteIndex, uint)> notes = new();
-    private List<(MineIndex, uint)> mines = new();
-    private List<(Seconds, ScriptAction)> script = new();
+    private List<(NoteIndex, uint)> notes = [];
+    private List<(MineIndex, uint)> mines = [];
+    private List<(Seconds, ScriptAction)> script = [];
     private int nextAction;
 
     public override void _Ready()
     {
         var @params = Game.Instance.TakeNoteDemo();
-        if (@params == null)
+        if (@params is null)
         {
             PrintCatalog();
             GetTree().Quit();
@@ -45,14 +45,14 @@ public partial class NoteDemo : Control
 
         var scenario = Scenarios.Matrix()
             .FirstOrDefault(s => s.Name == @params.Scenario);
-        if (scenario == null)
+        if (scenario is null)
         {
             PrintCatalog();
             GetTree().Quit();
             return;
         }
 
-        if (@params.Bpm <= 0.0)
+        if (@params.Bpm.Value <= 0.0)
         {
             GD.PrintErr("--bpm must be positive");
             GetTree().Quit();
@@ -62,7 +62,7 @@ public partial class NoteDemo : Control
         // The demo draws 1:1 at whatever size the window was launched with
         // (the tooling picks its capture resolution with `--resolution`).
         var window = GetWindow();
-        if (window == null)
+        if (window is null)
         {
             GetTree().Quit();
             return;
@@ -76,7 +76,7 @@ public partial class NoteDemo : Control
         AddChild(backdrop);
 
         var settingsDefaults = Config.Current.Defaults;
-        if (settingsDefaults == null)
+        if (settingsDefaults is null)
         {
             GD.PrintErr("SettingsDefaults not configured");
             GetTree().Quit();
@@ -101,7 +101,7 @@ public partial class NoteDemo : Control
         );
 
         var laneCamera = Config.Current.LaneCamera;
-        if (laneCamera == null)
+        if (laneCamera is null)
         {
             GD.PrintErr("LaneCamera not configured");
             GetTree().Quit();
@@ -120,7 +120,6 @@ public partial class NoteDemo : Control
 
         timing = BuildScenarioTiming(scenario, @params.Bpm);
 
-        // Spawn all notes
         foreach (var note in scenario.Notes)
         {
             var time = timing.SecondsAtBeat(new Beat(note.Beat));
@@ -142,7 +141,6 @@ public partial class NoteDemo : Control
             notes.Add((index, note.Column));
         }
 
-        // Spawn all mines
         foreach (var mine in scenario.Mines)
         {
             var time = timing.SecondsAtBeat(new Beat(mine.Beat));
@@ -150,7 +148,6 @@ public partial class NoteDemo : Control
             mines.Add((index, mine.Column));
         }
 
-        // Convert script beats to seconds and sort
         script = scenario.Script
             .Select(pair =>
             {
@@ -162,7 +159,6 @@ public partial class NoteDemo : Control
             .OrderBy(p => p.Item1.Value)
             .ToList();
 
-        // Compute the demo window (lead-in and tail)
         (start, end) = ComputeDemoWindow(scenario, timing, settingsDefaults.ToPlayerOptions().NoteSpeed);
         elapsed = 0.0;
         nextAction = 0;
@@ -170,25 +166,22 @@ public partial class NoteDemo : Control
 
     public override void _Process(double delta)
     {
-        if (rig == null)
+        if (rig is null || timing is null)
             return;
 
         var now = new Seconds(start.Value + elapsed);
         elapsed += delta;
 
-        // Apply due script actions
         while (nextAction < script.Count && script[nextAction].Item1.Value <= now.Value)
         {
             var action = script[nextAction].Item2;
-            ApplyAction(action);
+            ApplyAction(rig, action);
             nextAction++;
         }
 
-        // Update the field
         var clock = new FieldClock(now, timing, NoteField.TargetY);
         rig.Update(clock, (float)delta);
 
-        // Exit when the demo ends
         if (now.Value >= end.Value)
         {
             GetTree().Quit();
@@ -203,22 +196,22 @@ public partial class NoteDemo : Control
         }
     }
 
-    private void ApplyAction(ScriptAction action)
+    private void ApplyAction(NoteFieldRig rig, ScriptAction action)
     {
         switch (action)
         {
             case ScriptAction.Hold hold:
-                rig!.SetHoldState(notes[hold.Index].Item1, hold.State);
+                rig.SetHoldState(notes[hold.Index].Item1, hold.State);
                 break;
 
             case ScriptAction.Fade fade:
-                rig!.FadeOutNote(notes[fade.Index].Item1, NoteFieldRig.HoldOkFadeSeconds);
+                rig.FadeOutNote(notes[fade.Index].Item1, NoteFieldRig.HoldOkFadeSeconds);
                 break;
 
             case ScriptAction.Vanish vanish:
                 {
                     var (noteIndex, column) = notes[vanish.Index];
-                    rig!.VanishNote(noteIndex);
+                    rig.VanishNote(noteIndex);
                     var flashColor = Config.Current.Grading?.Dynamic.FirstOrDefault()?
                         .ArrowFlash ?? Colors.White;
                     rig.ArrowFlash(column, NoteField.TargetY, flashColor, false, Config.Current.FlashTiming(false));
@@ -226,24 +219,24 @@ public partial class NoteDemo : Control
                 }
 
             case ScriptAction.Press press:
-                rig!.SetReceptorHeld(press.Column, press.Held);
+                rig.SetReceptorHeld(press.Column, press.Held);
                 break;
 
             case ScriptAction.ExplodeMine explode:
                 {
                     var (mineIndex, column) = mines[explode.Index];
-                    rig!.RemoveMine(mineIndex);
+                    rig.RemoveMine(mineIndex);
                     rig.MineExplosion(column, NoteField.TargetY);
                     break;
                 }
         }
     }
 
-    private static StepfileTiming BuildScenarioTiming(Scenario scenario, double cliBpm)
+    private static StepfileTiming BuildScenarioTiming(Scenario scenario, Bpm cliBpm)
     {
         var bpms = scenario.Bpms.Count > 0
             ? scenario.Bpms.Select(p => (new Beat(p.Beat), new Bpm(p.Bpm))).ToList()
-            : new List<(Beat, Bpm)> { (new Beat(0.0), new Bpm(cliBpm)) };
+            : new List<(Beat, Bpm)> { (new Beat(0.0), cliBpm) };
 
         var stops = scenario.Stops
             .Select(p => (new Beat(p.Beat), new Seconds(p.Seconds)))

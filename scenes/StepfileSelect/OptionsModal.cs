@@ -16,10 +16,16 @@ public sealed class OptionsModal : IDisposable
     private const float ValueWidth = 200.0f;
     private const float PreviewBand = 720.0f;
 
-    private Control root = null!;
-    private ColorRect background = null!;
-    private Control content = null!;
-    private VBoxContainer column = null!;
+    private Control? root;
+    private ColorRect? background;
+    private Control? content;
+    private VBoxContainer? column;
+
+    private Control Root => root ?? throw new InvalidOperationException("modal not open");
+    private ColorRect Background => background ?? throw new InvalidOperationException("modal not open");
+    private Control Content => content ?? throw new InvalidOperationException("modal not open");
+    private VBoxContainer Column => column ?? throw new InvalidOperationException("modal not open");
+
     private List<Label> texts = [];
     private float t;
     private float dir = 1.0f;
@@ -72,17 +78,14 @@ public sealed class OptionsModal : IDisposable
         modal.root.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
         host.AddChild(modal.root);
 
-        // Background
         modal.background = new ColorRect();
         modal.root.AddChild(modal.background);
 
-        // Content container
         modal.content = new Control();
         var stripeRow = new HBoxContainer();
         stripeRow.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
         stripeRow.AddThemeConstantOverride("separation", 0);
 
-        // Left flank
         var left = new Control { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         stripeRow.AddChild(left);
         if (playersList.Count > 0)
@@ -96,9 +99,9 @@ public sealed class OptionsModal : IDisposable
             });
         }
 
-        // Center column with options. Center its children within the box, so
-        // the box's padding sits evenly above and below instead of pooling all
-        // at the bottom (which left the content crowding the top edge).
+        // Center the column's children within the box, so the box's padding
+        // sits evenly above and below instead of pooling all at the bottom
+        // (which left the content crowding the top edge).
         modal.column = new VBoxContainer();
         modal.column.Alignment = BoxContainer.AlignmentMode.Center;
         modal.column.AddThemeConstantOverride("separation", 12);
@@ -111,7 +114,6 @@ public sealed class OptionsModal : IDisposable
         modal.column.AddChild(titleBox);
         modal.texts.Add(title);
 
-        // Player tags (versus only)
         if (versus)
         {
             var header = new HBoxContainer();
@@ -132,7 +134,6 @@ public sealed class OptionsModal : IDisposable
             modal.column.AddChild(header);
         }
 
-        // Option rows
         for (int index = 0; index < 6; index++)
         {
             var row = (OptionRow)index;
@@ -168,7 +169,6 @@ public sealed class OptionsModal : IDisposable
 
         stripeRow.AddChild(modal.column);
 
-        // Right flank
         var right = new Control { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         stripeRow.AddChild(right);
         if (playersList.Count > 1)
@@ -185,7 +185,6 @@ public sealed class OptionsModal : IDisposable
         modal.content.AddChild(stripeRow);
         modal.root.AddChild(modal.content);
 
-        // Initialize panel states
         foreach (var player in playersList)
         {
             modal.panels.Add(new PanelState { Player = player, ActiveRow = 0 });
@@ -196,7 +195,7 @@ public sealed class OptionsModal : IDisposable
 
     public void MarkRebuild()
     {
-        if (state != null)
+        if (state is not null)
             state.Rebuild = true;
     }
 
@@ -287,17 +286,17 @@ public sealed class OptionsModal : IDisposable
         if (t <= 0.0f && dir < 0.0f)
             return false;
 
-        var size = root.GetSize();
-        var height = column.GetCombinedMinimumSize().Y + 48.0f;
+        var size = Root.GetSize();
+        var height = Column.GetCombinedMinimumSize().Y + 48.0f;
         var top = (size.Y - height) / 2.0f;
         var eased = 1.0f - Mathf.Pow(1.0f - t, 3);
 
-        background.Position = new Vector2(-size.X * (1.0f - eased), top);
-        background.Size = new Vector2(size.X, height);
-        background.Color = new Color(0, 0, 0, 1.0f - Screen.LinearBlend(1.0f - eased));
+        Background.Position = new Vector2(-size.X * (1.0f - eased), top);
+        Background.Size = new Vector2(size.X, height);
+        Background.Color = new Color(0, 0, 0, 1.0f - Screen.LinearBlend(1.0f - eased));
 
-        content.Position = new Vector2(size.X * (1.0f - eased), top);
-        content.Size = new Vector2(size.X, height);
+        Content.Position = new Vector2(size.X * (1.0f - eased), top);
+        Content.Size = new Vector2(size.X, height);
 
         foreach (var text in texts)
         {
@@ -333,14 +332,12 @@ public sealed class OptionsModal : IDisposable
             return;
         }
 
-        // Check if all flanks are laid out
         foreach (var preview in previews)
         {
             if (preview.Flank.GetSize().X <= 0.0f || preview.Flank.GetSize().Y <= 0.0f)
                 return;
         }
 
-        // Create viewports
         foreach (var preview in previews)
         {
             var size = preview.Flank.GetSize();
@@ -499,7 +496,6 @@ public sealed class OptionsModal : IDisposable
             }
         }
 
-        // Feed input to preview engines
         foreach (var preview in previews)
         {
             if (preview.Engine is null)
@@ -732,9 +728,9 @@ public sealed class OptionsModal : IDisposable
     /// <summary>Tears the modal's overlay out of the scene.</summary>
     public void Dispose()
     {
-        if (GodotObject.IsInstanceValid(root))
+        if (root is { } control && GodotObject.IsInstanceValid(control))
         {
-            root.QueueFree();
+            control.QueueFree();
         }
     }
 

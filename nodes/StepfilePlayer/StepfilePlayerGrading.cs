@@ -34,21 +34,21 @@ public partial class StepfilePlayer
     /// </summary>
     private void BankRowInputs(List<GradingEvent> events)
     {
-        var config = Config.Current!;
+        var config = Config.Current;
         var widest = config.WidestWindow();
-        var inputTime = _gradedNow;
+        var inputTime = gradedNow;
 
-        for (int s = 0; s < _stages.Count; s++)
+        for (int s = 0; s < stages.Count; s++)
         {
-            var stage = _stages[s];
-            var rig = _rigs[s];
+            var stage = stages[s];
+            var rig = rigs[s];
             if (stage.Failed)
             {
                 continue;
             }
             for (uint column = 0; column < rig.Layout.Columns; column++)
             {
-                if (!_input.IsStruck(rig.Layout.StepAction(column)))
+                if (!input.IsStruck(rig.Layout.StepAction(column)))
                 {
                     continue;
                 }
@@ -84,7 +84,8 @@ public partial class StepfilePlayer
 
                 var error = stage.Rows[index].Time - inputTime;
                 events.Add(new GradingEvent.PressBanked(error));
-                var banked = stage.Rows[index].Arrows.Find(arrow => arrow.Column == column && arrow.Error is null)!;
+                var banked = stage.Rows[index].Arrows.Find(arrow => arrow.Column == column && arrow.Error is null)
+                    ?? throw new InvalidOperationException("banked arrow vanished");
                 banked.Error = error;
                 if (banked.Hold is HoldState hold)
                 {
@@ -100,15 +101,16 @@ public partial class StepfilePlayer
                 // The completing press decides the row: the chronologically
                 // last one, which is the smallest signed error since late
                 // presses go negative.
-                Seconds completing = stage.Rows[index].Arrows[0].Error!.Value;
+                Seconds? completing = null;
                 foreach (var arrow in stage.Rows[index].Arrows)
                 {
-                    if (arrow.Error is Seconds e && e.Value < completing.Value)
+                    if (arrow.Error is Seconds e && (completing is not Seconds best || e.Value < best.Value))
                     {
                         completing = e;
                     }
                 }
-                var outcome = new RowOutcome.Hit(completing);
+                var outcome = new RowOutcome.Hit(completing
+                    ?? throw new InvalidOperationException("completed row has no banked press"));
                 ApplyOutcome(stage, config, index, outcome, events);
 
                 // The vanish: grades with an arrow flash play it at every arrow
@@ -118,7 +120,8 @@ public partial class StepfilePlayer
                 {
                     continue;
                 }
-                var grade = config.Grading!.Dynamic[hit.Index.Value];
+                var grading = config.Grading ?? throw new InvalidOperationException("Grading is not configured");
+                var grade = grading.Dynamic[hit.Index.Value];
                 if (!grade.HasArrowFlash)
                 {
                     continue;
@@ -127,7 +130,7 @@ public partial class StepfilePlayer
                 var timing = config.FlashTiming(bright);
                 foreach (var arrow in stage.Rows[index].Arrows)
                 {
-                    rig.ArrowFlash(arrow.Column, _targetY, grade.ArrowFlash, bright, timing);
+                    rig.ArrowFlash(arrow.Column, targetY, grade.ArrowFlash, bright, timing);
                     if (arrow.Hold is null)
                     {
                         rig.VanishNote(arrow.Note);
@@ -145,14 +148,14 @@ public partial class StepfilePlayer
     /// </summary>
     private void ExpireMissedRows(List<GradingEvent> events)
     {
-        var config = Config.Current!;
-        var expireBefore = _gradedNow - config.WidestWindow();
+        var config = Config.Current;
+        var expireBefore = gradedNow - config.WidestWindow();
         var popups = new List<(float X, HoldOutcome Outcome)>();
 
-        for (int s = 0; s < _stages.Count; s++)
+        for (int s = 0; s < stages.Count; s++)
         {
-            var stage = _stages[s];
-            var rig = _rigs[s];
+            var stage = stages[s];
+            var rig = rigs[s];
             if (stage.Failed)
             {
                 continue;
@@ -194,15 +197,16 @@ public partial class StepfilePlayer
     /// </summary>
     private void UpdateHolds(double delta)
     {
-        var config = Config.Current!;
-        var now = _gradedNow;
+        var config = Config.Current;
+        var grading = config.Grading ?? throw new InvalidOperationException("Grading is not configured");
+        var now = gradedNow;
         var step = (float)delta;
         var popups = new List<(float X, HoldOutcome Outcome)>();
 
-        for (int s = 0; s < _stages.Count; s++)
+        for (int s = 0; s < stages.Count; s++)
         {
-            var stage = _stages[s];
-            var rig = _rigs[s];
+            var stage = stages[s];
+            var rig = rigs[s];
             if (stage.Failed)
             {
                 continue;
@@ -218,14 +222,14 @@ public partial class StepfilePlayer
                     var action = rig.Layout.StepAction(arrow.Column);
                     if (hold.Roll)
                     {
-                        if (_input.IsStruck(action))
+                        if (input.IsStruck(action))
                         {
                             hold.Life = 1.0f;
                         }
-                        hold.HeldNow = _input.IsHeld(action);
-                        hold.Life -= step / config.Grading!.RollGraceSeconds;
+                        hold.HeldNow = input.IsHeld(action);
+                        hold.Life -= step / grading.RollGraceSeconds;
                     }
-                    else if (_input.IsHeld(action))
+                    else if (input.IsHeld(action))
                     {
                         hold.HeldNow = true;
                         hold.Life = 1.0f;
@@ -233,7 +237,7 @@ public partial class StepfilePlayer
                     else
                     {
                         hold.HeldNow = false;
-                        hold.Life -= step / config.Grading!.HoldGraceSeconds;
+                        hold.Life -= step / grading.HoldGraceSeconds;
                     }
                     hold.Life = Mathf.Clamp(hold.Life, 0.0f, 1.0f);
 
@@ -265,11 +269,11 @@ public partial class StepfilePlayer
     /// </summary>
     private void UpdateMines()
     {
-        var now = _gradedNow;
-        for (int s = 0; s < _stages.Count; s++)
+        var now = gradedNow;
+        for (int s = 0; s < stages.Count; s++)
         {
-            var stage = _stages[s];
-            var rig = _rigs[s];
+            var stage = stages[s];
+            var rig = rigs[s];
             if (stage.Failed)
             {
                 continue;
@@ -280,14 +284,14 @@ public partial class StepfilePlayer
                 {
                     continue;
                 }
-                if (!_input.IsHeld(rig.Layout.StepAction(mine.Column)))
+                if (!input.IsHeld(rig.Layout.StepAction(mine.Column)))
                 {
                     mine.Outcome = MineOutcome.Avoided;
                     continue;
                 }
                 mine.Outcome = MineOutcome.Exploded;
                 rig.RemoveMine(mine.Mine);
-                rig.MineExplosion(mine.Column, _targetY);
+                rig.MineExplosion(mine.Column, targetY);
             }
         }
     }
@@ -295,10 +299,10 @@ public partial class StepfilePlayer
     /// <summary>Zero health fails that stage on the spot; any surviving stage plays on.</summary>
     private void FailDrainedStages(List<GradingEvent> events)
     {
-        for (int s = 0; s < _stages.Count; s++)
+        for (int s = 0; s < stages.Count; s++)
         {
-            var stage = _stages[s];
-            var rig = _rigs[s];
+            var stage = stages[s];
+            var rig = rigs[s];
             if (stage.Failed || stage.Health > 0)
             {
                 continue;
@@ -331,7 +335,10 @@ public partial class StepfilePlayer
     /// <summary>Holds pay their fixed grade's health offset the moment they resolve.</summary>
     private static void ApplyHoldHealth(StageState stage, GameConfig config, HoldOutcome outcome)
     {
-        var offset = outcome == HoldOutcome.Ok ? config.Grading!.Ok!.HealthOffset : config.Grading!.Ng!.HealthOffset;
+        var grading = config.Grading ?? throw new InvalidOperationException("Grading is not configured");
+        var offset = outcome == HoldOutcome.Ok
+            ? (grading.Ok ?? throw new InvalidOperationException("Ok grade is not configured")).HealthOffset
+            : (grading.Ng ?? throw new InvalidOperationException("Ng grade is not configured")).HealthOffset;
         stage.Health = SaturateHealth(stage.Health, offset, stage.MaxHealth);
     }
 

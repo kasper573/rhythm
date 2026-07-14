@@ -58,5 +58,4 @@ public readonly record struct TextPivot(float X, float Y)
 {
     public static readonly TextPivot Center = new(0.5f, 0.5f);
     public static readonly TextPivot CenterLeft = new(0.0f, 0.5f);
-    public static readonly TextPivot BottomLeft = new(0.0f, 1.0f);
 }

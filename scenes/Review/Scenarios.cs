@@ -44,7 +44,6 @@ public static class Scenarios
 
         var scenarios = new List<Scenario>();
 
-        // Single notes at various quantizations
         foreach (var quant in quants)
         {
             scenarios.Add(new(
@@ -57,7 +56,6 @@ public static class Scenarios
             ));
         }
 
-        // Holds at various quantizations and lengths
         foreach (var quant in quants)
         {
             foreach (var (label, length) in new[] {

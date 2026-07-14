@@ -96,13 +96,6 @@ public sealed class NoteFieldRig
         return rig;
     }
 
-    /// <summary>Tears the whole field out of the tree.</summary>
-    public void Free()
-    {
-        viewport.QueueFree();
-        display.QueueFree();
-    }
-
     /// <summary>
     /// Re-sizes the lane's canvas and its render resolution:
     /// <paramref name="pixelScale"/> is the window's canvas-to-pixel factor,

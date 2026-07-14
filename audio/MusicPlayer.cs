@@ -14,8 +14,10 @@ namespace Rhythm;
 public partial class MusicPlayer : Node
 {
     private PlayingBgm? playing;
+    private static MusicPlayer? instance;
 
-    public static MusicPlayer Instance { get; private set; } = null!;
+    public static MusicPlayer Instance =>
+        instance ?? throw new InvalidOperationException("MusicPlayer autoload not in tree");
 
     public override void _EnterTree()
     {
@@ -24,7 +26,7 @@ public partial class MusicPlayer : Node
             return;
         }
 
-        Instance = this;
+        instance = this;
     }
 
     public void Play(Bgm bgm)
@@ -137,7 +139,7 @@ public partial class MusicPlayer : Node
                     playing.Fetch = null;
                     break;
 
-                case AssetLoader.PollResult.Ready when poll is AssetLoader.PollResult.Ready ready:
+                case AssetLoader.PollResult.Ready ready:
                     playing.Fetch = null;
                     var fileName = System.IO.Path.GetFileName(playing.Bgm.Music);
                     var options = new SoundOptions

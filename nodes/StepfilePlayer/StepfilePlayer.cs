@@ -55,22 +55,22 @@ public partial class StepfilePlayer : Control
     [Signal]
     public delegate void StageFailedEventHandler(int player);
 
-    private StepfileTiming _timing = new(Seconds.Zero, [], []);
-    private Vector2 _canvas = Vector2.Zero;
-    private float _pixelScale = 1.0f;
-    private float _targetY = NoteField.TargetY;
-    private GradeArea _gradeArea = new(0.0f, 720.0f);
-    private Seconds _gradedNow = Seconds.Zero;
-    private Seconds _visibleNow = Seconds.Zero;
-    private PlayInput _input = new();
-    private List<StageState> _stages = [];
-    private List<NoteFieldRig> _rigs = [];
-    private List<GradeDisplay> _grades = [];
-    private List<ComboDisplay> _combos = [];
-    private List<Fading2d> _fades = [];
-    private Node2D? _behind;
-    private Node2D? _overlay;
-    private Seconds _lastNoteTime = Seconds.Zero;
+    private StepfileTiming timing = new(Seconds.Zero, [], []);
+    private Vector2 canvas = Vector2.Zero;
+    private float pixelScale = 1.0f;
+    private float targetY = NoteField.TargetY;
+    private GradeArea gradeArea = new(0.0f, 720.0f);
+    private Seconds gradedNow = Seconds.Zero;
+    private Seconds visibleNow = Seconds.Zero;
+    private PlayInput input = new();
+    private List<StageState> stages = [];
+    private List<NoteFieldRig> rigs = [];
+    private List<GradeDisplay> grades = [];
+    private List<ComboDisplay> combos = [];
+    private List<Fading2d> fades = [];
+    private Node2D? behind;
+    private Node2D? overlay;
+    private Seconds lastNoteTime = Seconds.Zero;
 
     public override void _Ready()
     {
@@ -84,8 +84,8 @@ public partial class StepfilePlayer : Control
     public static StepfilePlayer Instantiate(StepfilePlayerOptions options)
     {
         var player = new StepfilePlayer();
-        player._timing = options.Timing;
-        player._canvas = options.Canvas;
+        player.timing = options.Timing;
+        player.canvas = options.Canvas;
 
         var behind = new Node2D();
         player.AddChild(behind);
@@ -98,24 +98,24 @@ public partial class StepfilePlayer : Control
         var overlay = new Node2D();
         player.AddChild(overlay);
 
-        player._behind = behind;
-        player._overlay = overlay;
+        player.behind = behind;
+        player.overlay = overlay;
 
         // The grade word and the combo under it pop out on the player's chosen
         // layer: behind the arrows, or in the overlay in front of them.
-        for (int index = 0; index < player._rigs.Count; index++)
+        for (int index = 0; index < player.rigs.Count; index++)
         {
-            var playerId = player._rigs[index].Layout.Player;
-            var originX = player._rigs[index].Layout.OriginX;
+            var playerId = player.rigs[index].Layout.Player;
+            var originX = player.rigs[index].Layout.OriginX;
             var gradeLayer = options.Fields[index].GradeLayer == GradeLayer.InFront ? overlay : behind;
 
-            player._grades.Add(new GradeDisplay(gradeLayer, playerId, originX));
+            player.grades.Add(new GradeDisplay(gradeLayer, playerId, originX));
 
             var comboLabel = Text.Label(string.Empty, 44.0f, Colors.White);
             comboLabel.Visible = false;
             gradeLayer.AddChild(comboLabel);
 
-            player._combos.Add(new ComboDisplay(playerId, originX, comboLabel));
+            player.combos.Add(new ComboDisplay(playerId, originX, comboLabel));
         }
 
         return player;
@@ -124,7 +124,7 @@ public partial class StepfilePlayer : Control
     /// <summary>
     /// The moment the last note (or hold tail) is over.
     /// </summary>
-    public Seconds LastNoteTime => _lastNoteTime;
+    public Seconds LastNoteTime => lastNoteTime;
 
     /// <summary>
     /// Sets the engine's clock port: grading judges against `graded`;
@@ -132,45 +132,45 @@ public partial class StepfilePlayer : Control
     /// </summary>
     public void SetTime(Seconds graded, Seconds visible)
     {
-        _gradedNow = graded;
-        _visibleNow = visible;
+        gradedNow = graded;
+        visibleNow = visible;
     }
 
     /// <summary>Clears the frame's input; the adapter refills it every frame.</summary>
     public void ClearInput()
     {
-        _input.Held.Clear();
-        _input.Struck.Clear();
+        input.Held.Clear();
+        input.Struck.Clear();
     }
 
     /// <summary>Records the panel as held, and freshly struck when `struck` is true.</summary>
     public void Press(GameAction action, bool struck)
     {
-        _input.Held.Add(action);
+        input.Held.Add(action);
         if (struck)
         {
-            _input.Struck.Add(action);
+            input.Struck.Add(action);
         }
     }
 
     /// <summary>Anchors the receptor row (canvas-centered y-up).</summary>
     public void SetTargetY(float targetY)
     {
-        _targetY = targetY;
+        this.targetY = targetY;
     }
 
     /// <summary>Sets the canvas Y band grade words map their height to.</summary>
     public void SetGradeArea(GradeArea area)
     {
-        _gradeArea = area;
+        gradeArea = area;
     }
 
     /// <summary>Sets the design canvas and its pixel density.</summary>
     public void SetCanvas(Vector2 canvas, float pixelScale)
     {
-        _canvas = canvas;
-        _pixelScale = pixelScale;
-        foreach (var rig in _rigs)
+        this.canvas = canvas;
+        this.pixelScale = pixelScale;
+        foreach (var rig in rigs)
         {
             rig.SetCanvas(canvas, pixelScale);
         }
@@ -180,7 +180,7 @@ public partial class StepfilePlayer : Control
     /// changing it live glides rather than snapping.</summary>
     public void SetPerspective(PlayerId player, Perspective perspective)
     {
-        foreach (var rig in _rigs)
+        foreach (var rig in rigs)
         {
             if (rig.Layout.Player == player)
             {
@@ -193,51 +193,52 @@ public partial class StepfilePlayer : Control
     public void Refit(IEnumerable<FieldLayout> layouts)
     {
         var layoutList = layouts.ToList();
-        for (int i = 0; i < _rigs.Count && i < layoutList.Count; i++)
+        for (int i = 0; i < rigs.Count && i < layoutList.Count; i++)
         {
-            _rigs[i].SetLayout(layoutList[i]);
-            var originX = _rigs[i].Layout.OriginX;
-            if (i < _grades.Count)
+            rigs[i].SetLayout(layoutList[i]);
+            var originX = rigs[i].Layout.OriginX;
+            if (i < grades.Count)
             {
-                _grades[i].SetOriginX(originX);
+                grades[i].SetOriginX(originX);
             }
-            if (i < _combos.Count)
+            if (i < combos.Count)
             {
-                _combos[i].OriginX = originX;
+                combos[i].OriginX = originX;
             }
         }
     }
 
     /// <summary>Whether every stage has either failed or graded its whole chart.</summary>
-    public bool AllSettled() => _stages.All(s => s.Failed || s.IsComplete());
+    public bool AllSettled() => stages.All(s => s.Failed || s.IsComplete());
 
     /// <summary>Whether all stages have failed.</summary>
-    public bool AllFailed() => _stages.All(s => s.Failed);
+    public bool AllFailed() => stages.All(s => s.Failed);
 
     /// <summary>The active players, in field order.</summary>
-    public List<PlayerId> Players => _stages.Select(s => s.Player).ToList();
+    public List<PlayerId> Players => stages.Select(s => s.Player).ToList();
 
     /// <summary>The visible beat through the session's timing.</summary>
-    public Beat VisibleBeat => _timing.BeatAtSeconds(_visibleNow);
+    public Beat VisibleBeat => timing.BeatAtSeconds(visibleNow);
 
     /// <summary>Every field's current layout, in field order.</summary>
-    public List<FieldLayout> FieldLayouts => _rigs.Select(r => r.Layout).ToList();
+    public List<FieldLayout> FieldLayouts => rigs.Select(r => r.Layout).ToList();
 
     /// <summary>One player's health as a 0..=1 fraction.</summary>
     public float? HealthFraction(PlayerId player)
     {
-        var stage = _stages.FirstOrDefault(s => s.Player == player);
+        var stage = stages.FirstOrDefault(s => s.Player == player);
         return stage?.HealthFraction();
     }
 
     /// <summary>Every stage's results, in field order.</summary>
-    public List<StageResults> Results => _stages.Select(s => s.ToResults()).ToList();
+    public List<StageResults> Results => stages.Select(s => s.ToResults()).ToList();
 
     private void BuildField(FieldSpec spec)
     {
         var layout = spec.Layout;
         var options = Settings.Instance.Player(layout.Player);
-        var camera = Config.Current.LaneCamera!;
+        var camera = Config.Current.LaneCamera
+            ?? throw new InvalidOperationException("LaneCamera is not configured");
 
         var rig = NoteFieldRig.Build(
             this,
@@ -246,15 +247,15 @@ public partial class StepfilePlayer : Control
             options.Perspective,
             camera.FovDegrees,
             camera.TiltDegrees,
-            _canvas
+            canvas
         );
 
-        var timing = _timing;
+        var timing = this.timing;
         var sessionMines = new List<SessionMine>();
         foreach (var mine in spec.Mines)
         {
             var time = timing.SecondsAtBeat(mine.Beat);
-            _lastNoteTime = _lastNoteTime.Max(time);
+            lastNoteTime = lastNoteTime.Max(time);
             var index = rig.SpawnMine(time, mine.Beat, (uint)mine.Column);
             sessionMines.Add(new SessionMine(time, (uint)mine.Column, index));
         }
@@ -271,7 +272,7 @@ public partial class StepfilePlayer : Control
                     ? new NoteTail(timing.SecondsAtBeat(tail.End), tail.End, tail.Roll)
                     : null;
                 var noteTime = tailSpec?.Time ?? time;
-                _lastNoteTime = _lastNoteTime.Max(noteTime);
+                lastNoteTime = lastNoteTime.Max(noteTime);
 
                 var spawn = new NoteSpawn(
                     time,
@@ -298,20 +299,20 @@ public partial class StepfilePlayer : Control
             sessionRows.Add(rowState);
         }
 
-        // Sort by time (warps can reorder beats)
+        // Warps can reorder beats, so time order isn't beat order.
         sessionRows.Sort((a, b) => a.Time.Value.CompareTo(b.Time.Value));
 
-        _rigs.Add(rig);
-        _stages.Add(new StageState(layout.Player, spec.MaxHealth));
-        _stages[^1].Rows = sessionRows;
-        _stages[^1].Mines = sessionMines;
+        rigs.Add(rig);
+        stages.Add(new StageState(layout.Player, spec.MaxHealth));
+        stages[^1].Rows = sessionRows;
+        stages[^1].Mines = sessionMines;
     }
 
     private const float HoldPopupSeconds = 0.6f;
 
     public override void _Process(double delta)
     {
-        if (_stages.Count == 0)
+        if (stages.Count == 0)
         {
             return;
         }
@@ -322,11 +323,11 @@ public partial class StepfilePlayer : Control
             switch (evt)
             {
                 case GradingEvent.Graded graded:
-                    foreach (var display in _grades)
+                    foreach (var display in grades)
                     {
                         if (display.Player == graded.Player)
                         {
-                            display.Apply(Config.Current!, graded.Outcome);
+                            display.Apply(Config.Current, graded.Outcome);
                         }
                     }
                     ApplyCombo(graded.Player, graded.Combo);
@@ -349,20 +350,20 @@ public partial class StepfilePlayer : Control
         // scene to the window, so they must not be scaled again by pixel
         // density — doing so drove the text off toward the bottom-right and
         // blew up its size as the window grew.
-        var center = _canvas / 2.0f;
-        if (_behind is not null)
+        var center = canvas / 2.0f;
+        if (behind is not null)
         {
-            _behind.Position = center;
-            _behind.Scale = Vector2.One;
+            behind.Position = center;
+            behind.Scale = Vector2.One;
         }
-        if (_overlay is not null)
+        if (overlay is not null)
         {
-            _overlay.Position = center;
-            _overlay.Scale = Vector2.One;
+            overlay.Position = center;
+            overlay.Scale = Vector2.One;
         }
 
-        var clock = new FieldClock(_visibleNow, _timing, _targetY);
-        foreach (var rig in _rigs)
+        var clock = new FieldClock(visibleNow, timing, targetY);
+        foreach (var rig in rigs)
         {
             rig.Update(clock, (float)delta);
         }
@@ -373,13 +374,13 @@ public partial class StepfilePlayer : Control
     /// <summary>Pushes the session's state into the fields: pressed panels and every hold's render state.</summary>
     private void SyncFields()
     {
-        for (int s = 0; s < _stages.Count; s++)
+        for (int s = 0; s < stages.Count; s++)
         {
-            var stage = _stages[s];
-            var rig = _rigs[s];
+            var stage = stages[s];
+            var rig = rigs[s];
             for (uint column = 0; column < rig.Layout.Columns; column++)
             {
-                rig.SetReceptorHeld(column, _input.IsHeld(rig.Layout.StepAction(column)));
+                rig.SetReceptorHeld(column, input.IsHeld(rig.Layout.StepAction(column)));
             }
             foreach (var arrow in stage.Rows.SelectMany(row => row.Arrows))
             {
@@ -407,7 +408,7 @@ public partial class StepfilePlayer : Control
     /// <summary>Refreshes and bounces a player's combo readout on their graded row.</summary>
     private void ApplyCombo(PlayerId player, uint combo)
     {
-        foreach (var display in _combos)
+        foreach (var display in combos)
         {
             if (display.Player != player)
             {
@@ -432,24 +433,24 @@ public partial class StepfilePlayer : Control
 
     private void AnimateHud(double delta)
     {
-        foreach (var grade in _grades)
+        foreach (var grade in grades)
         {
             var position = Settings.Instance.Player(grade.Player).GradePosition;
-            grade.Animate((float)delta, GradeText.GradeY(_gradeArea, position));
+            grade.Animate((float)delta, GradeText.GradeY(gradeArea, position));
         }
-        foreach (var combo in _combos)
+        foreach (var combo in combos)
         {
             var position = Settings.Instance.Player(combo.Player).GradePosition;
-            combo.Animate((float)delta, GradeText.GradeY(_gradeArea, position) - GradeText.ComboGap);
+            combo.Animate((float)delta, GradeText.GradeY(gradeArea, position) - GradeText.ComboGap);
         }
-        for (int i = _fades.Count - 1; i >= 0; i--)
+        for (int i = fades.Count - 1; i >= 0; i--)
         {
-            var fade = _fades[i];
+            var fade = fades[i];
             fade.Remaining -= (float)delta;
             if (fade.Remaining <= 0.0f)
             {
                 fade.Node.QueueFree();
-                _fades.RemoveAt(i);
+                fades.RemoveAt(i);
                 continue;
             }
             var alpha = fade.Remaining / fade.Total;
@@ -465,16 +466,19 @@ public partial class StepfilePlayer : Control
 
     private void SpawnHoldPopup(float x, HoldOutcome outcome)
     {
-        if (_overlay is null)
+        if (overlay is null)
         {
             return;
         }
-        var def = outcome == HoldOutcome.Ok ? Config.Current!.Grading!.Ok! : Config.Current!.Grading!.Ng!;
+        var grading = Config.Current.Grading ?? throw new InvalidOperationException("Grading is not configured");
+        var def = outcome == HoldOutcome.Ok
+            ? grading.Ok ?? throw new InvalidOperationException("Ok grade is not configured")
+            : grading.Ng ?? throw new InvalidOperationException("Ng grade is not configured");
         var popup = Text.Label(def.Name, 30.0f, def.Color);
-        _overlay.AddChild(popup);
-        Text.Place(popup, new Vector2(x, -(_targetY - 54.0f)), TextPivot.Center);
+        overlay.AddChild(popup);
+        Text.Place(popup, new Vector2(x, -(targetY - 54.0f)), TextPivot.Center);
         popup.PivotOffset = popup.Size / 2.0f;
-        _fades.Add(new Fading2d { Node = popup, Remaining = HoldPopupSeconds, Total = HoldPopupSeconds, Growth = 0.25f, BaseScale = Vector2.One });
+        fades.Add(new Fading2d { Node = popup, Remaining = HoldPopupSeconds, Total = HoldPopupSeconds, Growth = 0.25f, BaseScale = Vector2.One });
     }
 }
 
@@ -497,7 +501,7 @@ internal sealed class ComboDisplay
     public float OriginX { get; set; }
     public Label Label { get; }
     public uint LastCombo { get; set; }
-    private Seconds _bounce;
+    private Seconds bounce;
 
     public ComboDisplay(PlayerId player, float originX, Label label)
     {
@@ -507,12 +511,12 @@ internal sealed class ComboDisplay
     }
 
     /// <summary>Kicks the bounce on a growing combo.</summary>
-    public void Bounce() => _bounce = ComboBounce;
+    public void Bounce() => bounce = ComboBounce;
 
     public void Animate(float delta, float y)
     {
-        _bounce = new Seconds(Math.Max(0.0, _bounce.Value - delta));
-        var scale = 1.0f + 0.22f * (float)(_bounce.Value / ComboBounce.Value);
+        bounce = new Seconds(Math.Max(0.0, bounce.Value - delta));
+        var scale = 1.0f + 0.22f * (float)(bounce.Value / ComboBounce.Value);
         Text.Place(Label, new Vector2(OriginX, -y), TextPivot.Center);
         Label.PivotOffset = Label.Size / 2.0f;
         Label.Scale = Vector2.One * scale;

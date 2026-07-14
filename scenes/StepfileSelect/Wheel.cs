@@ -586,13 +586,13 @@ public partial class Wheel : Control
         }
         for (int i = 0; i < slotsNeeded; i++)
         {
-            slots.Add(SpawnSlot(i, slotsNeeded));
+            slots.Add(SpawnSlot(i, slotsNeeded, canvas, barTexture));
         }
         dirty = true;
         MarkSettled();
     }
 
-    private SlotUi SpawnSlot(int index, int slotsCount)
+    private static SlotUi SpawnSlot(int index, int slotsCount, Node2D canvas, ImageTexture barTexture)
     {
         var root = new Node2D
         {
@@ -611,7 +611,7 @@ public partial class Wheel : Control
         var artist = Text.Label("", 17.0f, ArtistTextColor);
         root.AddChild(artist);
         var ratings = new PerPlayer<RatingUi>(RatingUi.Spawn(root, PlayerId.P1), RatingUi.Spawn(root, PlayerId.P2));
-        canvas!.AddChild(root);
+        canvas.AddChild(root);
         return new SlotUi { Root = root, Bar = bar, Title = title, Artist = artist, Ratings = ratings };
     }
 

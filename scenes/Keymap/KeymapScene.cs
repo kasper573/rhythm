@@ -19,15 +19,17 @@ public partial class KeymapScene : Control
     private bool[] navBefore = [false, false, false, false];
     private List<Label> actionLabels = [];
     private List<Label> bindingLabels = [];
-    private VBoxContainer actionColumn = null!;
-    private VBoxContainer keyColumn = null!;
-    private Label promptLabel = null!;
-    private Label helpLabel = null!;
-    private Keymap defaultKeymap = null!;
+    private Label? promptLabel;
+    private Label? helpLabel;
+    private Keymap? defaultKeymap;
 
-    private const double RESET_HOLD = 0.5;
+    private Label PromptLabel => promptLabel ?? throw new InvalidOperationException("KeymapScene not ready");
+    private Label HelpLabel => helpLabel ?? throw new InvalidOperationException("KeymapScene not ready");
+    private Keymap DefaultKeymap => defaultKeymap ?? throw new InvalidOperationException("KeymapScene not ready");
 
-    private static readonly GameAction[] NAV_ACTIONS =
+    private const double ResetHold = 0.5;
+
+    private static readonly GameAction[] NavActions =
     [
         GameAction.P1Up,
         GameAction.P1Down,
@@ -40,10 +42,11 @@ public partial class KeymapScene : Control
         Scenes.PlayDefaultBgm();
         Scenes.SpawnDefaultBackground(this);
 
-        defaultKeymap = Config.Current.Defaults!.ToKeymap();
+        defaultKeymap = (Config.Current.Defaults
+            ?? throw new InvalidOperationException("Config.Defaults must not be null")).ToKeymap();
 
-        actionColumn = GetNode<VBoxContainer>("%ActionColumn");
-        keyColumn = GetNode<VBoxContainer>("%KeyColumn");
+        var actionColumn = GetNode<VBoxContainer>("%ActionColumn");
+        var keyColumn = GetNode<VBoxContainer>("%KeyColumn");
         promptLabel = GetNode<Label>("%Prompt");
         helpLabel = GetNode<Label>("%Help");
 
@@ -53,7 +56,7 @@ public partial class KeymapScene : Control
             actionColumn.AddChild(name);
             actionLabels.Add(name);
 
-            var key = Text.Label(KeyLabel(action, defaultKeymap), 19.0f, Screen.InactiveColor);
+            var key = Text.Label(KeyLabel(action, DefaultKeymap), 19.0f, Screen.InactiveColor);
             keyColumn.AddChild(key);
             bindingLabels.Add(key);
         }
@@ -108,9 +111,9 @@ public partial class KeymapScene : Control
         var input = Input.Singleton;
 
         var now = new bool[4];
-        for (int i = 0; i < NAV_ACTIONS.Length; i++)
+        for (int i = 0; i < NavActions.Length; i++)
         {
-            now[i] = input.IsPhysicalKeyPressed(DefaultKey(NAV_ACTIONS[i]));
+            now[i] = input.IsPhysicalKeyPressed(DefaultKey(NavActions[i]));
         }
 
         var just = (int index) => now[index] && !navBefore[index];
@@ -194,13 +197,13 @@ public partial class KeymapScene : Control
             GameAction action => $"Press a key for \"{action.Label()}\" ({Actions.KeyName(DefaultKey(GameAction.P1Cancel))} aborts)",
         };
 
-        promptLabel.Text = text;
+        PromptLabel.Text = text;
     }
 
     private void UpdateHelpText()
     {
         var resetKey = DefaultKey(GameAction.P1Cancel);
-        helpLabel.Text = $"Hold {Actions.KeyName(resetKey)} to reset selected key to default";
+        HelpLabel.Text = $"Hold {Actions.KeyName(resetKey)} to reset selected key to default";
     }
 
     private void CancelGesture(double delta, bool justPressed, bool justReleased)
@@ -220,7 +223,7 @@ public partial class KeymapScene : Control
         if (Input.Singleton.IsPhysicalKeyPressed(cancelKey))
         {
             cancelHeld += delta;
-            if (cancelHeld >= RESET_HOLD)
+            if (cancelHeld >= ResetHold)
             {
                 cancelArmed = false;
                 if (active >= 0 && active < GameActions.All.Count)
@@ -248,14 +251,14 @@ public partial class KeymapScene : Control
 
     private Key DefaultKey(GameAction action)
     {
-        var keyName = defaultKeymap.Binding(action)
+        var keyName = DefaultKeymap.Binding(action)
             ?? throw new InvalidOperationException($"default keymap must bind {action}");
         return Actions.KeyFromName(keyName);
     }
 
     private string KeyLabel(GameAction action, Keymap keymap)
     {
-        var keyName = keymap.Key(action, defaultKeymap);
+        var keyName = keymap.Key(action, DefaultKeymap);
         return Actions.KeyName(Actions.KeyFromName(keyName));
     }
 }

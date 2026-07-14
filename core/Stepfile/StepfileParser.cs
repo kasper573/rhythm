@@ -286,8 +286,7 @@ public static class StepfileParser
             Radar = parts[4]
                 .Split(',')
                 .Select(radar => float.TryParse(radar.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var value) ? (float?)value : null)
-                .Where(value => value is not null)
-                .Select(value => value!.Value)
+                .OfType<float>()
                 .ToList(),
             Columns = columns,
             Rows = rows,
@@ -384,22 +383,14 @@ public static class StepfileParser
             return byBeat != 0 ? byBeat : a.Column.CompareTo(b.Column);
         });
 
-        var rows = new List<Row>();
-        var pending = new List<(int, Arrow)>();
-        foreach (var (beat, quant, column, tail) in arrows)
-        {
-            if (rows.Count > 0 && rows[^1].Beat == beat)
-            {
-                var last = rows[^1];
-                ((List<Arrow>)last.Arrows).Add(new Arrow(column, tail));
-            }
-            else
-            {
-                rows.Add(new Row(beat, quant, new List<Arrow> { new(column, tail) }));
-            }
-        }
+        var rows = arrows
+            .GroupBy(arrow => arrow.Beat)
+            .Select(group => new Row(
+                group.Key,
+                group.First().Quant,
+                group.Select(arrow => new Arrow(arrow.Column, arrow.Tail)).ToList()))
+            .ToList();
 
-        _ = pending;
         mines.Sort((a, b) =>
         {
             var byBeat = a.Beat.Value.CompareTo(b.Beat.Value);

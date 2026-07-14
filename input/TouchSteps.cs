@@ -18,8 +18,10 @@ public partial class TouchSteps : Node
     private Dictionary<long, TrackedTouch> touches = [];
     private double cancelHold;
     private List<(GameAction Action, double Remaining)> releases = [];
+    private static TouchSteps? instance;
 
-    public static TouchSteps Instance { get; private set; } = null!;
+    public static TouchSteps Instance =>
+        instance ?? throw new InvalidOperationException("TouchSteps autoload not in tree");
 
     private const float SwipeMin = 30.0f;
     private const double CancelHoldSeconds = 1.0;
@@ -32,7 +34,7 @@ public partial class TouchSteps : Node
             return;
         }
 
-        Instance = this;
+        instance = this;
     }
 
     public override void _Input(InputEvent @event)

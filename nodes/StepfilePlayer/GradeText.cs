@@ -74,16 +74,17 @@ public static class GradeText
 
     public static GradeStyle StyleFor(GameConfig config, RowOutcome outcome)
     {
+        var grading = config.Grading ?? throw new InvalidOperationException("Grading is not configured");
         switch (outcome)
         {
             case RowOutcome.Hit hit:
                 var grade = (Grade.Hit)config.ClassifyGrade(outcome);
-                var def = config.Grading!.Dynamic[grade.Index.Value];
+                var def = grading.Dynamic[grade.Index.Value];
                 // Like ITG: the letters are white, the grade's color is the glow.
                 return new GradeStyle(HitText(def, hit.Error), Colors.White, def.GlowColor, def.GlowStrength);
             default:
                 // ITG's Miss is the exception — its letters carry the red.
-                var miss = config.Grading!.Miss!;
+                var miss = grading.Miss ?? throw new InvalidOperationException("Miss grade is not configured");
                 return new GradeStyle(miss.Name, miss.Color, miss.GlowColor, miss.GlowStrength);
         }
     }

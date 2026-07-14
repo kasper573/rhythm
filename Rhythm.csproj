@@ -12,6 +12,11 @@
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="**/*.cs" Exclude=".godot/**/*.cs;**/obj/**/*.cs;**/bin/**/*.cs" />
+    <Compile Include="**/*.cs" Exclude=".godot/**/*.cs;**/obj/**/*.cs;**/bin/**/*.cs;analyzers/**/*.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="analyzers/RhythmAnalyzers/RhythmAnalyzers.csproj"
+      OutputItemType="Analyzer" ReferenceOutputAssembly="false"
+      SetConfiguration="Configuration=Release" />
   </ItemGroup>
 </Project>

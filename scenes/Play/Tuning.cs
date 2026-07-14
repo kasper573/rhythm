@@ -64,20 +64,17 @@ internal sealed class Tuning : IDisposable
     /// </summary>
     public void Update(SoundChannel? tick, double delta)
     {
-        // Toggle tick audio
-        if (Actions.JustPressed(GameAction.ToggleTickAudio) && tick != null)
+        if (Actions.JustPressed(GameAction.ToggleTickAudio) && tick is not null)
         {
             tick.SetMuted(!tick.IsMuted);
         }
 
-        // Toggle AutoSync
         if (Actions.JustPressed(GameAction.ToggleAutoSync))
         {
             autosyncEnabled = !autosyncEnabled;
             samples.Clear();
         }
 
-        // Process AutoSync samples
         if (autosyncEnabled && samples.Count >= AutosyncSamples)
         {
             var sortedSamples = samples.OrderBy(s => s.Value).ToList();
@@ -105,12 +102,11 @@ internal sealed class Tuning : IDisposable
             samples.Clear();
         }
 
-        // Update AutoSync status display
         var state = (autosyncEnabled, samples.Count);
         if (shown != state)
         {
             shown = state;
-            if (status != null)
+            if (status is not null)
             {
                 if (autosyncEnabled)
                 {
@@ -124,14 +120,12 @@ internal sealed class Tuning : IDisposable
             }
         }
 
-        // Adjust timing offsets
         AdjustTimingOffsets();
 
-        // Fade OSD
         if (osdAlpha > 0.0f)
         {
             osdAlpha = Math.Max(osdAlpha - (float)delta, 0.0f);
-            if (osd != null)
+            if (osd is not null)
             {
                 var color = osd.Modulate;
                 color.A = osdAlpha;
@@ -142,7 +136,7 @@ internal sealed class Tuning : IDisposable
 
     private void Flash(string line)
     {
-        if (osd != null)
+        if (osd is not null)
         {
             osd.Text = line;
             osdAlpha = 1.0f;
@@ -218,7 +212,7 @@ internal sealed class Tuning : IDisposable
             };
         }
 
-        if (osdLine != null)
+        if (osdLine is not null)
         {
             Flash(osdLine);
         }

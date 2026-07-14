@@ -20,7 +20,7 @@ public partial class GradeSheet : Control
     public override void _Ready()
     {
         var window = GetWindow();
-        if (window == null)
+        if (window is null)
         {
             GetTree().Quit();
             return;
@@ -36,7 +36,6 @@ public partial class GradeSheet : Control
         backdrop.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
         AddChild(backdrop);
 
-        // Two side-by-side backgrounds: black on left, gray on right
         var colors = new[] { Colors.Black, PlayfieldGray };
         for (int column = 0; column < 2; column++)
         {
@@ -47,12 +46,10 @@ public partial class GradeSheet : Control
             AddChild(half);
         }
 
-        // Create the canvas for grade words
         var canvas = new Node2D();
         canvas.Position = new Vector2(size.X / 2.0f, size.Y / 2.0f);
         AddChild(canvas);
 
-        // Add captions
         var captions = new[] { "on black", "on gray" };
         for (int column = 0; column < 2; column++)
         {
@@ -65,14 +62,11 @@ public partial class GradeSheet : Control
             );
         }
 
-        // Build the list of outcomes to display
         var outcomes = GetGradeOutcomes();
 
-        // Vertical spacing and positioning
         var rowGap = (size.Y - 90.0f) / outcomes.Count;
         var top = (outcomes.Count - 1) * rowGap / 2.0f;
 
-        // Render each grade in both columns
         for (int row = 0; row < outcomes.Count; row++)
         {
             var outcome = outcomes[row];
@@ -97,7 +91,7 @@ public partial class GradeSheet : Control
     {
         var outcomes = new List<RowOutcome>();
         var config = Config.Current;
-        if (config.Grading?.Dynamic == null)
+        if (config.Grading?.Dynamic is null)
         {
             return outcomes;
         }

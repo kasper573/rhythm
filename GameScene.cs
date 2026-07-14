@@ -38,8 +38,16 @@ public static class GameScenes
             _ => throw new ArgumentOutOfRangeException(nameof(scene)),
         };
 
-    public static GameScene? FromDeepLinkName(string name) =>
-        Enum.GetValues<GameScene>()
-            .Cast<GameScene?>()
-            .FirstOrDefault(scene => scene!.Value.DeepLinkName() == name);
+    public static GameScene? FromDeepLinkName(string name)
+    {
+        foreach (var scene in Enum.GetValues<GameScene>())
+        {
+            if (scene.DeepLinkName() == name)
+            {
+                return scene;
+            }
+        }
+
+        return null;
+    }
 }

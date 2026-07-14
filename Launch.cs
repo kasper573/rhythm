@@ -45,7 +45,7 @@ public static class Launch
                     Scenario: Value(args, "--scenario"),
                     Skin: Value(args, "--skin"),
                     Perspective: Value(args, "--perspective") ?? "None",
-                    Bpm: double.TryParse(Value(args, "--bpm"), System.Globalization.CultureInfo.InvariantCulture, out var bpm) ? bpm : 120.0));
+                    Bpm: new Bpm(double.TryParse(Value(args, "--bpm"), System.Globalization.CultureInfo.InvariantCulture, out var bpm) ? bpm : 120.0)));
                 break;
 
             case GameScene.Play when Value(args, "--stepfile") is { } spec:

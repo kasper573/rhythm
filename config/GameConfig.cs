@@ -60,7 +60,7 @@ public partial class GameConfig : Resource
 
     public Seconds WidestWindow()
     {
-        if (Grading == null || Grading.Dynamic.Count == 0)
+        if (Grading is null || Grading.Dynamic.Count == 0)
             throw new InvalidOperationException("Dynamic grades are empty");
 
         var last = Grading.Dynamic[Grading.Dynamic.Count - 1];
@@ -79,7 +79,7 @@ public partial class GameConfig : Resource
 
     private Grade.Hit FindGradeForError(Seconds error)
     {
-        if (Grading == null)
+        if (Grading is null)
             throw new InvalidOperationException("Grading is null");
 
         var absError = error.Abs();
@@ -97,7 +97,7 @@ public partial class GameConfig : Resource
 
     public int HealthOffset(Grade grade)
     {
-        if (Grading == null)
+        if (Grading is null)
             throw new InvalidOperationException("Grading is null");
 
         return grade switch
@@ -113,7 +113,7 @@ public partial class GameConfig : Resource
 
     public uint Points(Grade grade)
     {
-        if (Grading == null)
+        if (Grading is null)
             throw new InvalidOperationException("Grading is null");
 
         return grade switch
@@ -129,7 +129,7 @@ public partial class GameConfig : Resource
 
     public bool BreaksCombo(Grade grade)
     {
-        if (Grading == null)
+        if (Grading is null)
             throw new InvalidOperationException("Grading is null");
 
         return grade switch
@@ -145,7 +145,7 @@ public partial class GameConfig : Resource
 
     public Percent ScorePercent(uint points, uint rows, uint holds)
     {
-        if (Grading == null || Grading.Dynamic.Count == 0)
+        if (Grading is null || Grading.Dynamic.Count == 0)
             throw new InvalidOperationException("Dynamic grades are empty");
 
         var bestDynamicPoints = (uint)Grading.Dynamic[0].Points;
@@ -181,7 +181,7 @@ public partial class GameConfig : Resource
         if (worstGrade is not Grade.Hit hit)
             return false;
 
-        if (Grading == null)
+        if (Grading is null)
             throw new InvalidOperationException("Grading is null");
 
         var targetIndex = -1;
@@ -213,19 +213,19 @@ public partial class GameConfig : Resource
 
     public void Validate()
     {
-        if (Grading == null)
+        if (Grading is null)
             throw new InvalidOperationException("Grading is null");
 
         if (Grading.Dynamic.Count == 0)
             throw new InvalidOperationException("Grading.Dynamic is empty");
 
-        if (Grading.Miss == null)
+        if (Grading.Miss is null)
             throw new InvalidOperationException("Grading.Miss is null");
 
-        if (Grading.Ok == null)
+        if (Grading.Ok is null)
             throw new InvalidOperationException("Grading.Ok is null");
 
-        if (Grading.Ng == null)
+        if (Grading.Ng is null)
             throw new InvalidOperationException("Grading.Ng is null");
 
         for (int i = 0; i < Grading.Dynamic.Count - 1; i++)
@@ -245,7 +245,7 @@ public partial class GameConfig : Resource
         if (TickVolume < 0 || TickVolume > 2)
             throw new InvalidOperationException($"TickVolume must be in 0..2, got {TickVolume}");
 
-        if (NoteQuants == null || NoteQuants.Length == 0)
+        if (NoteQuants is null || NoteQuants.Length == 0)
             throw new InvalidOperationException("NoteQuants is empty");
 
         foreach (var q in NoteQuants)
@@ -254,7 +254,7 @@ public partial class GameConfig : Resource
                 throw new InvalidOperationException($"NoteQuants contains non-positive value: {q}");
         }
 
-        if (SpeedModifiers == null || SpeedModifiers.Constant == null || SpeedModifiers.Dynamic == null)
+        if (SpeedModifiers is null || SpeedModifiers.Constant is null || SpeedModifiers.Dynamic is null)
             throw new InvalidOperationException("SpeedModifiers is misconfigured");
 
         if (SpeedModifiers.Constant.Options.Length == 0 || SpeedModifiers.Dynamic.Options.Length == 0)
@@ -263,7 +263,7 @@ public partial class GameConfig : Resource
         if (PlayerMaxHealth <= 0)
             throw new InvalidOperationException($"PlayerMaxHealth must be positive, got {PlayerMaxHealth}");
 
-        if (HealthBar == null || HealthBar.Colors.Count == 0)
+        if (HealthBar is null || HealthBar.Colors.Count == 0)
             throw new InvalidOperationException("HealthBar.Colors is empty");
 
         foreach (var gradient in HealthBar.Colors)
@@ -307,7 +307,7 @@ public partial class GameConfig : Resource
             }
         }
 
-        if (HealthBar.Glow == null || HealthBar.Liquid == null)
+        if (HealthBar.Glow is null || HealthBar.Liquid is null)
             throw new InvalidOperationException("HealthBar cycles are null");
 
         if (HealthBar.Glow.Speed <= 0 || HealthBar.Liquid.Speed <= 0)
@@ -321,10 +321,10 @@ public partial class GameConfig : Resource
         if (easingX1 < 0 || easingX1 > 1 || easingX2 < 0 || easingX2 > 1)
             throw new InvalidOperationException("RhythmCycle easing x values must be in 0..1");
 
-        if (Stage == null || Stage.MaxArrowSize <= 0)
+        if (Stage is null || Stage.MaxArrowSize <= 0)
             throw new InvalidOperationException("Stage.MaxArrowSize must be positive");
 
-        if (LaneCamera == null || LaneCamera.FovDegrees <= 0 || LaneCamera.FovDegrees >= 180)
+        if (LaneCamera is null || LaneCamera.FovDegrees <= 0 || LaneCamera.FovDegrees >= 180)
             throw new InvalidOperationException("LaneCamera.FovDegrees must be in (0, 180)");
 
         if (LaneCamera.TiltDegrees < 0 || LaneCamera.TiltDegrees >= 90)
@@ -333,7 +333,7 @@ public partial class GameConfig : Resource
         if (Grading.HoldGrace.Value <= 0 || Grading.RollGrace.Value <= 0)
             throw new InvalidOperationException("Hold/Roll grace periods must be positive");
 
-        if (Defaults == null)
+        if (Defaults is null)
             throw new InvalidOperationException("Defaults is null");
 
         var keymap = Defaults.ToKeymap();

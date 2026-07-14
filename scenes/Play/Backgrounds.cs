@@ -42,11 +42,10 @@ internal sealed class Backgrounds : IDisposable
         host.MouseFilter = Control.MouseFilterEnum.Ignore;
         scene.AddChild(host);
 
-        // Build background change timeline
         foreach (var change in entry.Stepfile.BgChanges)
         {
             var resolvedPath = entry.ResolveFile(change.File);
-            if (resolvedPath == null)
+            if (resolvedPath is null)
             {
                 continue;
             }
@@ -70,14 +69,12 @@ internal sealed class Backgrounds : IDisposable
     /// </summary>
     public void Update(Seconds visible, float delta)
     {
-        // Apply initial background if not yet done
-        if (initialBgPath != null)
+        if (initialBgPath is not null)
         {
             Apply(Seconds.Zero, initialBgPath, false, false);
             initialBgPath = null;
         }
 
-        // Trigger due changes
         while (nextChangeIndex < changes.Count && changes[nextChangeIndex].Time.Value <= visible.Value)
         {
             var change = changes[nextChangeIndex];
@@ -85,11 +82,10 @@ internal sealed class Backgrounds : IDisposable
             nextChangeIndex++;
         }
 
-        // Advance fades
         var step = delta / CrossfadeSeconds;
         layers = layers.Where(layer =>
         {
-            if (layer.Cover == null)
+            if (layer.Cover is null)
             {
                 return false;
             }
@@ -123,13 +119,12 @@ internal sealed class Backgrounds : IDisposable
         var color = new Color(Dim, Dim, Dim, Screen.LinearBlend(alpha));
 
         var cover = MediaCover.Create(path, color, 0, time, loops, MediaPace.Manual);
-        if (cover == null)
+        if (cover is null)
         {
             // Unshowable cue keeps current background
             return;
         }
 
-        // Set fade targets for existing layers
         foreach (var layer in layers)
         {
             if (crossfade)

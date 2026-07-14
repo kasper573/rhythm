@@ -14,7 +14,7 @@ public partial class Config : Node
 
     public static GameConfig Load()
     {
-        if (cached != null)
+        if (cached is not null)
             return cached;
 
         if (!Engine.IsEditorHint())

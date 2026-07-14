@@ -69,6 +69,4 @@ internal sealed class MediaVideoPlayback
             player.StreamPosition = target;
         }
     }
-
-    public void Stop() => player.QueueFree();
 }

@@ -166,13 +166,13 @@ public partial class Wheel
             return null;
         }
         var chart = entry.Stepfile.Charts[chartIndex];
-        var key = HighScores.HighscoreKey(Library.Instance, id, chart);
+        var key = HighScores.Key(Library.Instance, id, chart);
         if (HighScores.Instance.Get(player, key) is not uint points)
         {
             return null;
         }
         var stats = chart.Stats();
-        var percent = Config.Current!.ScorePercent(points, (uint)chart.Rows.Count, (uint)stats.Holds);
+        var percent = Config.Current.ScorePercent(points, (uint)chart.Rows.Count, (uint)stats.Holds);
         return Assets.Path(Config.Current.Rating(percent, null).Image);
     }
 }

@@ -32,12 +32,14 @@ public partial class NavInput : Node
     private double[] held = new double[PulseActions.Length];
     private List<GameAction> pulses = [];
     private bool suspended;
+    private static NavInput? instance;
 
     public IReadOnlyList<GameAction> Pulses => pulses;
 
     public bool Active => !suspended;
 
-    public static NavInput Instance { get; private set; } = null!;
+    public static NavInput Instance =>
+        instance ?? throw new InvalidOperationException("NavInput autoload not in tree");
 
     public override void _EnterTree()
     {
@@ -46,7 +48,7 @@ public partial class NavInput : Node
             return;
         }
 
-        Instance = this;
+        instance = this;
     }
 
     /// <summary>

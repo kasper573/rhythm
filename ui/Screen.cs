@@ -32,13 +32,6 @@ public static class Screen
     public static Rect2 VisibleRect(Node node) =>
         node.GetViewport()?.GetVisibleRect() ?? new Rect2(Vector2.Zero, Size);
 
-    /// <summary>The visible canvas center — where the design canvas' center sits.</summary>
-    public static Vector2 VisibleCenter(Node node)
-    {
-        var rect = VisibleRect(node);
-        return rect.Position + (rect.Size / 2.0f);
-    }
-
     /// <summary>
     /// A canvas blend factor compensated for the 2D pipeline blending in
     /// sRGB space: the game's look was designed on a linear-blending

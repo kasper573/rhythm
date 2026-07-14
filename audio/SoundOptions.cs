@@ -13,12 +13,4 @@ public sealed record SoundOptions
 
     /// <summary>The bus the sound plays on.</summary>
     public required string Bus { get; init; }
-
-    public static SoundOptions Default() => new()
-    {
-        Timeline = new SoundTimeline.WholeFile(),
-        Paused = false,
-        Muted = false,
-        Bus = AudioBuses.Sfx,
-    };
 }

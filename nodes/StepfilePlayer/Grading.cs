@@ -33,8 +33,8 @@ public sealed class StageState
 
     public StageResults ToResults()
     {
-        var outcomes = Rows.Where(r => r.Outcome is not null).Select(r => r.Outcome!).ToList();
-        var holds = Rows.SelectMany(r => r.Arrows).Where(a => a.Hold is not null).Select(a => a.Hold!).ToList();
+        var outcomes = Rows.Select(r => r.Outcome).OfType<RowOutcome>().ToList();
+        var holds = Rows.SelectMany(r => r.Arrows).Select(a => a.Hold).OfType<HoldState>().ToList();
         return new StageResults
         {
             Player = Player,
@@ -97,16 +97,4 @@ public abstract record GradingEvent
     public sealed record Graded(PlayerId Player, RowOutcome Outcome, uint Combo) : GradingEvent;
     public sealed record PressBanked(Seconds Error) : GradingEvent;
     public sealed record Failed(PlayerId Player) : GradingEvent;
-}
-
-public enum HoldOutcome
-{
-    Ok,
-    Ng,
-}
-
-public enum MineOutcome
-{
-    Avoided,
-    Exploded,
 }

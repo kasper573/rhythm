@@ -12,8 +12,10 @@ public partial class SfxPlayer : Node
 {
     private Dictionary<Sfx, AudioStream> streams = [];
     private List<AudioStreamPlayer> pool = [];
+    private static SfxPlayer? instance;
 
-    public static SfxPlayer Instance { get; private set; } = null!;
+    public static SfxPlayer Instance =>
+        instance ?? throw new InvalidOperationException("SfxPlayer autoload not in tree");
 
     public override void _EnterTree()
     {
@@ -22,10 +24,10 @@ public partial class SfxPlayer : Node
             return;
         }
 
-        Instance = this;
+        instance = this;
 
         streams = [];
-        foreach (Sfx sfx in Enum.GetValues(typeof(Sfx)))
+        foreach (var sfx in Enum.GetValues<Sfx>())
         {
             var path = Assets.Path($"sfx/{SfxName(sfx)}.wav");
             try

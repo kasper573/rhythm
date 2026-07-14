@@ -42,7 +42,7 @@ public partial class Score : Control
         var tagged = results.Players.Count > 1;
         id = results.Id;
 
-        var config = Config.Current!;
+        var config = Config.Current;
         var library = Library.Instance;
 
         foreach (var player in results.Players)
@@ -50,7 +50,7 @@ public partial class Score : Control
             var stage = player.Stage;
             var tally = ComputeTally(stage, config);
             var chart = library.Stepfile(results.Id).Stepfile.Charts[player.Chart];
-            var key = HighScores.HighscoreKey(library, results.Id, chart);
+            var key = HighScores.Key(library, results.Id, chart);
             var newHighScore = HighScores.Instance.Record(stage.Player, key, tally.TotalPoints);
 
             var playerColumn = PlayerColumn(stage, tally, config, newHighScore, tagged);

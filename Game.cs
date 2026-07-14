@@ -13,7 +13,10 @@ namespace Rhythm;
 [GlobalClass]
 public partial class Game : Node
 {
-    public static Game Instance { get; private set; } = null!;
+    private static Game? instance;
+
+    public static Game Instance =>
+        instance ?? throw new InvalidOperationException("Game root not in tree");
 
     public PlayMode PlayMode { get; set; } = PlayMode.Singles;
 
@@ -27,8 +30,14 @@ public partial class Game : Node
     private Node? current;
     private FadePhase fade = FadePhase.Idle;
     private GameScene fadeTarget;
-    private AnimationPlayer fadeAnim = null!;
-    private ShaderMaterial fadeMaterial = null!;
+    private AnimationPlayer? fadeAnim;
+    private ShaderMaterial? fadeMaterial;
+
+    private AnimationPlayer FadeAnim =>
+        fadeAnim ?? throw new InvalidOperationException("Game not booted");
+
+    private ShaderMaterial FadeMaterial =>
+        fadeMaterial ?? throw new InvalidOperationException("Game not booted");
 
     private StepfileId? wheelTarget;
     private SelectedStepfile? selectedStepfile;
@@ -50,11 +59,11 @@ public partial class Game : Node
 
         // Resume the cover from wherever the current coverage sits, so a change
         // that interrupts a fade-in reverses smoothly instead of snapping.
-        var coverage = fadeMaterial.GetShaderParameter("coverage").AsSingle();
+        var coverage = FadeMaterial.GetShaderParameter("coverage").AsSingle();
         fade = FadePhase.FadingOut;
         fadeTarget = to;
-        fadeAnim.Play("fade_out");
-        fadeAnim.Seek(coverage * fadeAnim.GetAnimation("fade_out").Length, update: true);
+        FadeAnim.Play("fade_out");
+        FadeAnim.Seek(coverage * FadeAnim.GetAnimation("fade_out").Length, update: true);
     }
 
     /// <summary>The wheel row to land on, inserted by whichever scene navigates there; consumed on enter.</summary>
@@ -81,7 +90,7 @@ public partial class Game : Node
             return;
         }
 
-        Instance = this;
+        instance = this;
         Boot();
     }
 
@@ -115,7 +124,7 @@ public partial class Game : Node
         {
             SwapTo(fadeTarget);
             fade = FadePhase.FadingIn;
-            fadeAnim.Play("fade_in");
+            FadeAnim.Play("fade_in");
         }
         else if (animation == "fade_in")
         {

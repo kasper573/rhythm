@@ -14,8 +14,10 @@ namespace Rhythm;
 public partial class HighScores : Node
 {
     private PerPlayer<ScoreBook> books;
+    private static HighScores? instance;
 
-    public static HighScores Instance { get; private set; } = null!;
+    public static HighScores Instance =>
+        instance ?? throw new InvalidOperationException("HighScores autoload not in tree");
 
     public override void _EnterTree()
     {
@@ -24,7 +26,7 @@ public partial class HighScores : Node
             return;
         }
 
-        Instance = this;
+        instance = this;
 
         books = new PerPlayer<ScoreBook>(
             Persistence.Load<ScoreBook>(HighScoresFile(PlayerId.P1)),
@@ -68,7 +70,7 @@ public partial class HighScores : Node
     /// parts are joined unambiguously and hashed, so the stored key is opaque
     /// and immune to awkward characters in names.
     /// </summary>
-    public static string HighscoreKey(StepfileLibrary library, StepfileId id, Chart chart)
+    public static string Key(StepfileLibrary library, StepfileId id, Chart chart)
     {
         var input = $"{library.GroupName(id)}\x1f{library.Stepfile(id).Name()}\x1f{chart.StepsType:G}\x1f{chart.Difficulty:G}";
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(input));

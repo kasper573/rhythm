@@ -14,7 +14,7 @@ public partial class Wheel
         if (!justSettled)
             return;
 
-        if (infoPanel != null)
+        if (infoPanel is not null)
             infoPanel.QueueFree();
 
         bannerPending = null;
@@ -57,7 +57,6 @@ public partial class Wheel
                 return;
         }
 
-        // Fall back to default BGM banner
         bannerPath ??= Library.Instance.DefaultBgm.BannerPath();
 
         infoPanel = new Node2D
@@ -66,7 +65,6 @@ public partial class Wheel
             ZIndex = 50,
         };
 
-        // Banner
         var bannerY = DetailsBoxCenterY + (DetailsBoxSizeY - BannerSizeY) / 2.0f;
         bannerRect = new TextureRect
         {
@@ -77,7 +75,7 @@ public partial class Wheel
         };
         infoPanel.AddChild(bannerRect);
 
-        if (bannerPath != null)
+        if (bannerPath is not null)
         {
             bannerRect.StretchMode = TextureRect.StretchModeEnum.KeepAspectCovered;
             bannerPending = PendingTexture.Load(bannerPath);
@@ -94,12 +92,10 @@ public partial class Wheel
             titleLabel.ZIndex = 1;
         }
 
-        // Headline (BPM or file count)
         var headlineLabel = Text.Label(headline, 28.0f, BpmTextColor);
         infoPanel.AddChild(headlineLabel);
         Text.Place(headlineLabel, new Vector2(0.0f, -70.0f), TextPivot.Center);
 
-        // Difficulty lines and stats
         var tagged = charts.Count > 1;
         for (int row = 0; row < charts.Count; row++)
         {
@@ -137,7 +133,7 @@ public partial class Wheel
         if (loaded is null)
             return;
 
-        if (loaded.Value.Texture != null)
+        if (loaded.Value.Texture is not null)
             bannerRect.Texture = loaded.Value.Texture;
 
         bannerPending = null;

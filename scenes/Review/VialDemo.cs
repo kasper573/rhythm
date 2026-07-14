@@ -12,7 +12,7 @@ namespace Rhythm;
 [GlobalClass]
 public partial class VialDemo : Control
 {
-    private HealthVial vial = null!;
+    private HealthVial? vial;
     private double clock;
 
     public override void _Ready()
@@ -22,6 +22,11 @@ public partial class VialDemo : Control
 
     public override void _Process(double delta)
     {
+        if (vial is null)
+        {
+            return;
+        }
+
         clock += delta;
         var fill = 0.55f + 0.4f * Mathf.Sin((float)clock * 0.7f);
         vial.SetFill(fill);

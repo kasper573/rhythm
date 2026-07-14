@@ -44,11 +44,13 @@ public partial class Settings : Node
 
     private bool dirtyMachine;
     private bool dirtyPlayers;
+    private static Settings? instance;
 
     [Signal]
     public delegate void ChangedEventHandler();
 
-    public static Settings Instance { get; private set; } = null!;
+    public static Settings Instance =>
+        instance ?? throw new InvalidOperationException("Settings autoload not in tree");
 
     public MachineSettings Machine => machine;
 
@@ -63,7 +65,7 @@ public partial class Settings : Node
             return;
         }
 
-        Instance = this;
+        instance = this;
 
         var defaults = Config.Current.Defaults
             ?? throw new InvalidOperationException("Config.Defaults must not be null");
@@ -186,8 +188,6 @@ public partial class Settings : Node
         _ => throw new ArgumentOutOfRangeException(nameof(player)),
     };
 
-    #region Serialization DTOs
-
     [System.Serializable]
     public sealed class MachineSettingsFile
     {
@@ -245,6 +245,4 @@ public partial class Settings : Node
         [System.Text.Json.Serialization.JsonPropertyName("grade_position")]
         public Percent? GradePosition { get; set; }
     }
-
-    #endregion
 }

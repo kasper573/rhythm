@@ -44,4 +44,4 @@ public sealed record PlayerResult(int Chart, StageResults Stage);
 /// The note demo's entry params, inserted by the launch directives; consumed
 /// on enter. A <c>null</c> scenario prints the catalog and exits.
 /// </summary>
-public sealed record NoteDemoParams(string? Scenario, string? Skin, string Perspective, double Bpm);
+public sealed record NoteDemoParams(string? Scenario, string? Skin, string Perspective, Bpm Bpm);

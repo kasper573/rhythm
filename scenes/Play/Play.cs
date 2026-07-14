@@ -64,7 +64,7 @@ public partial class Play : Control
             return;
         }
 
-        var config = Config.Current!;
+        var config = Config.Current;
         var fieldSpecs = BuildFieldSpecs(charts);
 
         // The background sits behind everything: added first so the note
@@ -79,7 +79,6 @@ public partial class Play : Control
         });
         AddChild(engine);
 
-        // Wire the signals
         engine.Connect(StepfilePlayer.SignalName.PressBanked, Callable.From((float error) =>
         {
             tuning?.PushSample(new Seconds(error));
@@ -92,7 +91,6 @@ public partial class Play : Control
 
         var lastNoteTime = engine.LastNoteTime;
 
-        // Add health vials
         foreach (var (player, _) in charts)
         {
             var side = player == PlayerId.P1 ? VialSide.Left : VialSide.Right;
@@ -102,10 +100,8 @@ public partial class Play : Control
             vials.Add((player, vial));
         }
 
-        // Initialize tuning HUD
         tuning = new Tuning(this);
 
-        // Render tick track
         var tickTimes = new List<Seconds>();
         foreach (var (_, chart) in charts)
         {
@@ -139,9 +135,8 @@ public partial class Play : Control
             GD.PushWarning($"could not render tick track: {ex.Message}");
         }
 
-        // Start music loading
         var musicPath = entry.MusicPath();
-        if (musicPath == null)
+        if (musicPath is null)
         {
             GD.Print($"no music file for \"{entry.DisplayTitle()}\", playing silent");
         }
@@ -158,7 +153,7 @@ public partial class Play : Control
 
     private static List<FieldSpec> BuildFieldSpecs(List<(PlayerId, Chart)> charts)
     {
-        var config = Config.Current!;
+        var config = Config.Current;
         var settings = Settings.Instance;
         var packs = charts.Select(chart => new PackSpec(chart.Item1, (uint)chart.Item2.Columns, settings.Player(chart.Item1).NoteSpeed)).ToList();
         var layouts = PackStageFields(packs, Screen.Size.X, 1.0f);
@@ -180,7 +175,7 @@ public partial class Play : Control
     /// </summary>
     private static List<FieldLayout> PackStageFields(IReadOnlyList<PackSpec> specs, float visibleWidth, float pixelsPerUnit)
     {
-        var stage = Config.Current!.Stage!;
+        var stage = Config.Current.Stage ?? throw new InvalidOperationException("Stage is not configured");
         var columns = specs.Sum(spec => (int)spec.Columns);
         var gapUnits = stage.FieldGapColumns * (specs.Count - 1);
         var arrowSize = NoteField.FittedArrowSize(columns + gapUnits, visibleWidth - (2.0f * stage.MarginX), NoteField.MaxArrowSize(stage.MaxArrowSize, pixelsPerUnit));
@@ -229,7 +224,8 @@ public partial class Play : Control
         engine.Refit(layouts);
         engine.SetCanvas(rect.Size, pixelsPerUnit);
 
-        var padding = Config.Current!.Stage!.ScreenEdgePadding;
+        var padding = (Config.Current.Stage
+            ?? throw new InvalidOperationException("Stage is not configured")).ScreenEdgePadding;
         engine.SetTargetY((rect.Size.Y / 2.0f) - padding - (arrowSize / 2.0f));
         engine.SetGradeArea(GradeText.AreaOf((rect.Size.Y / 2.0f) - padding, (-rect.Size.Y / 2.0f) + padding));
 
@@ -244,7 +240,8 @@ public partial class Play : Control
     private void PlaceVials(Rect2 rect, float pixelScale)
     {
         pixelScale = Math.Max(pixelScale, 0.001f);
-        var inset = Config.Current!.Stage!.ScreenEdgePadding / pixelScale;
+        var inset = (Config.Current.Stage
+            ?? throw new InvalidOperationException("Stage is not configured")).ScreenEdgePadding / pixelScale;
         var widthOnScreen = Math.Clamp(HealthVial.NaturalWidth * pixelScale, HealthVial.MinScreenWidth, HealthVial.MaxScreenWidth);
         var width = widthOnScreen / pixelScale;
         var top = rect.Position.Y + inset;
@@ -265,11 +262,10 @@ public partial class Play : Control
 
         PollMusic();
         RefitToWindow();
-        playback.Advance(delta, musicChannel, tickChannel, musicFetch != null);
+        playback.Advance(delta, musicChannel, tickChannel, musicFetch is not null);
         var (graded, visible) = playback.GetClockPorts();
         engine.SetTime(graded, visible);
 
-        // Update backgrounds with visible time
         if (backgrounds is not null)
         {
             backgrounds.Update(playback.VisibleNow, (float)delta);
@@ -378,23 +374,19 @@ public partial class Play : Control
             return;
         }
 
-        // Check if all stages have failed (hard stop)
         var failedOut = checkFailure && engine.AllFailed();
         if (!failedOut)
         {
-            // Check if all stages settled (grading complete)
             if (!engine.AllSettled())
             {
                 return;
             }
 
-            // Check if audio has finished
             var audioDone = musicChannel?.IsFinished ?? (musicFetch is null && tickChannel?.IsFinished != false);
 
             // Trailing mines and hold tails can outlive the audio; wait for them.
             var chartDone = playback.Position.Value >= playback.LastNoteTime.Value;
 
-            // Only finish if both audio and chart are done
             if (!audioDone || !chartDone || !playback.IsPlaying)
             {
                 return;

@@ -12,9 +12,10 @@ namespace Rhythm;
 [GlobalClass]
 public partial class Library : Node
 {
-    private StepfileLibrary? library;
+    private static StepfileLibrary? instance;
 
-    public static StepfileLibrary Instance { get; private set; } = null!;
+    public static StepfileLibrary Instance =>
+        instance ?? throw new InvalidOperationException("Library autoload not in tree");
 
     public override void _EnterTree()
     {
@@ -23,7 +24,6 @@ public partial class Library : Node
             return;
         }
 
-        library = StepfileLibrary.Scan();
-        Instance = library;
+        instance = StepfileLibrary.Scan();
     }
 }
