@@ -31,6 +31,7 @@ The game is built for a non-coding game designer to edit in the Godot editor; th
 - Aim for single source of truth. SSoT ≠ DRY: code duplication is allowed.
 - Every public type name must be intuitive and unambiguous when listed alongside the other public types; never rely on namespacing to disambiguate.
 - Zero warnings, enforced (`TreatWarningsAsErrors`); NEVER suppress a diagnostic (`#pragma warning`, `[SuppressMessage]`).
+- Null-forgiving operator `!` is forbidden.
 
 ## Nodes & scenes
 
