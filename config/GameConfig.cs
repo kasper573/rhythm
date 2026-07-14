@@ -28,14 +28,14 @@ public partial class GameConfig : Resource
     [Export(PropertyHint.Range, "0,1000")] public int BrightArrowFlashCombo { get; set; }
 
     [ExportSubgroup("Dim (below the bright combo)")]
-    [Export(PropertyHint.Range, "0.02,1,0.01,or_greater")] public float FlashDimSeconds { get; set; } = 0.18f;
-    [Export(PropertyHint.Range, "0.1,3,0.05")] public float FlashDimZoom { get; set; } = 1.0f;
-    [Export(PropertyHint.Range, "0,2,0.05")] public float FlashDimGrowth { get; set; } = 0.4f;
+    [Export(PropertyHint.Range, "0.02,1,0.01,or_greater")] public float FlashDimSeconds { get; set; } = 0.32f;
+    [Export(PropertyHint.Range, "0.1,3,0.05")] public float FlashDimZoom { get; set; } = 1.15f;
+    [Export(PropertyHint.Range, "0,2,0.05")] public float FlashDimGrowth { get; set; } = 0.55f;
 
     [ExportSubgroup("Bright (at or above the bright combo)")]
-    [Export(PropertyHint.Range, "0.02,1,0.01,or_greater")] public float FlashBrightSeconds { get; set; } = 0.13f;
-    [Export(PropertyHint.Range, "0.1,3,0.05")] public float FlashBrightZoom { get; set; } = 0.8f;
-    [Export(PropertyHint.Range, "0,2,0.05")] public float FlashBrightGrowth { get; set; } = 0.5f;
+    [Export(PropertyHint.Range, "0.02,1,0.01,or_greater")] public float FlashBrightSeconds { get; set; } = 0.24f;
+    [Export(PropertyHint.Range, "0.1,3,0.05")] public float FlashBrightZoom { get; set; } = 0.95f;
+    [Export(PropertyHint.Range, "0,2,0.05")] public float FlashBrightGrowth { get; set; } = 0.65f;
 
     /// <summary>The arrow-flash lifetime, size, and growth for the given combo tier.</summary>
     public ArrowFlashTiming FlashTiming(bool bright) => bright
