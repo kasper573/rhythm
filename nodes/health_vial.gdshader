@@ -5,6 +5,10 @@
 // is larger than the vial by a glow margin on every side, where the
 // beat-pulsed glass glow (params.z) falls off.
 shader_type canvas_item;
+// Premultiplied alpha so the glow halo adds light (a true glow) instead of
+// alpha-blending a dim tint that darkens bright backgrounds into a shadow —
+// Bevy blended this in linear space, gl_compatibility blends in sRGB.
+render_mode blend_premul_alpha;
 
 // (liquid level 0..1, turbulence 0..~1.2, glow pulse 0..1, gradient scroll 0..2)
 uniform vec4 params;
@@ -102,6 +106,6 @@ void fragment() {
         color += vec3(gloss);
         alpha = min(alpha + gloss * 0.5, 1.0);
 
-        COLOR = vec4(color, alpha * outer);
+        COLOR = vec4(color * (alpha * outer), alpha * outer);
     }
 }

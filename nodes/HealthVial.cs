@@ -82,7 +82,7 @@ public partial class HealthVial : Control
             return;
 
         var glow = healthBar.Glow.Pulse(beat);
-        var scroll = (healthBar.Liquid.Progress(beat) * 2.0f) % 2.0f;
+        var scroll = Mathf.PosMod(healthBar.Liquid.Progress(beat) * 2.0f, 2.0f);
 
         var gradient = healthBar.GradientAt(new Percent(fill * 100.0f));
 
@@ -126,18 +126,13 @@ public partial class HealthVial : Control
         }
 
         var size = shaderRect?.Size ?? Vector2.One;
-        var colors = new Godot.Collections.Array();
-        foreach (var c in motion.Colors)
-        {
-            colors.Add(c);
-        }
 
         if (material is not null)
         {
             material.SetShaderParameter("params", new Vector4(motion.Level, motion.Turbulence, glow, scroll));
             material.SetShaderParameter("rect_size", size);
             material.SetShaderParameter("glow_margin", GlowMargin);
-            material.SetShaderParameter("colors", colors);
+            material.SetShaderParameter("colors", motion.Colors);
         }
     }
 
