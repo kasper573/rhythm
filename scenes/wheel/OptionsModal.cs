@@ -91,8 +91,11 @@ public class OptionsModal
             });
         }
 
-        // Center column with options
+        // Center column with options. Center its children within the box, so
+        // the box's padding sits evenly above and below instead of pooling all
+        // at the bottom (which left the content crowding the top edge).
         modal.column = new VBoxContainer();
+        modal.column.Alignment = BoxContainer.AlignmentMode.Center;
         modal.column.AddThemeConstantOverride("separation", 12);
 
         var title = Text.Label("Player Options", 48.0f, Screen.TitleColor);
