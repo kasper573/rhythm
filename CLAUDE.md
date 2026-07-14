@@ -21,12 +21,6 @@ The game is built for a non-coding game designer to edit in the Godot editor; th
 - Mechanics stay code: judgment, timing, input, and note-field internals expose tunables as exports but never surrender their invariants to the scene tree.
 - Custom asset formats (stepfiles, noteskins) are editor citizens through the review scenes (`note_demo`, `grade_sheet`) and their render tools, which preview them by reusing the runtime parsers from `core/` — the drop-in `assets/` library lives outside `res://`, where a file-based import plugin could not reach it.
 
-## Layout
-
-- The repository root **is** the Godot project: `project.godot`, `Rhythm.csproj`, and `Rhythm.sln` sit at the top exactly as Godot generates them, alongside editor-authored scenes (`scenes/`), custom nodes (`nodes/`), autoloads (`autoload/`), designer data (`.tres` Resources), third-party GDExtensions (`addons/`), and `core/` (the engine-agnostic vocabulary and mechanics — units, timing, stepfile model, scoring — as plain classes in the game assembly). The game exposes generic launch directives (`Launch.cs`: `--scene` deep links with params, `--pulse`/`--hold` input automation, `--frame-report`, `--quit-after-seconds`) and knows nothing about the tooling built on them.
-- `tools/` — the dev command line as shell scripts (`bash tools/dev.sh bench|render-note|render-grade|export` plus `drive.sh`); each composes the game's launch directives and Godot's movie-maker capture by running the `godot` binary, never linking the game.
-- `assets/` — the game's data, loaded at runtime from the filesystem; deliberately not imported into the Godot project nor packed into exports, so a shipped build's `assets/stepfiles/` stays a drop-in library folder.
-
 ## Code style
 
 - Simplicity, stability (extensible, not brittle), readability — then performance.
@@ -52,6 +46,7 @@ Design guidance, not enforced boundaries — the editor is the designer's, and t
 - Sole exception: explain WHY, never WHAT. Even then, prefer refactoring until both are obvious; a comment is the final escape hatch.
 - Comments are timeless: never prompt-specific, never feedback to the prompter.
 - Explain a mechanism once, ideally at its implementation — never duplicated across workflows, env files, call sites, and the source.
+- Never use #region.
 
 ## Visual Testing
 
@@ -67,12 +62,12 @@ Two capture paths:
   movie maker into `out/`, reusing the game's own node/shader paths so the
   output is exactly what the game draws. `bash tools/dev.sh render-grade`
   (→ `out/grades.png`) and `bash tools/dev.sh render-note <scenario|all>
-  [--skin .. --bpm ..]` / `--list` (→ `out/*.mp4`). Prefer this: when the
+[--skin .. --bpm ..]` / `--list` (→ `out/*.mp4`). Prefer this: when the
   thing under test can be isolated, add or extend a scenario instead of
   clicking through menus. They need a display (any X server; the drive
   harness's Xvfb works), the Godot 4.7 .NET binary (`godot` on PATH or
   `GODOT_BIN`), and ffmpeg on the PATH. To reach any other state directly,
-  deep-link it: `godot --path . -- --scene wheel` (see `Launch.cs`).
+  deep-link it: `godot --path . -- --scene stepfile-select` (see `Launch.cs`).
 
 - **Live drive harness** — `tools/drive.sh` boots the actual windowed
   game on an isolated virtual display and drives it with synthesized input +
