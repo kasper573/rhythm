@@ -7,7 +7,11 @@ core mechanics live in code. Rules and architecture: [CLAUDE.md](CLAUDE.md).
 ## Setup
 
 - .NET 8 SDK, and a Godot 4.7 **.NET** binary as `godot` on `PATH` (or `GODOT_BIN=…`).
-- `ffmpeg` on `PATH` — only for the render tools below.
+- Install the runtime media decoder: `bash tools/fetch-ffmpeg.sh`. Stepfiles ship a
+  wide range of video/audio formats, decoded at runtime by the EIRTeam.FFmpeg
+  GDExtension; its prebuilt binaries are **fetched** (a pinned release into
+  `addons/ffmpeg/`), never vendored in git.
+- `ffmpeg` on `PATH` — a separate, **dev-only** dependency, for the render tools below.
 - The stepfile library is a drop-in, not in this repo: place it under `assets/stepfiles/`.
 
 ## Run

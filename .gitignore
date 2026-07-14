@@ -5,5 +5,7 @@ obj
 *.user
 *.uid
 assets/stepfiles
+# Fetched by tools/fetch-ffmpeg.sh — prebuilt EIRTeam.FFmpeg addon, not vendored.
+/addons/ffmpeg/
 out
 /dist
