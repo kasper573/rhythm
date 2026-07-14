@@ -1,11 +1,38 @@
-[gd_scene load_steps=2 format=3 uid="uid://d24pou6nvj49d"]
+[gd_scene load_steps=3 format=3 uid="uid://d24pou6nvj49d"]
 
 [ext_resource type="Script" path="res://scenes/score/Score.cs" id="1_w8fbk"]
+[ext_resource type="Script" path="res://ui/GameLabel.cs" id="2_label"]
 
-[node name="Score" type="Control" node_paths=PackedStringArray()]
+[node name="Score" type="Control"]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 mouse_filter = 2
 script = ExtResource("1_w8fbk")
+
+[node name="Center" type="CenterContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+
+[node name="Column" type="VBoxContainer" parent="Center"]
+layout_mode = 2
+theme_override_constants/separation = 20
+alignment = 1
+
+[node name="Title" type="Label" parent="Center/Column"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(0.95, 0.85, 0.4, 1)
+text = "Song Title"
+horizontal_alignment = 1
+script = ExtResource("2_label")
+FontSize = 46.0
+
+[node name="ColumnsRow" type="HBoxContainer" parent="Center/Column"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 120
+size_flags_horizontal = 4

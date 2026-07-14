@@ -21,8 +21,6 @@ public partial class Score : Control
             return;
         }
 
-        SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
-
         var game = Game.Instance;
         var results = game.TakeScoreResults();
 
@@ -35,21 +33,10 @@ public partial class Score : Control
         Scenes.PlayDefaultBgm();
         Scenes.SpawnDefaultBackground(this);
 
-        var center = new CenterContainer();
-        center.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        var title = GetNode<Label>("%Title");
+        title.Text = results.Title;
 
-        var column = new VBoxContainer();
-        column.AddThemeConstantOverride("separation", 20);
-        column.Alignment = BoxContainer.AlignmentMode.Center;
-
-        var title = Text.Label(results.Title, 46.0f, Screen.TitleColor);
-        title.HorizontalAlignment = HorizontalAlignment.Center;
-        title.SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter;
-        column.AddChild(title);
-
-        var columnsRow = new HBoxContainer();
-        columnsRow.AddThemeConstantOverride("separation", 120);
-        columnsRow.SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter;
+        var columnsRow = GetNode<HBoxContainer>("%ColumnsRow");
 
         var tagged = results.Players.Count > 1;
         id = results.Id;
@@ -69,10 +56,6 @@ public partial class Score : Control
             columnsRow.AddChild(playerColumn);
             players.Add(stage.Player);
         }
-
-        column.AddChild(columnsRow);
-        center.AddChild(column);
-        AddChild(center);
     }
 
     private VBoxContainer PlayerColumn(StageResults stage, Tally tally, GameConfig config, bool newHighScore, bool tagged)

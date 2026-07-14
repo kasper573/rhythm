@@ -19,14 +19,12 @@ public partial class KeymapScene : Control
     private bool[] navBefore = [false, false, false, false];
     private List<Label> actionLabels = [];
     private List<Label> bindingLabels = [];
-    private Label? promptLabel = null;
+    private VBoxContainer actionColumn = null!;
+    private VBoxContainer keyColumn = null!;
+    private Label promptLabel = null!;
+    private Label helpLabel = null!;
     private Keymap defaultKeymap = null!;
 
-    private const float TABLE_WIDTH = 560.0f;
-    private const float TABLE_HEIGHT = 620.0f;
-    private const float TITLE_TOP = 44.0f;
-    private const float KEY_COLUMN_WIDTH = 200.0f;
-    private const float CENTER_BIAS = 60.0f;
     private const double RESET_HOLD = 0.5;
 
     private static readonly GameAction[] NAV_ACTIONS =
@@ -39,70 +37,28 @@ public partial class KeymapScene : Control
 
     public override void _Ready()
     {
-        SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         Scenes.PlayDefaultBgm();
         Scenes.SpawnDefaultBackground(this);
 
         defaultKeymap = Config.Current.Defaults!.ToKeymap();
 
-        var title = Text.Label("Keymap", 44.0f, Screen.TitleColor);
-        title.HorizontalAlignment = HorizontalAlignment.Center;
-        title.SetAnchorsAndOffsetsPreset(LayoutPreset.TopWide);
-        title.OffsetTop = TITLE_TOP;
-        AddChild(title);
-
-        var table = new Control();
-        table.SetAnchorsPreset(LayoutPreset.Center);
-        table.Size = new Vector2(TABLE_WIDTH, TABLE_HEIGHT);
-        table.Position = new Vector2(-TABLE_WIDTH / 2.0f + CENTER_BIAS / 2.0f, -TABLE_HEIGHT / 2.0f);
-
-        var gridCenter = new CenterContainer();
-        gridCenter.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
-
-        var grid = new HBoxContainer();
-        grid.AddThemeConstantOverride("separation", 48);
-
-        var labelsColumn = new VBoxContainer();
-        labelsColumn.AddThemeConstantOverride("separation", 2);
-        var keysColumn = new VBoxContainer();
-        keysColumn.AddThemeConstantOverride("separation", 2);
-        keysColumn.CustomMinimumSize = new Vector2(KEY_COLUMN_WIDTH, 0.0f);
+        actionColumn = GetNode<VBoxContainer>("%ActionColumn");
+        keyColumn = GetNode<VBoxContainer>("%KeyColumn");
+        promptLabel = GetNode<Label>("%Prompt");
+        helpLabel = GetNode<Label>("%Help");
 
         foreach (var action in GameActions.All)
         {
             var name = Text.Label(action.Label(), 19.0f, Screen.InactiveColor);
-            labelsColumn.AddChild(name);
+            actionColumn.AddChild(name);
             actionLabels.Add(name);
 
             var key = Text.Label(KeyLabel(action, defaultKeymap), 19.0f, Screen.InactiveColor);
-            keysColumn.AddChild(key);
+            keyColumn.AddChild(key);
             bindingLabels.Add(key);
         }
 
-        grid.AddChild(labelsColumn);
-        grid.AddChild(keysColumn);
-        gridCenter.AddChild(grid);
-        table.AddChild(gridCenter);
-        AddChild(table);
-
-        promptLabel = Text.Label("", 22.0f, new Color(0.4f, 0.9f, 0.6f));
-        promptLabel.HorizontalAlignment = HorizontalAlignment.Center;
-        promptLabel.SetAnchorsAndOffsetsPreset(LayoutPreset.BottomWide);
-        promptLabel.OffsetTop = -80.0f;
-        promptLabel.OffsetBottom = -56.0f;
-        AddChild(promptLabel);
-
-        var resetKey = DefaultKey(GameAction.P1Cancel);
-        var resetHelp = Text.Label(
-            $"Hold {Actions.KeyName(resetKey)} to reset selected key to default",
-            18.0f,
-            Screen.InactiveColor);
-        resetHelp.HorizontalAlignment = HorizontalAlignment.Center;
-        resetHelp.SetAnchorsAndOffsetsPreset(LayoutPreset.BottomWide);
-        resetHelp.OffsetTop = -40.0f;
-        resetHelp.OffsetBottom = -16.0f;
-        AddChild(resetHelp);
-
+        UpdateHelpText();
         RefreshRows();
     }
 
@@ -238,10 +194,13 @@ public partial class KeymapScene : Control
             GameAction action => $"Press a key for \"{action.Label()}\" ({Actions.KeyName(DefaultKey(GameAction.P1Cancel))} aborts)",
         };
 
-        if (promptLabel is not null)
-        {
-            promptLabel.Text = text;
-        }
+        promptLabel.Text = text;
+    }
+
+    private void UpdateHelpText()
+    {
+        var resetKey = DefaultKey(GameAction.P1Cancel);
+        helpLabel.Text = $"Hold {Actions.KeyName(resetKey)} to reset selected key to default";
     }
 
     private void CancelGesture(double delta, bool justPressed, bool justReleased)
