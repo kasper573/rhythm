@@ -1,0 +1,16 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://ui/GameLabel.cs" id="1_label"]
+
+[node name="WheelSlot" type="Node2D"]
+z_index = 100
+
+[node name="Bar" type="Sprite2D" parent="."]
+
+[node name="Title" type="Label" parent="."]
+script = ExtResource("1_label")
+FontSize = 26.0
+
+[node name="Artist" type="Label" parent="."]
+script = ExtResource("1_label")
+FontSize = 17.0

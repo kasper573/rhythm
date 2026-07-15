@@ -7,33 +7,27 @@ public partial class Config : Node
 {
     private static GameConfig? cached;
 
-    public static GameConfig Current
+    /// <summary>
+    /// The loaded game config, read lazily from its <c>.tres</c> on first use
+    /// so it serves editor <c>[Tool]</c> previews as well as the running game.
+    /// </summary>
+    public static GameConfig Current => cached ??= Load();
+
+    private static GameConfig Load()
     {
-        get => cached ?? throw new InvalidOperationException("Config not loaded");
-    }
+        var config = GD.Load<GameConfig>("res://config/GameConfig.tres")
+            ?? throw new InvalidOperationException("Failed to load config from res://config/GameConfig.tres");
 
-    public static GameConfig Load()
-    {
-        if (cached is not null)
-            return cached;
-
-        if (!Engine.IsEditorHint())
-        {
-            cached = GD.Load<GameConfig>("res://config/GameConfig.tres")
-                ?? throw new InvalidOperationException("Failed to load config from res://config/GameConfig.tres");
-
-            cached.Validate();
-            return cached;
-        }
-
-        throw new InvalidOperationException("Config.Load() called in editor");
+        config.Validate();
+        return config;
     }
 
     public override void _EnterTree()
     {
         if (!Engine.IsEditorHint())
         {
-            cached = Load();
+            // Fail fast at boot rather than mid-scene on first access.
+            _ = Current;
         }
     }
 }

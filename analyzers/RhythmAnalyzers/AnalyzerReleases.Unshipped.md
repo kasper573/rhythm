@@ -3,6 +3,6 @@
 
 ### New Rules
 
-Rule ID | Category    | Severity | Notes
---------|-------------|----------|----------------------------------------------
-RH0001  | Nullability | Warning  | Null-forgiving operator `!` is forbidden.
+Rule ID | Category | Severity | Notes
+--------|----------|----------|-------
+RH0001 | Nullability | Warning | Null-forgiving operator `!` is forbidden.

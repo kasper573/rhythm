@@ -1,4 +1,3 @@
-using System.Globalization;
 using Godot;
 using Rhythm.Core;
 
@@ -38,6 +37,7 @@ public partial class Score : Control
         title.Text = results.Title;
 
         var columnsRow = GetNode<HBoxContainer>("%ColumnsRow");
+        var columns = columnsRow.GetChildren().OfType<PlayerColumn>().ToList();
 
         var tagged = results.Players.Count > 1;
         id = results.Id;
@@ -45,33 +45,33 @@ public partial class Score : Control
         var config = Config.Current;
         var library = Library.Instance;
 
-        foreach (var player in results.Players)
+        for (int i = 0; i < columns.Count; i++)
         {
+            if (i >= results.Players.Count)
+            {
+                columns[i].Visible = false;
+                continue;
+            }
+
+            var player = results.Players[i];
             var stage = player.Stage;
             var tally = ComputeTally(stage, config);
             var chart = library.Stepfile(results.Id).Stepfile.Charts[player.Chart];
             var key = HighScores.Key(library, results.Id, chart);
             var newHighScore = HighScores.Instance.Record(stage.Player, key, tally.TotalPoints);
 
-            var column = PlayerColumnScene.Instantiate<VBoxContainer>();
-            columnsRow.AddChild(column);
-            Populate(column, stage, tally, config, newHighScore, tagged);
+            columns[i].Visible = true;
+            Populate(columns[i], stage, tally, config, newHighScore, tagged);
             players.Add(stage.Player);
         }
     }
 
-    private static readonly PackedScene PlayerColumnScene =
-        GD.Load<PackedScene>("res://scenes/Score/PlayerColumn.tscn");
-
     /// <summary>Fills one authored player column with a stage's result, score, rating, tallies, and combo.</summary>
-    private void Populate(Node column, StageResults stage, Tally tally, GameConfig config, bool newHighScore, bool tagged)
+    private void Populate(PlayerColumn column, StageResults stage, Tally tally, GameConfig config, bool newHighScore, bool tagged)
     {
-        if (tagged)
-        {
-            var tag = column.GetNode<Label>("%PlayerTag");
-            tag.Text = stage.Player == PlayerId.P1 ? "P1" : "P2";
-            tag.Visible = true;
-        }
+        var tag = column.GetNode<Label>("%PlayerTag");
+        tag.Text = stage.Player == PlayerId.P1 ? "P1" : "P2";
+        tag.Visible = tagged;
 
         var (resultText, resultColor) = stage.Failed
             ? ("FAILED", new Color(0.95f, 0.25f, 0.25f))
@@ -90,30 +90,7 @@ public partial class Score : Control
         var image = config.Rating(tally.Percent, tally.WorstGrade).Image;
         ratings.Add((PendingTexture.Load(Assets.Path(image)), column.GetNode<TextureRect>("%Rating")));
 
-        var labels = column.GetNode<VBoxContainer>("%Labels");
-        var values = column.GetNode<VBoxContainer>("%Values");
-        if (config.Grading is not null && config.Grading.Dynamic.Count > 0)
-        {
-            for (int i = 0; i < config.Grading.Dynamic.Count && i < tally.GradeCounts.Length; i++)
-            {
-                var grade = config.Grading.Dynamic[i];
-                labels.AddChild(Text.Label(grade.Name, 30.0f, grade.Color));
-                values.AddChild(Text.Label(tally.GradeCounts[i].ToString(CultureInfo.InvariantCulture), 30.0f, grade.Color));
-            }
-        }
-
-        if (config.Grading?.Miss is { } miss)
-        {
-            labels.AddChild(Text.Label(miss.Name, 30.0f, miss.Color));
-            values.AddChild(Text.Label(tally.MissCount.ToString(CultureInfo.InvariantCulture), 30.0f, miss.Color));
-        }
-
-        var tallyColor = new Color(0.8f, 0.85f, 0.8f);
-        labels.AddChild(Text.Label("Holds", 30.0f, tallyColor));
-        values.AddChild(Text.Label($"{stage.HoldsOk}/{stage.HoldsTotal}", 30.0f, tallyColor));
-        labels.AddChild(Text.Label("Mines", 30.0f, tallyColor));
-        var avoided = stage.MinesTotal - stage.MinesExploded;
-        values.AddChild(Text.Label($"{avoided}/{stage.MinesTotal}", 30.0f, tallyColor));
+        column.FillTallies(config, tally.GradeCounts, tally.MissCount, stage.HoldsOk, stage.HoldsTotal, stage.MinesTotal - stage.MinesExploded, stage.MinesTotal);
 
         column.GetNode<Label>("%Combo").Text = $"Max combo: {stage.MaxCombo}";
     }

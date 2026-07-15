@@ -8,6 +8,7 @@ namespace Rhythm;
 /// DEFAULT keymap, never the live one it edits: however broken the stored
 /// bindings get, this scene stays operable to repair them.
 /// </summary>
+[Tool]
 [GlobalClass]
 public partial class KeymapScene : Control
 {
@@ -39,9 +40,6 @@ public partial class KeymapScene : Control
 
     public override void _Ready()
     {
-        Scenes.PlayDefaultBgm();
-        Scenes.SpawnDefaultBackground(this);
-
         defaultKeymap = (Config.Current.Defaults
             ?? throw new InvalidOperationException("Config.Defaults must not be null")).ToKeymap();
 
@@ -62,12 +60,24 @@ public partial class KeymapScene : Control
         }
 
         UpdateHelpText();
+
+        if (Engine.IsEditorHint())
+        {
+            // Preview the default bindings with the first row highlighted; the
+            // live keymap it edits (Settings) only exists in game.
+            actionLabels[0].AddThemeColorOverride("font_color", Colors.White);
+            bindingLabels[0].AddThemeColorOverride("font_color", Colors.White);
+            return;
+        }
+
+        Scenes.PlayDefaultBgm();
+        Scenes.SpawnDefaultBackground(this);
         RefreshRows();
     }
 
     public override void _Input(InputEvent @event)
     {
-        if (prompt is null)
+        if (Engine.IsEditorHint() || prompt is null)
         {
             return;
         }
@@ -108,6 +118,11 @@ public partial class KeymapScene : Control
 
     public override void _Process(double delta)
     {
+        if (Engine.IsEditorHint())
+        {
+            return;
+        }
+
         var input = Input.Singleton;
 
         var now = new bool[4];

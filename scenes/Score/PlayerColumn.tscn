@@ -1,17 +1,19 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://ui/GameLabel.cs" id="1_label"]
+[ext_resource type="Script" path="res://scenes/Score/PlayerColumn.cs" id="2_column"]
 
 [node name="PlayerColumn" type="VBoxContainer"]
 theme_override_constants/separation = 8
 alignment = 1
+script = ExtResource("2_column")
 
 [node name="PlayerTag" type="Label" parent="."]
 unique_name_in_owner = true
-visible = false
 layout_mode = 2
 size_flags_horizontal = 4
 theme_override_colors/font_color = Color(0.95, 0.85, 0.4, 1)
+text = "P1"
 horizontal_alignment = 1
 script = ExtResource("1_label")
 FontSize = 36.0
@@ -24,6 +26,8 @@ theme_override_constants/margin_bottom = 12
 [node name="Result" type="Label" parent="ResultBox"]
 unique_name_in_owner = true
 layout_mode = 2
+theme_override_colors/font_color = Color(0.5, 0.95, 0.6, 1)
+text = "CLEARED"
 horizontal_alignment = 1
 script = ExtResource("1_label")
 FontSize = 34.0
@@ -42,6 +46,7 @@ theme_override_constants/separation = 16
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_colors/font_color = Color(0.95, 0.97, 1, 1)
+text = "98.50%"
 script = ExtResource("1_label")
 FontSize = 42.0
 
@@ -100,6 +105,7 @@ unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 4
 theme_override_colors/font_color = Color(0.7, 0.85, 1, 1)
+text = "Max combo: 217"
 horizontal_alignment = 1
 script = ExtResource("1_label")
 FontSize = 32.0

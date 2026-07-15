@@ -169,13 +169,6 @@ public partial class Wheel
 
     private static List<(string, float, float)> StatGrid(Stepfile stepfile, int chartIndex)
     {
-        const float StatColumnLabel0 = -170.0f;
-        const float StatColumnValue0 = -75.0f;
-        const float StatColumnLabel1 = 35.0f;
-        const float StatColumnValue1 = 130.0f;
-        const float StatTopY = -48.0f;
-        const float StatRowHeight = 28.0f;
-
         var chart = stepfile.Charts[chartIndex];
         var stats = chart.Stats();
         var duration = chart.LastNoteBeat() is Beat beat
@@ -185,14 +178,25 @@ public partial class Wheel
         int minutes = (int)(double.Max(duration.Value, 0.0) / 60.0);
         int seconds = (int)(double.Max(duration.Value, 0.0) % 60.0);
 
-        var pairs = new[]
-        {
+        return LayoutStatGrid(
+        [
             ("Steps", stats.Steps.ToString(CultureInfo.InvariantCulture)),
             ("Jumps", stats.Jumps.ToString(CultureInfo.InvariantCulture)),
             ("Holds", stats.Holds.ToString(CultureInfo.InvariantCulture)),
             ("Mines", stats.Mines.ToString(CultureInfo.InvariantCulture)),
             ("Length", $"{minutes}:{seconds:D2}"),
-        };
+        ]);
+    }
+
+    /// <summary>Places the two-column label/value stat grid; shared by the runtime panel and the editor preview.</summary>
+    private static List<(string, float, float)> LayoutStatGrid((string Name, string Value)[] pairs)
+    {
+        const float StatColumnLabel0 = -170.0f;
+        const float StatColumnValue0 = -75.0f;
+        const float StatColumnLabel1 = 35.0f;
+        const float StatColumnValue1 = 130.0f;
+        const float StatTopY = -48.0f;
+        const float StatRowHeight = 28.0f;
 
         var cells = new List<(string, float, float)>();
         for (int i = 0; i < pairs.Length; i++)

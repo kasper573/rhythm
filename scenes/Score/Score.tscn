@@ -1,7 +1,8 @@
-[gd_scene load_steps=3 format=3 uid="uid://d24pou6nvj49d"]
+[gd_scene load_steps=4 format=3 uid="uid://d24pou6nvj49d"]
 
 [ext_resource type="Script" path="res://scenes/Score/Score.cs" id="1_w8fbk"]
 [ext_resource type="Script" path="res://ui/GameLabel.cs" id="2_label"]
+[ext_resource type="PackedScene" path="res://scenes/Score/PlayerColumn.tscn" id="3_column"]
 
 [node name="Score" type="Control"]
 layout_mode = 3
@@ -36,3 +37,12 @@ unique_name_in_owner = true
 layout_mode = 2
 theme_override_constants/separation = 120
 size_flags_horizontal = 4
+
+[node name="Column1" parent="Center/Column/ColumnsRow" instance=ExtResource("3_column")]
+layout_mode = 2
+
+[node name="Column2" parent="Center/Column/ColumnsRow" instance=ExtResource("3_column")]
+layout_mode = 2
+
+[node name="PlayerTag" parent="Center/Column/ColumnsRow/Column2" index="0"]
+text = "P2"

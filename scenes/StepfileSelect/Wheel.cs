@@ -35,6 +35,7 @@ public struct SlotUi
 /// changes the active player's difficulty; a Select tap acts on the row while
 /// holding Select opens the player-options modal.
 /// </summary>
+[Tool]
 [GlobalClass]
 public partial class Wheel : Control
 {
@@ -103,10 +104,19 @@ public partial class Wheel : Control
     public override void _Ready()
     {
         SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
-        Settings.Instance.Changed += OnSettingsChanged;
 
         canvas = new Node2D();
         AddChild(canvas);
+        barTexture = RoundedTexture(512, 64, 16.0f, null);
+        BuildChrome();
+
+        if (Engine.IsEditorHint())
+        {
+            BuildEditorPreview();
+            return;
+        }
+
+        Settings.Instance.Changed += OnSettingsChanged;
 
         var mode = Game.Instance.PlayMode;
         stepsType = mode.StepsType();
@@ -122,7 +132,25 @@ public partial class Wheel : Control
         BuildEntries();
         active = FindActiveIndex(target) ?? 0;
 
-        barTexture = RoundedTexture(512, 64, 16.0f, null);
+        if (entries.Count == 0)
+        {
+            var empty = Text.Label($"No stepfiles with {stepsType} charts found", 30.0f, new Color(0.9f, 0.4f, 0.4f));
+            canvas.AddChild(empty);
+            Text.Place(empty, Vector2.Zero, TextPivot.Center);
+            empty.ZIndex = 200;
+        }
+
+        dirty = true;
+        MarkSettled();
+    }
+
+    /// <summary>The details-panel backdrop and the active-row frame: pure art, so both game and editor build it.</summary>
+    private void BuildChrome()
+    {
+        if (canvas is null)
+        {
+            return;
+        }
 
         var detailsBox = new Sprite2D
         {
@@ -142,26 +170,109 @@ public partial class Wheel : Control
             ZIndex = 120,
         };
         canvas.AddChild(highlight);
+    }
 
-        if (entries.Count == 0)
+    /// <summary>
+    /// A static sample carousel for the editor: the real bar art, curve, and
+    /// row styling with placeholder titles, so the scene renders meaningfully
+    /// without the runtime library. Never runs in game.
+    /// </summary>
+    private static readonly string[] PreviewTitles =
+        ["Butterfly", "PARANOiA", "MAX 300", "CANDY☆", "AFRONOVA", "Healing Vision", "Drop Out", "Trip Machine", "Dead End", "SP-TRIP MACHINE", "Silent Hill"];
+
+    private void BuildEditorPreview()
+    {
+        if (canvas is null || barTexture is null)
         {
-            var empty = Text.Label($"No stepfiles with {stepsType} charts found", 30.0f, new Color(0.9f, 0.4f, 0.4f));
-            canvas.AddChild(empty);
-            Text.Place(empty, Vector2.Zero, TextPivot.Center);
-            empty.ZIndex = 200;
+            return;
         }
 
-        dirty = true;
-        MarkSettled();
+        const int count = 11;
+        int center = count / 2;
+        for (int i = 0; i < count; i++)
+        {
+            var slot = SpawnSlot(i, count, canvas, barTexture);
+            slots.Add(slot);
+            slot.Bar.Modulate = StepfileBarColor;
+            slot.Title.Text = PreviewTitles[i % PreviewTitles.Length];
+            slot.Title.AddThemeColorOverride("font_color", i == center ? ActiveStepfileTextColor : StepfileTextColor);
+            Text.Place(slot.Title, new Vector2(-BarWidth / 2.0f + 26.0f, -9.0f), TextPivot.CenterLeft);
+            slot.Artist.Text = "/ Sample Artist";
+            slot.Artist.AddThemeColorOverride("font_color", ArtistTextColor);
+            Text.Place(slot.Artist, new Vector2(-BarWidth / 2.0f + 60.0f, 15.0f), TextPivot.CenterLeft);
+        }
+
+        BuildPreviewInfoPanel();
+    }
+
+    /// <summary>The settled row's details panel with placeholder song data, for the editor preview.</summary>
+    private void BuildPreviewInfoPanel()
+    {
+        if (canvas is null || barTexture is null)
+        {
+            return;
+        }
+
+        var panel = new Node2D { Position = new Vector2(DetailsBoxCenterX, 0.0f), ZIndex = 50 };
+
+        var bannerY = DetailsBoxCenterY + (DetailsBoxSizeY - BannerSizeY) / 2.0f;
+        var banner = new TextureRect
+        {
+            Size = new Vector2(BannerSizeX, BannerSizeY),
+            Position = new Vector2(-BannerSizeX / 2.0f, -bannerY - BannerSizeY / 2.0f),
+            ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+            ClipContents = true,
+            StretchMode = TextureRect.StretchModeEnum.Scale,
+            Texture = barTexture,
+            Modulate = BannerTintColor,
+        };
+        panel.AddChild(banner);
+
+        var title = Text.Label("Sample Song", 24.0f, BannerTextColor);
+        panel.AddChild(title);
+        Text.Place(title, new Vector2(0.0f, -bannerY), TextPivot.Center);
+        title.ZIndex = 1;
+
+        var headline = Text.Label("BPM 150", 28.0f, BpmTextColor);
+        panel.AddChild(headline);
+        Text.Place(headline, new Vector2(0.0f, -70.0f), TextPivot.Center);
+
+        var chartLine = Text.Label("Expert 8", 34.0f, new Color(0.4f, 0.95f, 0.4f));
+        panel.AddChild(chartLine);
+        Text.Place(chartLine, new Vector2(0.0f, -18.0f), TextPivot.Center);
+
+        foreach (var (text, x, y) in LayoutStatGrid(
+        [
+            ("Steps", "343"),
+            ("Jumps", "98"),
+            ("Holds", "4"),
+            ("Mines", "0"),
+            ("Length", "1:34"),
+        ]))
+        {
+            var cell = Text.Label(text, 22.0f, StatsTextColor);
+            panel.AddChild(cell);
+            Text.Place(cell, new Vector2(x, -y), TextPivot.CenterLeft);
+        }
+
+        canvas.AddChild(panel);
     }
 
     public override void _Process(double delta)
     {
         // The canvas space tracks the visible center, so world-placed pieces
-        // stay centered whatever the window reveals.
+        // stay centered whatever the window reveals; the editor has no game
+        // window, so it centers on the design canvas instead.
         if (canvas is not null)
         {
-            canvas.Position = Screen.VisibleRect(this).GetCenter();
+            canvas.Position = Engine.IsEditorHint()
+                ? Screen.Size / 2.0f
+                : Screen.VisibleRect(this).GetCenter();
+        }
+
+        if (Engine.IsEditorHint())
+        {
+            return;
         }
 
         if (modal is not null)
@@ -200,8 +311,12 @@ public partial class Wheel : Control
 
     public override void _ExitTree()
     {
+        if (Engine.IsEditorHint())
+        {
+            return;
+        }
+
         Settings.Instance.Changed -= OnSettingsChanged;
-        MusicPlayer.Instance.Stop();
     }
 
     /// <summary>Previews mirror the options they render, so an open modal rebuilds them.</summary>
@@ -592,27 +707,26 @@ public partial class Wheel : Control
         MarkSettled();
     }
 
+    private static readonly PackedScene SlotScene =
+        GD.Load<PackedScene>("res://scenes/StepfileSelect/WheelSlot.tscn");
+
     private static SlotUi SpawnSlot(int index, int slotsCount, Node2D canvas, ImageTexture barTexture)
     {
-        var root = new Node2D
-        {
-            Position = new Vector2(SlotX(index, slotsCount, 0.0f), -SlotY(index, slotsCount, 0.0f)),
-            ZIndex = 100,
-        };
-        var bar = new Sprite2D
-        {
-            Texture = barTexture,
-            Scale = new Vector2(BarWidth / 512.0f, BarHeight / 64.0f),
-            Modulate = StepfileBarColor,
-        };
-        root.AddChild(bar);
-        var title = Text.Label("", 26.0f, StepfileTextColor);
-        root.AddChild(title);
-        var artist = Text.Label("", 17.0f, ArtistTextColor);
-        root.AddChild(artist);
+        var root = SlotScene.Instantiate<Node2D>();
+        root.Position = new Vector2(SlotX(index, slotsCount, 0.0f), -SlotY(index, slotsCount, 0.0f));
+        var bar = root.GetNode<Sprite2D>("Bar");
+        bar.Texture = barTexture;
+        bar.Scale = new Vector2(BarWidth / 512.0f, BarHeight / 64.0f);
         var ratings = new PerPlayer<RatingUi>(RatingUi.Spawn(root, PlayerId.P1), RatingUi.Spawn(root, PlayerId.P2));
         canvas.AddChild(root);
-        return new SlotUi { Root = root, Bar = bar, Title = title, Artist = artist, Ratings = ratings };
+        return new SlotUi
+        {
+            Root = root,
+            Bar = bar,
+            Title = root.GetNode<Label>("Title"),
+            Artist = root.GetNode<Label>("Artist"),
+            Ratings = ratings,
+        };
     }
 
     private void RefreshWheelRows()
