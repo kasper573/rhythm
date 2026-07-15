@@ -432,7 +432,6 @@ public partial class Play : Control
     {
         backgrounds?.Dispose();
         tuning?.Dispose();
-        MusicPlayer.Instance.Stop();
     }
 }
 
