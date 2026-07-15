@@ -4,7 +4,7 @@ using Rhythm.Core;
 namespace Rhythm;
 
 /// <summary>
-/// The grading pass. The row is the unit the engine grades, independently per
+/// The grading pass. The row is the unit graded, independently per
 /// stage. Presses bank silently into their arrows; the row resolves into one
 /// grade when its last arrow is banked — decided by that completing press — or
 /// expires into a single Miss if any arrow times out, voiding the banked

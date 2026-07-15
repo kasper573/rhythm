@@ -5,7 +5,7 @@ namespace Rhythm;
 
 /// <summary>
 /// The play scene: the real gameplay adapter around the stepfile player.
-/// It fills the engine's ports from the audio clock and the keyboard,
+/// It fills the stepfile player's ports from the audio clock and the keyboard,
 /// composes the stage furniture (health vials, backgrounds, tuning HUD),
 /// and turns the session's end into ScoreResults.
 /// </summary>
@@ -13,7 +13,7 @@ namespace Rhythm;
 public partial class Play : Control
 {
     private SelectedStepfile? selected;
-    private StepfilePlayer? engine;
+    private StepfilePlayer? stepfilePlayer;
     private Playback? playback;
     private List<(PlayerId, HealthVial)> vials = [];
     private Backgrounds? backgrounds;
@@ -71,19 +71,19 @@ public partial class Play : Control
         // field, vials, and HUD draw on top of it.
         backgrounds = new Backgrounds(this, entry, timing);
 
-        engine = StepfilePlayer.Instantiate(new StepfilePlayerOptions
+        stepfilePlayer = StepfilePlayer.Instantiate(new StepfilePlayerOptions
         {
             Fields = fieldSpecs,
             Timing = timing,
             Canvas = Screen.Size
         });
-        AddChild(engine);
+        AddChild(stepfilePlayer);
 
-        engine.Connect(StepfilePlayer.SignalName.PressBanked, Callable.From((float error) =>
+        stepfilePlayer.Connect(StepfilePlayer.SignalName.PressBanked, Callable.From((float error) =>
         {
             tuning?.PushSample(new Seconds(error));
         }));
-        engine.Connect(StepfilePlayer.SignalName.StageFailed, Callable.From((int player) =>
+        stepfilePlayer.Connect(StepfilePlayer.SignalName.StageFailed, Callable.From((int player) =>
         {
             Sfx.Fail.Play();
         }));
@@ -197,7 +197,7 @@ public partial class Play : Control
     /// </summary>
     private void RefitToWindow()
     {
-        if (engine is null)
+        if (stepfilePlayer is null)
         {
             return;
         }
@@ -206,7 +206,7 @@ public partial class Play : Control
         var window = GetWindow();
         var pixelsPerUnit = window is not null ? window.Size.X / Math.Max(rect.Size.X, 1.0f) : 1.0f;
         var settings = Settings.Instance;
-        var specs = engine.Players.Zip(engine.FieldLayouts, (player, layout) => new PackSpec(player, layout.Columns, settings.Player(player).NoteSpeed)).ToList();
+        var specs = stepfilePlayer.Players.Zip(stepfilePlayer.FieldLayouts, (player, layout) => new PackSpec(player, layout.Columns, settings.Player(player).NoteSpeed)).ToList();
         if (specs.Count == 0)
         {
             return;
@@ -218,13 +218,13 @@ public partial class Play : Control
         var deviceScale = Math.Max(DisplayServer.Singleton.ScreenGetScale(), 1.0f);
         var layouts = PackStageFields(specs, rect.Size.X, pixelsPerUnit / deviceScale);
         var arrowSize = layouts[0].ArrowSize;
-        engine.Refit(layouts);
-        engine.SetCanvas(rect.Size, pixelsPerUnit);
+        stepfilePlayer.Refit(layouts);
+        stepfilePlayer.SetCanvas(rect.Size, pixelsPerUnit);
 
         var padding = (Config.Current.Stage
             ?? throw new InvalidOperationException("Stage is not configured")).ScreenEdgePadding;
-        engine.SetTargetY((rect.Size.Y / 2.0f) - padding - (arrowSize / 2.0f));
-        engine.SetGradeArea(GradeText.AreaOf((rect.Size.Y / 2.0f) - padding, (-rect.Size.Y / 2.0f) + padding));
+        stepfilePlayer.SetTargetY((rect.Size.Y / 2.0f) - padding - (arrowSize / 2.0f));
+        stepfilePlayer.SetGradeArea(GradeText.AreaOf((rect.Size.Y / 2.0f) - padding, (-rect.Size.Y / 2.0f) + padding));
 
         PlaceVials(rect, pixelsPerUnit / deviceScale);
     }
@@ -254,14 +254,14 @@ public partial class Play : Control
 
     public override void _Process(double delta)
     {
-        if (playback is null || engine is null)
+        if (playback is null || stepfilePlayer is null)
             return;
 
         PollMusic();
         RefitToWindow();
         playback.Advance(delta, musicChannel, tickChannel, musicFetch is not null);
         var (graded, visible) = playback.GetClockPorts();
-        engine.SetTime(graded, visible);
+        stepfilePlayer.SetTime(graded, visible);
 
         if (backgrounds is not null)
         {
@@ -315,13 +315,13 @@ public partial class Play : Control
 
     private void WireKeyboard()
     {
-        if (engine is null || !Game.Instance.AcceptsInput)
+        if (stepfilePlayer is null || !Game.Instance.AcceptsInput)
         {
-            engine?.ClearInput();
+            stepfilePlayer?.ClearInput();
             return;
         }
 
-        engine.ClearInput();
+        stepfilePlayer.ClearInput();
         foreach (var player in new[] { PlayerId.P1, PlayerId.P2 })
         {
             for (int col = 0; col < 4; col++)
@@ -330,7 +330,7 @@ public partial class Play : Control
                 var action = GameActions.Step(player, direction);
                 if (Actions.Pressed(action))
                 {
-                    engine.Press(action, Actions.JustPressed(action));
+                    stepfilePlayer.Press(action, Actions.JustPressed(action));
                 }
             }
         }
@@ -338,13 +338,13 @@ public partial class Play : Control
 
     private void SyncHealthVials()
     {
-        if (engine is null)
+        if (stepfilePlayer is null)
             return;
 
-        var beat = engine.VisibleBeat;
+        var beat = stepfilePlayer.VisibleBeat;
         foreach (var (player, vial) in vials)
         {
-            var fill = engine.HealthFraction(player);
+            var fill = stepfilePlayer.HealthFraction(player);
             if (fill.HasValue)
             {
                 vial.SetFill(fill.Value);
@@ -365,12 +365,12 @@ public partial class Play : Control
             return;
         }
 
-        if (engine is null || playback is null)
+        if (stepfilePlayer is null || playback is null)
         {
             return;
         }
 
-        if (!engine.AllSettled())
+        if (!stepfilePlayer.AllSettled())
         {
             sinceSettled = Seconds.Zero;
             return;
@@ -391,7 +391,7 @@ public partial class Play : Control
         }
 
         var players = new List<PlayerResult>();
-        var results = engine.Results;
+        var results = stepfilePlayer.Results;
 
         for (int i = 0; i < selected.Charts.Count && i < results.Count; i++)
         {
@@ -412,10 +412,10 @@ public partial class Play : Control
 
     private void HandleCancel()
     {
-        if (!Game.Instance.AcceptsInput || engine is null)
+        if (!Game.Instance.AcceptsInput || stepfilePlayer is null)
             return;
 
-        var cancelled = Actions.AnyJustPressed(engine.Players, p =>
+        var cancelled = Actions.AnyJustPressed(stepfilePlayer.Players, p =>
             p == PlayerId.P1 ? GameAction.P1Cancel : GameAction.P2Cancel);
         if (cancelled)
         {

@@ -4,7 +4,7 @@ using Rhythm.Core;
 namespace Rhythm;
 
 /// <summary>
-/// The session flow around the engine: the playback clock that drives the
+/// The session flow around the stepfile player: the playback clock that drives the
 /// ports, the moment the chart is over, and whether the run is underway.
 /// A fixed lead-in counts up to zero, both audio tracks start together, then
 /// the StepfileClock servos onto the channel's position reports so grading

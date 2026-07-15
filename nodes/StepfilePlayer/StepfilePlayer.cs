@@ -29,13 +29,13 @@ public class FieldSpec
 }
 
 /// <summary>
-/// The stepfile player: the reusable play engine that materializes note
+/// The stepfile player: the reusable play driver that materializes note
 /// fields from chart data, scrolls and animates them in the player's skin
 /// and perspective, grades every row, and pops grade words and combos.
 ///
 /// An adapter instantiates it and drives the two ports every frame:
 /// `SetTime()` (the clock) and the input port (`ClearInput()` + `Press()`).
-/// The engine reads only the ports and reports back through signals
+/// It reads only the ports and reports back through signals
 /// and session state.
 /// </summary>
 [GlobalClass]
@@ -121,7 +121,7 @@ public partial class StepfilePlayer : Control
     }
 
     /// <summary>
-    /// Sets the engine's clock port: grading judges against `graded`;
+    /// Sets the clock port: grading judges against `graded`;
     /// the note fields draw on `visible`.
     /// </summary>
     public void SetTime(Seconds graded, Seconds visible)

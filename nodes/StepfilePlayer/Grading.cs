@@ -4,8 +4,8 @@ namespace Rhythm;
 
 /// <summary>
 /// The session's per-frame grading model: the mutable play state the grading
-/// pass banks presses into and reads outcomes from. The row is the unit the
-/// engine grades, independently per stage.
+/// pass banks presses into and reads outcomes from. The row is the unit
+/// graded, independently per stage.
 /// </summary>
 public sealed class StageState
 {

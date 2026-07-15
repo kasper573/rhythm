@@ -54,9 +54,9 @@ public sealed class OptionsModal : IDisposable
         public required PlayerId Player { get; init; }
         public required Control Flank { get; init; }
         public SubViewport? Viewport { get; set; }
-        public StepfilePlayer? Engine { get; set; }
+        public StepfilePlayer? StepfilePlayer { get; set; }
 
-        /// <summary>The options the live engine was built from — used to tell a
+        /// <summary>The options the live stepfile player was built from — used to tell a
         /// perspective-only change (glide the camera) from one that needs a rebuild.</summary>
         public PlayerOptions? Built { get; set; }
     }
@@ -95,7 +95,7 @@ public sealed class OptionsModal : IDisposable
                 Player = playersList[0],
                 Flank = left,
                 Viewport = null,
-                Engine = null,
+                StepfilePlayer = null,
             });
         }
 
@@ -178,7 +178,7 @@ public sealed class OptionsModal : IDisposable
                 Player = playersList[1],
                 Flank = right,
                 Viewport = null,
-                Engine = null,
+                StepfilePlayer = null,
             });
         }
 
@@ -353,7 +353,7 @@ public sealed class OptionsModal : IDisposable
                 TransparentBg = true,
                 Size = new Vector2I((int)size.X, (int)size.Y),
                 // Mirror the main window's canvas_items stretch (project.godot):
-                // the engine authors its HUD in logical canvas units, so the
+                // the stepfile player authors its HUD in logical canvas units, so the
                 // preview must stretch those units to its pixels exactly as the
                 // window does — otherwise the field self-scales but the text does
                 // not, and the grade/combo/OK words land off-place and oversized.
@@ -392,7 +392,7 @@ public sealed class OptionsModal : IDisposable
     {
         foreach (var preview in previews)
         {
-            if (preview.Viewport is null || preview.Engine is null)
+            if (preview.Viewport is null || preview.StepfilePlayer is null)
                 continue;
 
             var surface = preview.Flank.GetSize();
@@ -402,7 +402,7 @@ public sealed class OptionsModal : IDisposable
             var canvas = BandCanvas(surface);
             preview.Viewport.Size = new Vector2I((int)surface.X, (int)surface.Y);
             preview.Viewport.Size2DOverride = new Vector2I((int)canvas.X, (int)canvas.Y);
-            preview.Engine.SetCanvas(canvas, surface.Y / PreviewBand);
+            preview.StepfilePlayer.SetCanvas(canvas, surface.Y / PreviewBand);
         }
     }
 
@@ -444,23 +444,23 @@ public sealed class OptionsModal : IDisposable
 
                 // A perspective-only change glides the camera in place; every
                 // other change (and the loop wrap) rebuilds the field.
-                if (preview.Engine is not null && preview.Built is { } built
+                if (preview.StepfilePlayer is not null && preview.Built is { } built
                     && current.Perspective != built.Perspective
                     && (built with { Perspective = current.Perspective }) == current)
                 {
-                    preview.Engine.SetPerspective(preview.Player, current.Perspective);
+                    preview.StepfilePlayer.SetPerspective(preview.Player, current.Perspective);
                     preview.Built = current;
                     continue;
                 }
 
-                if (preview.Engine is not null)
-                    preview.Engine.QueueFree();
+                if (preview.StepfilePlayer is not null)
+                    preview.StepfilePlayer.QueueFree();
 
                 var surface = preview.Flank.GetSize();
                 var canvas = BandCanvas(surface);
                 var arrow = PreviewArrowSize();
 
-                var engine = StepfilePlayer.Instantiate(new StepfilePlayerOptions
+                var stepfilePlayer = StepfilePlayer.Instantiate(new StepfilePlayerOptions
                 {
                     Fields = new List<FieldSpec>
                     {
@@ -483,26 +483,26 @@ public sealed class OptionsModal : IDisposable
                     Canvas = canvas,
                 });
 
-                preview.Viewport.AddChild(engine);
+                preview.Viewport.AddChild(stepfilePlayer);
 
                 var padding = Config.Current?.Stage?.ScreenEdgePadding ?? 20.0f;
                 var half = PreviewBand / 2.0f;
-                engine.SetCanvas(canvas, surface.Y / PreviewBand);
-                engine.SetTargetY(half - padding - arrow / 2.0f);
-                engine.SetGradeArea(GradeText.AreaOf(half - padding, -half + padding));
+                stepfilePlayer.SetCanvas(canvas, surface.Y / PreviewBand);
+                stepfilePlayer.SetTargetY(half - padding - arrow / 2.0f);
+                stepfilePlayer.SetGradeArea(GradeText.AreaOf(half - padding, -half + padding));
 
-                preview.Engine = engine;
+                preview.StepfilePlayer = stepfilePlayer;
                 preview.Built = current;
             }
         }
 
         foreach (var preview in previews)
         {
-            if (preview.Engine is null)
+            if (preview.StepfilePlayer is null)
                 continue;
 
-            preview.Engine.SetTime(visibleSeconds, visibleSeconds);
-            preview.Engine.ClearInput();
+            preview.StepfilePlayer.SetTime(visibleSeconds, visibleSeconds);
+            preview.StepfilePlayer.ClearInput();
 
             foreach (var chartRow in state.Rows)
             {
@@ -519,7 +519,7 @@ public sealed class OptionsModal : IDisposable
                     if (visibleSeconds.Value >= due.Value && visibleSeconds.Value < ArrowUntil(chartRow, arrow, state.Timing).Value)
                     {
                         var action = GameActions.Step(preview.Player, StepDirectionExtensions.OfColumn(arrow.Column));
-                        preview.Engine.Press(action, true);
+                        preview.StepfilePlayer.Press(action, true);
                     }
                 }
             }

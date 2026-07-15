@@ -48,7 +48,7 @@ internal sealed class Tuning : IDisposable
     }
 
     /// <summary>
-    /// Samples every banked press's timing error the engine reports.
+    /// Samples every banked press's timing error the stepfile player reports.
     /// </summary>
     public void PushSample(Seconds error)
     {
