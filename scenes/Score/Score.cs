@@ -53,121 +53,69 @@ public partial class Score : Control
             var key = HighScores.Key(library, results.Id, chart);
             var newHighScore = HighScores.Instance.Record(stage.Player, key, tally.TotalPoints);
 
-            var playerColumn = PlayerColumn(stage, tally, config, newHighScore, tagged);
-            columnsRow.AddChild(playerColumn);
+            var column = PlayerColumnScene.Instantiate<VBoxContainer>();
+            columnsRow.AddChild(column);
+            Populate(column, stage, tally, config, newHighScore, tagged);
             players.Add(stage.Player);
         }
     }
 
-    private VBoxContainer PlayerColumn(StageResults stage, Tally tally, GameConfig config, bool newHighScore, bool tagged)
-    {
-        var column = new VBoxContainer();
-        column.AddThemeConstantOverride("separation", 8);
-        column.Alignment = BoxContainer.AlignmentMode.Center;
+    private static readonly PackedScene PlayerColumnScene =
+        GD.Load<PackedScene>("res://scenes/Score/PlayerColumn.tscn");
 
+    /// <summary>Fills one authored player column with a stage's result, score, rating, tallies, and combo.</summary>
+    private void Populate(Node column, StageResults stage, Tally tally, GameConfig config, bool newHighScore, bool tagged)
+    {
         if (tagged)
         {
-            var playerLabel = stage.Player == PlayerId.P1 ? "P1" : "P2";
-            var tag = Text.Label(playerLabel, 36.0f, Screen.TitleColor);
-            tag.HorizontalAlignment = HorizontalAlignment.Center;
-            tag.SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter;
-            column.AddChild(tag);
+            var tag = column.GetNode<Label>("%PlayerTag");
+            tag.Text = stage.Player == PlayerId.P1 ? "P1" : "P2";
+            tag.Visible = true;
         }
 
-        var (resultLabel, resultColor) = stage.Failed
-            ? ("FAILED", new Color(0.95f, 0.25f, 0.25f, 1.0f))
-            : ("CLEARED", new Color(0.5f, 0.95f, 0.6f, 1.0f));
+        var (resultText, resultColor) = stage.Failed
+            ? ("FAILED", new Color(0.95f, 0.25f, 0.25f))
+            : ("CLEARED", new Color(0.5f, 0.95f, 0.6f));
+        var result = column.GetNode<Label>("%Result");
+        result.Text = resultText;
+        result.AddThemeColorOverride("font_color", resultColor);
 
-        var result = Text.Label(resultLabel, 34.0f, resultColor);
-        result.HorizontalAlignment = HorizontalAlignment.Center;
-        var resultBox = new MarginContainer();
-        resultBox.AddThemeConstantOverride("margin_bottom", 12);
-        resultBox.SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter;
-        resultBox.AddChild(result);
-        column.AddChild(resultBox);
-
-        var scoreRow = new HBoxContainer();
-        scoreRow.AddThemeConstantOverride("separation", 16);
-        scoreRow.SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter;
-
-        var percent = Text.Label(tally.Percent.ToString(), 42.0f, new Color(0.95f, 0.97f, 1.0f, 1.0f));
-        scoreRow.AddChild(percent);
-
-        var ratingBox = new Control();
-        ratingBox.CustomMinimumSize = new Vector2(56.0f, 56.0f);
-        var rating = new TextureRect();
-        rating.ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize;
-        rating.StretchMode = TextureRect.StretchModeEnum.KeepAspect;
-        rating.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
-        ratingBox.AddChild(rating);
+        column.GetNode<Label>("%Percent").Text = tally.Percent.ToString();
 
         if (newHighScore)
         {
-            var ribbon = Text.Label("New high score!", 16.0f, new Color(1.0f, 0.85f, 0.35f, 1.0f));
-            ribbon.HorizontalAlignment = HorizontalAlignment.Center;
-            ribbon.SetAnchorsAndOffsetsPreset(LayoutPreset.BottomWide);
-            ribbon.SetOffset(Side.Top, -4.0f);
-            ribbon.SetOffset(Side.Bottom, 20.0f);
-            ratingBox.AddChild(ribbon);
+            column.GetNode<Label>("%Ribbon").Visible = true;
         }
 
-        scoreRow.AddChild(ratingBox);
-
-        var scoreBox = new MarginContainer();
-        scoreBox.AddThemeConstantOverride("margin_bottom", 10);
-        scoreBox.SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter;
-        scoreBox.AddChild(scoreRow);
-        column.AddChild(scoreBox);
-
         var image = config.Rating(tally.Percent, tally.WorstGrade).Image;
-        ratings.Add((PendingTexture.Load(Assets.Path(image)), rating));
+        ratings.Add((PendingTexture.Load(Assets.Path(image)), column.GetNode<TextureRect>("%Rating")));
 
-        var tallies = new HBoxContainer();
-        tallies.AddThemeConstantOverride("separation", 28);
-        tallies.SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter;
-
-        var labelsColumn = new VBoxContainer();
-        labelsColumn.AddThemeConstantOverride("separation", 2);
-        var valuesColumn = new VBoxContainer();
-        valuesColumn.AddThemeConstantOverride("separation", 2);
-
+        var labels = column.GetNode<VBoxContainer>("%Labels");
+        var values = column.GetNode<VBoxContainer>("%Values");
         if (config.Grading is not null && config.Grading.Dynamic.Count > 0)
         {
             for (int i = 0; i < config.Grading.Dynamic.Count && i < tally.GradeCounts.Length; i++)
             {
                 var grade = config.Grading.Dynamic[i];
-                labelsColumn.AddChild(Text.Label(grade.Name, 30.0f, grade.Color));
-                valuesColumn.AddChild(Text.Label(tally.GradeCounts[i].ToString(CultureInfo.InvariantCulture), 30.0f, grade.Color));
+                labels.AddChild(Text.Label(grade.Name, 30.0f, grade.Color));
+                values.AddChild(Text.Label(tally.GradeCounts[i].ToString(CultureInfo.InvariantCulture), 30.0f, grade.Color));
             }
         }
 
         if (config.Grading?.Miss is { } miss)
         {
-            labelsColumn.AddChild(Text.Label(miss.Name, 30.0f, miss.Color));
-            valuesColumn.AddChild(Text.Label(tally.MissCount.ToString(CultureInfo.InvariantCulture), 30.0f, miss.Color));
+            labels.AddChild(Text.Label(miss.Name, 30.0f, miss.Color));
+            values.AddChild(Text.Label(tally.MissCount.ToString(CultureInfo.InvariantCulture), 30.0f, miss.Color));
         }
 
-        labelsColumn.AddChild(Text.Label("Holds", 30.0f, new Color(0.8f, 0.85f, 0.8f, 1.0f)));
-        valuesColumn.AddChild(Text.Label($"{stage.HoldsOk}/{stage.HoldsTotal}", 30.0f, new Color(0.8f, 0.85f, 0.8f, 1.0f)));
-
-        labelsColumn.AddChild(Text.Label("Mines", 30.0f, new Color(0.8f, 0.85f, 0.8f, 1.0f)));
+        var tallyColor = new Color(0.8f, 0.85f, 0.8f);
+        labels.AddChild(Text.Label("Holds", 30.0f, tallyColor));
+        values.AddChild(Text.Label($"{stage.HoldsOk}/{stage.HoldsTotal}", 30.0f, tallyColor));
+        labels.AddChild(Text.Label("Mines", 30.0f, tallyColor));
         var avoided = stage.MinesTotal - stage.MinesExploded;
-        valuesColumn.AddChild(Text.Label($"{avoided}/{stage.MinesTotal}", 30.0f, new Color(0.8f, 0.85f, 0.8f, 1.0f)));
+        values.AddChild(Text.Label($"{avoided}/{stage.MinesTotal}", 30.0f, tallyColor));
 
-        tallies.AddChild(labelsColumn);
-        tallies.AddChild(valuesColumn);
-        column.AddChild(tallies);
-
-        var comboGap = new Control();
-        comboGap.CustomMinimumSize = new Vector2(0.0f, 8.0f);
-        column.AddChild(comboGap);
-
-        var combo = Text.Label($"Max combo: {stage.MaxCombo}", 32.0f, new Color(0.7f, 0.85f, 1.0f, 1.0f));
-        combo.HorizontalAlignment = HorizontalAlignment.Center;
-        combo.SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter;
-        column.AddChild(combo);
-
-        return column;
+        column.GetNode<Label>("%Combo").Text = $"Max combo: {stage.MaxCombo}";
     }
 
     public override void _Process(double delta)

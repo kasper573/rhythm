@@ -131,6 +131,13 @@ public sealed class SoundChannel : IDisposable
     /// <summary>The sound ran out; looping windows never finish.</summary>
     public bool IsFinished => timeline is not SoundTimeline.LoopWindow && finished;
 
+    /// <summary>
+    /// Whether the player is actively sounding. Once it stops,
+    /// <see cref="Position"/> reads back 0 (Godot returns 0 when stopped), so a
+    /// consumer servoing on it must stop while this is false.
+    /// </summary>
+    public bool IsSounding => started && player.Playing && !player.StreamPaused;
+
     private void EnsureStarted()
     {
         if (started || !player.IsInsideTree())

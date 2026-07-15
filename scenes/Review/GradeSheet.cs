@@ -14,9 +14,6 @@ public partial class GradeSheet : Control
     /// <summary>The two columns' word centers, from the canvas center.</summary>
     private static readonly float[] ColumnX = [-210.0f, 210.0f];
 
-    /// <summary>Gray backdrop color matching the playfield.</summary>
-    private static readonly Color PlayfieldGray = new(0.30f, 0.31f, 0.35f, 1.0f);
-
     public override void _Ready()
     {
         var window = GetWindow();
@@ -28,23 +25,6 @@ public partial class GradeSheet : Control
 
         window.ContentScaleMode = Window.ContentScaleModeEnum.Disabled;
         var size = window.Size;
-
-        SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
-
-        var backdrop = new ColorRect();
-        backdrop.Color = Screen.ClearColor;
-        backdrop.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
-        AddChild(backdrop);
-
-        var colors = new[] { Colors.Black, PlayfieldGray };
-        for (int column = 0; column < 2; column++)
-        {
-            var half = new ColorRect();
-            half.Color = colors[column];
-            half.Position = new Vector2(column * size.X / 2.0f, 0.0f);
-            half.Size = new Vector2(size.X / 2.0f, size.Y);
-            AddChild(half);
-        }
 
         var canvas = new Node2D();
         canvas.Position = new Vector2(size.X / 2.0f, size.Y / 2.0f);

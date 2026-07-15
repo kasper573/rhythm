@@ -18,26 +18,19 @@ internal sealed class Playback
     private Seconds wallSincePlay;
     private List<Seconds> latencySamples = [];
 
-    public Seconds LastNoteTime { get; }
-
     private enum PlayPhase
     {
         LeadIn,
         Playing,
     }
 
-    public Playback(string title, StepfileTiming timing, Seconds leadIn, Seconds lastNoteTime)
+    public Playback(string title, StepfileTiming timing, Seconds leadIn)
     {
         Title = title;
         phase = PlayPhase.LeadIn;
         clock = StepfileClock.StartAt(timing, -leadIn);
         wallSincePlay = Seconds.Zero;
-        LastNoteTime = lastNoteTime;
     }
-
-    public Seconds Position => clock.Position;
-
-    public bool IsPlaying => phase == PlayPhase.Playing;
 
     public Seconds VisibleNow
     {
@@ -100,7 +93,12 @@ internal sealed class Playback
         music?.Poll();
         tick?.Poll();
 
-        var report = music?.Position ?? tick?.Position;
+        // A stopped channel reads position 0; servoing the clock onto that snaps
+        // it back to the start and replays the whole chart. Only track a channel
+        // that is still sounding — otherwise let the clock freewheel on frame time.
+        Seconds? report = music is { IsSounding: true } ? music.Position
+            : tick is { IsSounding: true } ? tick.Position
+            : null;
         var fresh = clock.Advance(delta, report);
 
         var settings = Settings.Instance;

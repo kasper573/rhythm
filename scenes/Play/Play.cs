@@ -22,8 +22,8 @@ public partial class Play : Control
     private SoundChannel? tickChannel;
     private AssetLoader? musicFetch;
     private string musicFileName = "";
-    private bool checkFailure;
     private bool finished;
+    private Seconds sinceSettled;
 
     public override void _Ready()
     {
@@ -86,10 +86,7 @@ public partial class Play : Control
         engine.Connect(StepfilePlayer.SignalName.StageFailed, Callable.From((int player) =>
         {
             Sfx.Fail.Play();
-            checkFailure = true;
         }));
-
-        var lastNoteTime = engine.LastNoteTime;
 
         foreach (var (player, _) in charts)
         {
@@ -146,7 +143,7 @@ public partial class Play : Control
             musicFetch = new AssetLoader(musicPath);
         }
 
-        playback = new Playback(entry.DisplayTitle(), timing, config.Stage?.LeadIn ?? Seconds.Zero, lastNoteTime);
+        playback = new Playback(entry.DisplayTitle(), timing, config.Stage?.LeadIn ?? Seconds.Zero);
     }
 
     private readonly record struct PackSpec(PlayerId Player, uint Columns, NoteSpeed Speed);
@@ -275,8 +272,7 @@ public partial class Play : Control
         SyncHealthVials();
         tuning?.Update(tickChannel, delta);
 
-        FinishWhenComplete();
-        checkFailure = false;
+        FinishWhenComplete(delta);
         HandleCancel();
     }
 
@@ -358,11 +354,11 @@ public partial class Play : Control
     }
 
     /// <summary>
-    /// The session ends when every stage settled and the audio ran out (or
-    /// nothing plays and the chart is over); the grades given so far become
-    /// the final result.
+    /// The chart is over once no steps remain to grade; the scene then holds for
+    /// the configured end delay so the last grade lands, and scores. Audio never
+    /// gates this — a chart can end before or after its music.
     /// </summary>
-    private void FinishWhenComplete()
+    private void FinishWhenComplete(double delta)
     {
         if (finished)
         {
@@ -374,23 +370,18 @@ public partial class Play : Control
             return;
         }
 
-        var failedOut = checkFailure && engine.AllFailed();
-        if (!failedOut)
+        if (!engine.AllSettled())
         {
-            if (!engine.AllSettled())
-            {
-                return;
-            }
+            sinceSettled = Seconds.Zero;
+            return;
+        }
 
-            var audioDone = musicChannel?.IsFinished ?? (musicFetch is null && tickChannel?.IsFinished != false);
-
-            // Trailing mines and hold tails can outlive the audio; wait for them.
-            var chartDone = playback.Position.Value >= playback.LastNoteTime.Value;
-
-            if (!audioDone || !chartDone || !playback.IsPlaying)
-            {
-                return;
-            }
+        var endDelay = (Config.Current.Stage
+            ?? throw new InvalidOperationException("Stage is not configured")).EndDelay;
+        sinceSettled += new Seconds(delta);
+        if (sinceSettled < endDelay)
+        {
+            return;
         }
 
         finished = true;

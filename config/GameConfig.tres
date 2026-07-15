@@ -258,6 +258,7 @@ script = ExtResource("10_g77pd")
 MarginX = 150
 FieldGapColumns = 2.0
 LeadInSeconds = 2.0
+EndDelaySeconds = 2.0
 ScreenEdgePadding = 50
 
 [resource]

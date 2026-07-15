@@ -70,11 +70,6 @@ public partial class NoteDemo : Control
         window.ContentScaleMode = Window.ContentScaleModeEnum.Disabled;
         var size = window.Size;
 
-        var backdrop = new ColorRect();
-        backdrop.Color = Screen.ClearColor;
-        backdrop.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
-        AddChild(backdrop);
-
         var settingsDefaults = Config.Current.Defaults;
         if (settingsDefaults is null)
         {

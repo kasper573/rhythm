@@ -27,7 +27,11 @@ public sealed class StageState
         MaxHealth = maxHealth;
     }
 
-    public bool IsComplete() => GradedCount >= Rows.Count;
+    /// <summary>Every row graded and every hold and mine resolved — nothing left to grade.</summary>
+    public bool IsComplete() =>
+        GradedCount >= Rows.Count
+        && Rows.All(row => row.Arrows.All(arrow => arrow.Hold is null || arrow.Hold.Result.HasValue))
+        && Mines.All(mine => mine.Outcome.HasValue);
 
     public float HealthFraction() => Health / (float)MaxHealth;
 

@@ -1,0 +1,105 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://ui/GameLabel.cs" id="1_label"]
+
+[node name="PlayerColumn" type="VBoxContainer"]
+theme_override_constants/separation = 8
+alignment = 1
+
+[node name="PlayerTag" type="Label" parent="."]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_colors/font_color = Color(0.95, 0.85, 0.4, 1)
+horizontal_alignment = 1
+script = ExtResource("1_label")
+FontSize = 36.0
+
+[node name="ResultBox" type="MarginContainer" parent="."]
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_constants/margin_bottom = 12
+
+[node name="Result" type="Label" parent="ResultBox"]
+unique_name_in_owner = true
+layout_mode = 2
+horizontal_alignment = 1
+script = ExtResource("1_label")
+FontSize = 34.0
+
+[node name="ScoreBox" type="MarginContainer" parent="."]
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_constants/margin_bottom = 10
+
+[node name="ScoreRow" type="HBoxContainer" parent="ScoreBox"]
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_constants/separation = 16
+
+[node name="Percent" type="Label" parent="ScoreBox/ScoreRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(0.95, 0.97, 1, 1)
+script = ExtResource("1_label")
+FontSize = 42.0
+
+[node name="RatingBox" type="Control" parent="ScoreBox/ScoreRow"]
+custom_minimum_size = Vector2(56, 56)
+layout_mode = 2
+
+[node name="Rating" type="TextureRect" parent="ScoreBox/ScoreRow/RatingBox"]
+unique_name_in_owner = true
+layout_mode = 1
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+expand_mode = 1
+stretch_mode = 4
+
+[node name="Ribbon" type="Label" parent="ScoreBox/ScoreRow/RatingBox"]
+unique_name_in_owner = true
+visible = false
+layout_mode = 1
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -4.0
+offset_bottom = 20.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(1, 0.85, 0.35, 1)
+text = "New high score!"
+horizontal_alignment = 1
+script = ExtResource("1_label")
+FontSize = 16.0
+
+[node name="Tallies" type="HBoxContainer" parent="."]
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_constants/separation = 28
+
+[node name="Labels" type="VBoxContainer" parent="Tallies"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 2
+
+[node name="Values" type="VBoxContainer" parent="Tallies"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 2
+
+[node name="ComboGap" type="Control" parent="."]
+custom_minimum_size = Vector2(0, 8)
+layout_mode = 2
+
+[node name="Combo" type="Label" parent="."]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_colors/font_color = Color(0.7, 0.85, 1, 1)
+horizontal_alignment = 1
+script = ExtResource("1_label")
+FontSize = 32.0

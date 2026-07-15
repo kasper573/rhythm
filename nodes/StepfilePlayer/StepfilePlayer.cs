@@ -70,7 +70,6 @@ public partial class StepfilePlayer : Control
     private List<Fading2d> fades = [];
     private Node2D? behind;
     private Node2D? overlay;
-    private Seconds lastNoteTime = Seconds.Zero;
 
     public override void _Ready()
     {
@@ -120,11 +119,6 @@ public partial class StepfilePlayer : Control
 
         return player;
     }
-
-    /// <summary>
-    /// The moment the last note (or hold tail) is over.
-    /// </summary>
-    public Seconds LastNoteTime => lastNoteTime;
 
     /// <summary>
     /// Sets the engine's clock port: grading judges against `graded`;
@@ -211,9 +205,6 @@ public partial class StepfilePlayer : Control
     /// <summary>Whether every stage has either failed or graded its whole chart.</summary>
     public bool AllSettled() => stages.All(s => s.Failed || s.IsComplete());
 
-    /// <summary>Whether all stages have failed.</summary>
-    public bool AllFailed() => stages.All(s => s.Failed);
-
     /// <summary>The active players, in field order.</summary>
     public List<PlayerId> Players => stages.Select(s => s.Player).ToList();
 
@@ -255,7 +246,6 @@ public partial class StepfilePlayer : Control
         foreach (var mine in spec.Mines)
         {
             var time = timing.SecondsAtBeat(mine.Beat);
-            lastNoteTime = lastNoteTime.Max(time);
             var index = rig.SpawnMine(time, mine.Beat, (uint)mine.Column);
             sessionMines.Add(new SessionMine(time, (uint)mine.Column, index));
         }
@@ -271,8 +261,6 @@ public partial class StepfilePlayer : Control
                 NoteTail? tailSpec = arrow.Tail is { } tail
                     ? new NoteTail(timing.SecondsAtBeat(tail.End), tail.End, tail.Roll)
                     : null;
-                var noteTime = tailSpec?.Time ?? time;
-                lastNoteTime = lastNoteTime.Max(noteTime);
 
                 var spawn = new NoteSpawn(
                     time,
